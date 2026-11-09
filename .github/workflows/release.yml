@@ -1,16 +1,26 @@
 # Сборка Deadlock Coach в .exe на серверах GitHub.
-# Как выпустить версию: GitHub → Releases → «Draft a new release» → тег вида v0.9.0 →
-# в описании «что нового» → Publish. Через 5–10 минут к релизу прикрепятся
-# установщик и переносная версия, а программы у всех сами предложат обновиться.
+#
+# Выпустить версию можно двумя способами:
+#  1) отправить тег вида v0.9.1 (так делает Claude) — релиз создастся сам,
+#     описание берётся из release-notes/v0.9.1.md;
+#  2) на сайте: Releases → «Draft a new release» → тег v0.9.1 → описание → Publish.
+# Через 5–10 минут к релизу прикрепятся установщик и переносная версия,
+# а установленные программы сами предложат обновиться.
 name: Сборка релиза
 
 on:
+  push:
+    tags: ['v*']
   release:
     types: [published]
   workflow_dispatch: # ручной запуск во вкладке Actions — пробная сборка без релиза
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   windows:
@@ -26,7 +36,7 @@ jobs:
       - name: Версия из тега и адрес репозитория для обновлений
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             V="${GITHUB_REF_NAME#v}"
             npm version "$V" --no-git-tag-version --allow-same-version
           fi
@@ -42,15 +52,25 @@ jobs:
       - name: Сборка .exe
         run: npx --yes electron-builder@25.1.8 --win nsis portable --publish never
 
-      - name: Прикрепить к релизу
-        if: github.event_name == 'release'
+      - name: Создать релиз (если его ещё нет) и прикрепить файлы
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" dist/*.exe --clobber
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            NOTES="release-notes/$TAG.md"
+            if [ -f "$NOTES" ]; then
+              gh release create "$TAG" --title "Deadlock Coach ${TAG#v}" --notes-file "$NOTES"
+            else
+              gh release create "$TAG" --title "Deadlock Coach ${TAG#v}" --notes "Новая версия Deadlock Coach."
+            fi
+          fi
+          gh release upload "$TAG" dist/*.exe --clobber
 
       - name: Сохранить сборку (для ручного запуска)
-        if: github.event_name != 'release'
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         uses: actions/upload-artifact@v4
         with:
           name: deadlock-coach-windows

@@ -206,6 +206,14 @@
     if (p.stage === 'done') progTimer = setTimeout(() => (box.hidden = true), 900);
   });
   dc.on('log', (msg) => console.warn(msg));
+  // Игровой режим: пока идёт Deadlock, окно не крутит анимации и не опрашивает сервер.
+  function applyGameMode(m) {
+    S.gameMode = m;
+    document.body.classList.toggle('gaming', !!(m && m.active && m.enabled));
+    if (m && !m.active && S.view === 'camp') schedulePoll();
+    if (S.view === 'settings') renderSettings();
+  }
+  dc.on('game:mode', applyGameMode);
   dc.on('meta:updated', (meta) => {
     if (meta) S.meta = meta;
     if (S.view === 'meta') renderMeta();
@@ -1711,6 +1719,7 @@
     clearTimeout(pollTimer);
     const stale = Date.now() / 1000 - lastFinished() > 20 * 60;
     if (S.view !== 'camp' || !S.auth || !stale || pollCount >= 10) return;
+    if (S.gameMode && S.gameMode.active && S.gameMode.enabled) return; // пока играешь — новых матчей не будет
     pollTimer = setTimeout(() => {
       pollCount += 1;
       if (S.view === 'camp') loadMyMatches(true);
@@ -2403,7 +2412,25 @@
         h('label', 'Горячая клавиша'), h('div', h('div.row', keyBox, h('button.btn', { onclick: saveKey }, 'Сохранить клавишу'), h('button.btn.primary', { onclick: () => dc.toggleOverlay(true) }, 'Открыть оверлей')),
           h('div.hint', OV.key && OV.key.key ? `Работает: ${OV.key.key}. Нажми в поле и зажми новое сочетание; Backspace — выключить.` : 'Клавиша не активна — нажми в поле и зажми сочетание, например Ctrl+Shift+D.')),
         h('label', 'Мои герои для рейтинга'), h('div', poolBlock),
-        h('label', 'Узнавать состав сам'), h('div', recSettings(logBlock))));
+        h('label', 'Узнавать состав сам'), h('div', recSettings(logBlock)),
+        h('label', 'Игровой режим'), h('div', gameModeSettings())));
+  }
+
+  // Игровой режим: фоновые загрузки ждут конца игры, оверлей работает.
+  function gameModeSettings() {
+    const m = S.gameMode;
+    const box = h('input', { type: 'checkbox', checked: S.settings.gameMode !== false || null, onchange: async (e) => {
+      const r = await dc.saveSettings({ gameMode: e.target.checked });
+      S.settings = r.settings;
+      if (S.gameMode) applyGameMode({ ...S.gameMode, enabled: r.settings.gameMode !== false });
+    } });
+    const state = !m ? null
+      : m.active ? (m.enabled ? 'Deadlock запущен — игровой режим включён.' : 'Deadlock запущен, но игровой режим выключен.')
+        : 'Deadlock не запущен.';
+    return h('div',
+      h('label.check', box, 'пока идёт Deadlock, не нагружать компьютер'),
+      h('div.hint', { style: { margin: '6px 0 0' } }, 'Обновление меты и поиск новых матчей ждут, пока ты не закроешь игру, и доделываются через минуту после неё. Оверлей, горячая клавиша и распознавание состава работают как обычно. Обновление по кнопке «Обновить данные» не ждёт.'),
+      state ? h('div.dim', { style: { marginTop: '6px' } }, state, m && m.pending ? ' Отложено обновление меты.' : '') : null);
   }
 
   // Распознавание состава по портретам: включение, состояние, сброс выученного.
@@ -2445,6 +2472,7 @@
       S.version = init.version;
       if (init.assets) S.assets = init.assets;
       S.favs = await dc.favorites().catch(() => []);
+      dc.gameModeStatus().then(applyGameMode).catch(() => {});
     } catch (e) {
       toast(e.message, true);
     }

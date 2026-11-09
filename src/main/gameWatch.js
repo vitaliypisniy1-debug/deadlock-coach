@@ -57,6 +57,7 @@ class GameWatch extends EventEmitter {
     this.timer = null;
     this.lastEvent = null;
     this.status = 'off';
+    this.lastDataAt = 0; // когда игра последний раз дописывала лог
   }
 
   async start() {
@@ -110,6 +111,7 @@ class GameWatch extends EventEmitter {
       fs.readSync(fd, buf, 0, len, this.pos);
       fs.closeSync(fd);
       this.pos += len;
+      this.lastDataAt = Date.now();
       const text = this.rest + buf.toString('utf8');
       const lines = text.split(/\r?\n/);
       this.rest = lines.pop() || '';

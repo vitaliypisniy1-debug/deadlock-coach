@@ -5,8 +5,11 @@ const fs = require('fs');
 const { checkConsoleLog, findDeadlockDir } = require('./gameLog');
 const { Recognizer } = require('./recognizer');
 const { GameWatch, consoleLogPath } = require('./gameWatch');
+const { GameMode } = require('./gameMode');
 let recognizer = null;
 let watch = null;
+let gameMode = null;
+let autoPending = false; // фоновое обновление пришлось на игру — сделаем после неё
 const { Updater } = require('./updater');
 let updater = null;
 
@@ -260,13 +263,40 @@ async function fetchProfile(accountId) {
   }
 }
 
+// Идёт ли игра и включён ли игровой режим.
+function inGameMode() {
+  return !!(gameMode && gameMode.active && store.settings().gameMode !== false);
+}
+
+function autoRefresh() {
+  if (inGameMode()) {
+    autoPending = true; // не грузим сеть и диск во время игры
+    return;
+  }
+  autoPending = false;
+  sync.refreshTop(store.settings(), { background: true }).then((r) => emit('meta:updated', r.meta)).catch((e) => emit('log', e.message));
+}
+
 function scheduleAuto() {
   if (autoTimer) clearInterval(autoTimer);
   const hours = store.settings().autoRefreshHours;
   if (!hours) return;
-  autoTimer = setInterval(() => {
-    sync.refreshTop(store.settings()).then((r) => emit('meta:updated', r.meta)).catch((e) => emit('log', e.message));
-  }, hours * 3600e3);
+  autoTimer = setInterval(autoRefresh, hours * 3600e3);
+}
+
+// Игра запущена: заранее готовим всё для оверлея, остальное откладываем.
+// Игра закрыта: через минуту доделываем отложенное.
+function onGameMode(active) {
+  emit('game:mode', { active, enabled: store.settings().gameMode !== false });
+  if (active) {
+    if (recognizer) recognizer.loadRefs().catch(() => {});
+    const a = store.read('auth.json', null);
+    if (a && a.accountId) sync.pickTables(a.accountId).catch(() => {});
+  } else if (autoPending) {
+    setTimeout(() => {
+      if (!inGameMode() && autoPending) autoRefresh();
+    }, 60e3);
+  }
 }
 
 function handle(channel, fn) {
@@ -475,6 +505,7 @@ function registerIpc() {
   handle('rec:run', async () => runRecognition({ reason: 'manual' }));
   handle('rec:learn', async ({ slot, heroId }) => recognizer.learn(slot, heroId));
   handle('rec:forget', async () => recognizer.forget());
+  handle('game:mode', async () => ({ ...(gameMode ? gameMode.info() : { active: false }), enabled: store.settings().gameMode !== false, pending: autoPending }));
   handle('rec:status', async () => ({
     watch: watch ? watch.info() : null,
     learned: Object.keys(recognizer.learnedAll()).length,
@@ -564,6 +595,10 @@ app.whenReady().then(() => {
       }
     });
     watch.start().catch(() => {});
+    sync.holdIf = inGameMode;
+    gameMode = new GameMode({ logActiveAt: () => (watch ? watch.lastDataAt : 0) });
+    gameMode.on('change', onGameMode);
+    gameMode.start();
     let repo = '';
     try {
       repo = require('../../package.json').updateRepo || '';
@@ -599,6 +634,7 @@ app.on('will-quit', () => {
   try {
     globalShortcut.unregisterAll();
     if (watch) watch.stop();
+    if (gameMode) gameMode.stop();
   } catch {}
 });
 

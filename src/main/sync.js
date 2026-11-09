@@ -89,11 +89,21 @@ class Sync {
     this.store = store;
     this.emit = emit || (() => {});
     this.running = null;
+    this.background = false; // текущее обновление запущено по таймеру, а не кнопкой
+    this.holdIf = () => false; // true — идёт игра, фоновые загрузки ждут
     this.assets = store.read('assets.json', null);
   }
 
   progress(stage, done, total, text) {
     this.emit('progress', { stage, done, total, text });
+  }
+
+  // Игровой режим: фоновое обновление ждёт, пока игра не закроется.
+  // Обновление, запущенное кнопкой, не ждёт.
+  async yieldToGame() {
+    if (!this.background || !this.holdIf()) return;
+    this.progress('paused', 0, 1, 'Игровой режим: обновление на паузе, продолжу после игры');
+    while (this.background && this.holdIf()) await new Promise((r) => setTimeout(r, this.holdPollMs || 5000));
   }
 
   // ---------- справочники героев и предметов ----------
@@ -504,6 +514,7 @@ class Sync {
     const h = (report.history = { players: withAcc.length, ok: 0, failed: 0, empty: 0, rows: 0, old: 0, otherMode: 0, kept: 0, modes: {}, sample: null });
     let i = 0;
     for (const p of withAcc) {
+      await this.yieldToGame();
       i += 1;
       this.progress('history', i, withAcc.length, `История матчей топов: ${i}/${withAcc.length} (${p.name})`);
       try {
@@ -541,6 +552,7 @@ class Sync {
     const mr = (report.matches = { unique: ids.size, alreadyHave: ids.size - todo.length, todo: todo.length, downloaded: 0, notFound: 0, failed: 0 });
     let done = 0;
     for (const id of todo) {
+      await this.yieldToGame();
       done += 1;
       this.progress('matches', done, todo.length, `Скачиваю матчи: ${done}/${todo.length}`);
       try {
@@ -584,8 +596,12 @@ class Sync {
   }
 
   // Полное обновление режима "мета топ-50".
-  refreshTop(settings) {
-    if (this.running) return this.running;
+  refreshTop(settings, { background = false } = {}) {
+    if (this.running) {
+      if (!background) this.background = false; // нажали кнопку — больше не ждём конца игры
+      return this.running;
+    }
+    this.background = background;
     this.running = (async () => {
       try {
         const report = { at: nowSec(), region: settings.region, topN: settings.topN, days: settings.days, onlyRanked: settings.onlyRanked, errors: [] };
@@ -614,6 +630,7 @@ class Sync {
         return { meta, status };
       } finally {
         this.running = null;
+        this.background = false;
       }
     })();
     return this.running;

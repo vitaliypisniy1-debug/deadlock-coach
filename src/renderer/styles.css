@@ -1096,3 +1096,9 @@ h2 > .dot.ally { background: var(--ally); box-shadow: 0 0 10px rgba(111, 178, 25
 .howto { margin: 0 0 12px; padding-left: 20px; font-size: 13px; color: var(--text-2); }
 .howto li { margin-bottom: 6px; }
 .howto b { color: var(--text); }
+
+/* Игровой режим: пока идёт Deadlock, окно программы не тратит кадры на анимации */
+body.gaming *, body.gaming *::before, body.gaming *::after {
+  animation-play-state: paused !important;
+  transition: none !important;
+}

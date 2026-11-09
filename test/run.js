@@ -648,6 +648,43 @@ test('portraits: slots, own portrait, learned matching, log events', () => {
   assert.deepStrictEqual([...px], [255, 40, 20, 128, 3, 2, 1, 255]);
 });
 
+test('game mode: process detection, log activity, background sync waits', async () => {
+  const { GameMode, hasProcess } = require('../src/main/gameMode');
+  assert.ok(hasProcess('"deadlock.exe","14320","Console","1","2 104 532 K"\r\n'));
+  assert.ok(hasProcess('"Deadlock.exe","1","Console","1","1 K"'));
+  assert.ok(!hasProcess('INFO: No tasks are running which match the specified criteria.'));
+  assert.ok(!hasProcess('"deadlock-coach.exe","1","Console","1","1 K"'));
+  let running = true;
+  let logAt = 0;
+  const gm = new GameMode({ check: async () => running, logActiveAt: () => logAt });
+  const seen = [];
+  gm.on('change', (a) => seen.push(a));
+  await gm.tick();
+  running = false;
+  logAt = Date.now() - 5000; // лог свежий — игра ещё идёт
+  await gm.tick();
+  logAt = 0;
+  await gm.tick();
+  assert.deepStrictEqual(seen, [true, false]);
+  // фоновое обновление ждёт, по кнопке — нет
+  const { Sync } = require('../src/main/sync');
+  const fakeStore = { read: (_k, d) => d };
+  const sy = new Sync({ api: {}, store: fakeStore, emit: () => {} });
+  let hold = true;
+  sy.holdIf = () => hold;
+  sy.holdPollMs = 10;
+  sy.background = false;
+  await sy.yieldToGame(); // по кнопке — сразу
+  sy.background = true;
+  let released = false;
+  const p = sy.yieldToGame().then(() => (released = true));
+  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(!released);
+  sy.background = false; // нажали «Обновить данные»
+  await p;
+  assert.ok(released);
+});
+
 test('versus: candidates and side by side', () => {
   const recs = benchM.map((m) => ({ match: m, player: m.players[0] }));
   const myM = extractMatch(fakeMatch({ id: 4242, seed: 77, start: 1, accounts: [777, ...ACC.slice(1)], skill: [0.8] }), { paths: true });

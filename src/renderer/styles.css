@@ -1097,8 +1097,10 @@ h2 > .dot.ally { background: var(--ally); box-shadow: 0 0 10px rgba(111, 178, 25
 .howto li { margin-bottom: 6px; }
 .howto b { color: var(--text); }
 
-/* Игровой режим: пока идёт Deadlock, окно программы не тратит кадры на анимации */
+/* Игровой режим: пока идёт Deadlock, окно программы не тратит кадры на анимации.
+   Анимации выключаем совсем (а не ставим на паузу): у всех элементов обычный вид —
+   уже конечный, поэтому окна и панели сразу видны целиком. */
 body.gaming *, body.gaming *::before, body.gaming *::after {
-  animation-play-state: paused !important;
+  animation: none !important;
   transition: none !important;
 }

@@ -1,0 +1,2400 @@
+'use strict';
+/* global F, Charts, dc */
+(function () {
+  const h = F.h;
+  const S = {
+    settings: { region: 'Europe', topN: 50, days: 3, winsOnly: false, benchmarkSource: 'top', autoRefreshHours: 3, keepDays: 14 },
+    auth: null,
+    meta: null,
+    status: null,
+    assets: { heroes: {}, items: {} },
+    view: 'meta',
+    metaTab: 'heroes',
+    sort: { key: 'games', dir: -1 },
+    selectedHero: null,
+    heroDetail: null,
+    heroLoading: false,
+    heroVariant: 0,
+    favs: [],
+    search: { q: '', loading: false, results: null, error: null },
+    selectedPlayer: null,
+    playerDetail: null,
+    playerLoading: false,
+    top: null,
+    busy: false,
+    coach: { data: null, loading: false, error: null, for: null },
+    prep: { myHero: null, enemies: [], laneFoe: null, result: null, loading: false, mu: null, muLoading: false, muError: null, outlook: {} },
+    heroMu: {},
+    ov: { days: 7, data: null, loading: false, error: null, mode: 'lobby', srcMode: 'top', for: null },
+    my: { vs: null, vsChart: 'nw', mode: 'match', heroes: null, heroesLoading: false, hero: null, heroRep: null, heroRepLoading: false, heroRepError: null, list: null, loading: false, error: null, selected: null, analysis: null, analyzing: false, error2: null, target: { type: 'top' }, targets: [], chart: 'nw', winsOnly: null },
+  };
+
+  // ---------- общие помощники ----------
+  window.addEventListener('error', (e) => {
+    console.error(e.error || e.message);
+    try {
+      toast(`Что-то пошло не так в интерфейсе: ${e.message}. Попробуй ещё раз или перезапусти программу.`, true);
+    } catch {}
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    console.error(e.reason);
+    try {
+      toast(`Ошибка: ${(e.reason && e.reason.message) || e.reason}`, true);
+    } catch {}
+  });
+  const $ = (id) => document.getElementById(id);
+  let toastTimer;
+  function toast(text, isErr = false) {
+    const t = $('toast');
+    t.textContent = text;
+    t.className = isErr ? 'toast err' : 'toast';
+    t.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => (t.hidden = true), isErr ? 7000 : 3500);
+  }
+  const heroName = (id) => (S.assets.heroes[id] ? S.assets.heroes[id].name : `Герой ${id}`);
+  const itemName = (id) => (S.assets.items[id] ? S.assets.items[id].name : `Предмет ${id}`);
+  function heroIcon(id, cls = '') {
+    const hero = S.assets.heroes[id];
+    if (hero && hero.img) return h(`img.hero-ico${cls}`, { src: hero.img, alt: '', loading: 'lazy' });
+    return h(`div.hero-ico.ph${cls}`, heroName(id).slice(0, 2));
+  }
+  const heroCardStyle = (id) => {
+    const hh = S.assets.heroes[id];
+    const src = hh && (hh.card || hh.img);
+    return src ? `--hero-bg: url("${String(src).replace(/"/g, '')}")` : null;
+  };
+  const heroImgSrc = (id) => (S.assets.heroes[id] && S.assets.heroes[id].img) || null;
+  function mapPanel(map, focusSlot, title = 'Карта матча', focusName = 'Ты') {
+    if (!map) return null;
+    return h('div.panel.map-panel', h('h2', title),
+      MapView(map, { focusSlot, focusName, heroName, heroImg: heroImgSrc, mapAsset: S.assets.map || null }));
+  }
+  function itemImg(id) {
+    const it = S.assets.items[id];
+    if (it && it.img) return h('img', { src: it.img, alt: '', title: itemName(id), loading: 'lazy' });
+    return h('div.ph', { title: itemName(id) });
+  }
+  const slotClass = (id) => (S.assets.items[id] && S.assets.items[id].slot) || '';
+  const plural = (n, one, few, many) => {
+    const r = Math.round(n * 10) / 10;
+    if (!Number.isInteger(r)) return few;
+    const a = Math.abs(r) % 100;
+    const b = a % 10;
+    if (a > 10 && a < 20) return many;
+    if (b === 1) return one;
+    if (b >= 2 && b <= 4) return few;
+    return many;
+  };
+  const levelText = { good: 'хорошо', warn: 'есть что улучшить', bad: 'главная проблема', none: 'мало данных' };
+
+  // ---------- навигация ----------
+  // Меню: «Моя игра» (главная, тренер, матчи, герои) и «Мета» (герои меты, перед игрой, про-игроки).
+  const VIEW_OF = { home: 'overview', overview: 'overview', coach: 'coach', matches: 'camp', camp: 'camp', myheroes: 'camp', meta: 'meta', players: 'meta', prep: 'prep', settings: 'settings' };
+  function navKey() {
+    if (S.view === 'camp') return S.my.mode === 'hero' ? 'myheroes' : 'matches';
+    if (S.view === 'meta') return S.metaTab === 'players' ? 'players' : 'meta';
+    if (S.view === 'overview') return 'home';
+    return S.view;
+  }
+  function syncNav() {
+    const key = navKey();
+    document.querySelectorAll('.nav-item').forEach((b) => {
+      const on = b.dataset.view === key;
+      b.classList.toggle('active', on);
+      if (on) b.setAttribute('aria-current', 'page');
+      else b.removeAttribute('aria-current');
+    });
+    const t = $('topN-label');
+    if (t) t.textContent = `Мета · топ-${S.settings.topN}`;
+  }
+
+  function setView(v) {
+    const prevKey = S.view ? navKey() : null;
+    if (v === 'matches' || v === 'camp') S.my.mode = 'match';
+    if (v === 'myheroes') S.my.mode = 'hero';
+    if (v === 'meta') S.metaTab = 'heroes';
+    if (v === 'players') S.metaTab = 'players';
+    const view = VIEW_OF[v] || v;
+    S.view = view;
+    for (const id of ['overview', 'coach', 'meta', 'camp', 'prep', 'settings']) $(`view-${id}`).hidden = id !== view;
+    render();
+    if (navKey() !== prevKey) {
+      document.querySelector('.main').scrollTop = 0;
+      animateView(view);
+    }
+    if (view === 'camp' && S.auth) {
+      pollCount = 0;
+      if (S.my.mode === 'hero') {
+        if (!S.my.heroes && !S.my.heroesLoading) loadMyHeroes();
+      } else if (!S.my.list && !S.my.loading) loadMyMatches();
+      else loadMyMatches(true);
+    }
+    if (view === 'overview' && S.auth && !S.ov.loading && (!S.ov.data || S.ov.for !== S.auth.accountId)) loadOverview();
+    if (view === 'coach' && S.auth && !S.coach.loading && (!S.coach.data || S.coach.for !== S.auth.accountId)) loadCoach(false);
+    if (view === 'prep' && S.auth && !S.prep.mu && !S.prep.muLoading) loadMyMatchups();
+  }
+  document.querySelectorAll('.nav-item').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
+
+  function render() {
+    syncNav();
+    renderAccount();
+    if (S.view === 'overview') renderOverview();
+    if (S.view === 'coach') renderCoach();
+    if (S.view === 'prep') renderPrep();
+    if (S.view === 'meta') renderMeta();
+    if (S.view === 'camp') renderCamp();
+    if (S.view === 'settings') renderSettings();
+  }
+
+  // ---------- аккаунт ----------
+  function renderAccount() {
+    const box = $('account');
+    box.replaceChildren();
+    if (S.auth) {
+      box.append(
+        h('div.acc', S.auth.avatar ? h('img', { src: S.auth.avatar, alt: '' }) : h('div.hero-ico.ph', 'ID'),
+          h('div.acc-body', h('div.acc-name', S.auth.name || `ID ${S.auth.accountId}`), h('div.acc-sub', S.auth.via === 'steam' ? 'вход через Steam' : 'Steam ID вручную')),
+          h('button.btn.small.icon', { title: 'Выйти', 'aria-label': 'Выйти', onclick: logout }, Icon('logout')))
+      );
+    } else {
+      box.append(h('button.btn.steam', { style: { width: '100%', justifyContent: 'center' }, onclick: login }, 'Войти через Steam'));
+    }
+  }
+
+  async function login() {
+    try {
+      S.auth = await dc.login();
+      toast(`Привет, ${S.auth.name || 'игрок'}!`);
+      S.my.list = null;
+      S.ov.data = null;
+      render();
+      if (S.view === 'camp') loadMyMatches();
+      if (S.view === 'overview') loadOverview();
+    } catch (e) {
+      if (!/закрыто/.test(e.message)) toast(e.message, true);
+    }
+  }
+  async function loginManual(input) {
+    try {
+      S.auth = await dc.loginManual(input);
+      S.my.list = null;
+      S.ov.data = null;
+      render();
+      if (S.view === 'overview') loadOverview();
+      else loadMyMatches();
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
+  async function logout() {
+    await dc.logout();
+    S.auth = null;
+    S.my = { ...S.my, list: null, selected: null, analysis: null };
+    S.ov = { ...S.ov, data: null, for: null };
+    render();
+  }
+
+  // ---------- прогресс ----------
+  let progTimer;
+  dc.on('progress', (p) => {
+    const box = $('progress');
+    box.hidden = false;
+    $('progressFill').style.width = `${p.total ? Math.round((p.done / p.total) * 100) : 0}%`;
+    $('progressText').textContent = p.text || '';
+    clearTimeout(progTimer);
+    if (p.stage === 'done') progTimer = setTimeout(() => (box.hidden = true), 900);
+  });
+  dc.on('log', (msg) => console.warn(msg));
+  dc.on('meta:updated', (meta) => {
+    if (meta) S.meta = meta;
+    if (S.view === 'meta') renderMeta();
+  });
+
+  // ================= МЕТА =================
+  async function refreshTop() {
+    if (S.busy) return;
+    S.busy = true;
+    renderMeta();
+    try {
+      const r = await dc.refreshTop();
+      S.meta = r.meta;
+      S.status = r.status;
+      S.top = null;
+      const extra = r.status.unavailable ? ` (${r.status.unavailable} пока недоступны в API)` : '';
+      toast(`Обновлено: найдено ${r.status.found} ${plural(r.status.found, 'матч', 'матча', 'матчей')} топов${extra}`);
+      if (S.selectedHero) loadHero(S.selectedHero);
+    } catch (e) {
+      toast(e.message, true);
+      try {
+        S.status = await dc.status();
+      } catch {}
+    } finally {
+      S.busy = false;
+      renderMeta();
+    }
+  }
+
+  function kpi(label, value, hint, level, barPct) {
+    return h(`div.kpi${level ? '.' + level : ''}`, h('div.kpi-label', label), h('div.kpi-value', value), hint ? h('div.kpi-hint', hint) : null,
+      barPct !== null && barPct !== undefined ? h('div.kpi-bar', h('span', { style: { width: `${Math.max(2, Math.min(100, barPct))}%` } })) : null);
+  }
+
+  // ---------- диагностика последнего обновления ----------
+  function diagnosis(r) {
+    if (r.fatal) return `Обновление прервалось: ${r.fatal}`;
+    const a = r.accounts || {};
+    const hist = r.history || {};
+    const mt = r.matches || {};
+    const resolved = (a.exact || 0) + (a.guess || 0) + (a.manual || 0) + (a.search || 0) + (a.list || 0) + (a.discovered || 0);
+    const fb = r.fallback;
+    if (r.prevSeason && r.prevSeason.rows && hist.kept) return `Топ взят из финального ладдера прошлого сезона (${r.prevSeason.source}).`;
+    if (fb && fb.source === 'list') return 'Ладдер пуст (новый сезон) — топ взят из твоего списка игроков в настройках.';
+    if (fb && fb.source === 'discovered' && !(r.accounts && r.accounts.discovered)) return 'Ладдер пуст (после смены сезона Valve обнуляет таблицу), и запасной поиск сильнейших игроков ничего не нашёл. Добавь свой список игроков в настройках.';
+    if (fb && fb.source === 'discovered' && !(hist.kept)) return 'Ладдер пуст (новый сезон); найдены сильные игроки из свежих матчей, но их матчей за период нет.';
+    if (fb && fb.source === 'discovered') return 'Ладдер пуст (новый сезон) — топ собран из самых рейтинговых свежих матчей.';
+    if (!r.ladder || !r.ladder.entries) return 'Ладдер пришёл пустым — API не вернул список топов для этого региона.';
+    if (!resolved) return 'Ладдер получен, но ни для одного ника не удалось определить аккаунт Steam.';
+    if (hist.ok === 0 && hist.failed) return 'Все запросы истории матчей завершились ошибкой — смотри список ошибок ниже.';
+    if (!hist.rows) return 'Аккаунты найдены, но их история матчей в API пустая.';
+    if (!hist.kept && hist.old === hist.rows) return 'Все найденные матчи старше выбранного периода.';
+    if (!hist.kept && hist.otherMode) return 'Все матчи отсеяны фильтром режима игры.';
+    if (mt.unique && !mt.downloaded && !mt.alreadyHave) return 'Матчи найдены, но API не отдаёт их подробные данные (метаданные).';
+    return 'Явной поломки не видно.';
+  }
+
+  function diagnosticsPanel(r) {
+    if (!r) return null;
+    const a = r.accounts || {};
+    const hist = r.history || {};
+    const mt = r.matches || {};
+    const line = (label, value) => h('div.row', { style: { padding: '3px 0' } }, h('span.muted', { style: { width: '170px' } }, label), h('span', value));
+    const modes = Object.entries(hist.modes || {}).map(([k, v]) => `${k}: ${v}`).join(', ') || '—';
+    return h('div.panel', { style: { marginTop: '16px' } },
+      h('h2', 'Диагностика последнего обновления'),
+      h('div.howto', diagnosis(r)),
+      line('Ладдер', r.ladder ? `${r.ladder.entries} записей (${r.region})` : '—'),
+      r.fallback
+        ? line('Запасной источник', r.fallback.source === 'list' ? `твой список: ${a.list || 0} ${plural(a.list || 0, 'игрок', 'игрока', 'игроков')}` : `активные матчи: ${r.fallback.active ?? '—'} ${plural(r.fallback.active ?? '—', 'игрок', 'игрока', 'игроков')} · недавние матчи: ${r.fallback.recent ?? '—'} · кандидатов ${r.fallback.candidates ?? 0} · с рангом ${r.fallback.ranked ?? 0} · взято ${a.discovered || 0}`)
+        : line('Аккаунты топов', `точно ${a.exact || 0} · угадано ${a.guess || 0} · через поиск ${a.search || 0} · вручную ${a.manual || 0} · не найдено ${a.none || 0}`),
+      r.prevSeason ? line('Прошлый сезон', r.prevSeason.rows ? `${r.prevSeason.rows} ${plural(r.prevSeason.rows, 'игрок', 'игрока', 'игроков')} (${r.prevSeason.source})` : `не получен${r.prevSeason.error ? ': ' + r.prevSeason.error : ''}`) : null,
+      line('История матчей', `успешно ${hist.ok || 0} · ошибок ${hist.failed || 0} · пустых ${hist.empty || 0}`),
+      line('Матчи в историях', `всего ${hist.rows || 0} · старше ${r.days} дн. ${hist.old || 0} · другой режим ${hist.otherMode || 0} · подходят ${hist.kept || 0}`),
+      line('Режимы (игра/матч)', modes),
+      line('Подробные данные', `уникальных ${mt.unique || 0} · уже были ${mt.alreadyHave || 0} · скачано ${mt.downloaded || 0} · нет в API ${mt.notFound || 0} · ошибок ${mt.failed || 0}`),
+      r.errors && r.errors.length ? h('div', { style: { marginTop: '10px' } }, h('h3', 'Ошибки'), r.errors.slice(0, 6).map((e) => h('div.dim', { style: { fontSize: '12px' } }, e))) : null,
+      h('div.row', { style: { marginTop: '12px' } },
+        h('button.btn', { onclick: () => dc.copy(JSON.stringify(r, null, 2)).then(() => toast('Отчёт скопирован — вставь его в чат')) }, 'Скопировать отчёт'),
+        h('span.dim', { style: { fontSize: '12px' } }, `обновление ${F.clock(r.at)}`)));
+  }
+
+  function renderMeta() {
+    const v = $('view-meta');
+    const m = S.meta;
+    if (m && m.totalRecords && S.metaTab === 'heroes' && S.selectedHero) {
+      v.replaceChildren(heroPage());
+      return;
+    }
+    const regionName = { Europe: 'Европа', NAmerica: 'Сев. Америка', SAmerica: 'Юж. Америка', Asia: 'Азия', Oceania: 'Океания' }[m ? m.region : S.settings.region] || S.settings.region;
+    const sub = m
+      ? `${regionName} · топ-${S.settings.topN} · последние ${m.days} дн. · ${m.totalMatches} ${plural(m.totalMatches, 'матч', 'матча', 'матчей')} · обновлено ${F.ago(S.status ? S.status.lastSync : m.generatedAt)}`
+      : `${regionName} · топ-${S.settings.topN} · последние ${S.settings.days} дн.`;
+    const head = h('div.page-head',
+      h('div', h('div.crumbs', `Мета · топ-${S.settings.topN} текущего сезона`), h('h1', S.metaTab === 'players' ? 'Про-игроки' : 'Мета героев'), h('div.sub', sub)),
+      h('div.row', S.busy ? h('span.muted.row', h('span.spin'), 'Собираю данные…') : null,
+        h('button.btn.primary', { onclick: refreshTop, disabled: S.busy }, Icon('refresh'), 'Обновить данные')));
+    const body = [];
+    if (!m || !m.totalRecords) {
+      body.push(h('div.empty', h('strong', m ? 'Матчей топов пока нет' : 'Данных пока нет'),
+        'Нажми «Обновить данные». Первый сбор занимает несколько минут: программа находит топов в ладдере и скачивает их матчи. Дальше обновления быстрые — скачиваются только новые игры.'));
+      if (S.status && S.status.report && !S.busy) body.push(diagnosticsPanel(S.status.report));
+    } else {
+      const favN = S.favs.length;
+      body.push(h('div.kpis',
+        kpi('Матчей топов', F.num(m.totalMatches), `за ${m.days} дн.`, null, Math.min(100, m.totalMatches / 3)),
+        kpi('Игр в выборке', F.num(m.totalRecords), 'топ + избранные', null, Math.min(100, m.totalRecords / 6)),
+        kpi('Героев в мете', String(m.heroes.length), 'сыграно топами', null, Math.min(100, (m.heroes.length / 38) * 100)),
+        kpi('Отслеживаем', String((m.players || []).length), `из них ${favN} избранных`, null, Math.min(100, ((m.players || []).length / 70) * 100))));
+      if (m.source === 'prev_season') {
+        body.push(h('div.note.hot', Icon('refresh'), h('div', 'Эти данные собраны по топу прошлого сезона. Нажми «Обновить данные» — соберу топ текущего сезона.')));
+      }
+      if (m.source === 'ladder+discovered') {
+        body.push(h('div.howto', `Ладдер текущего сезона пока короче топ-${S.settings.topN}, поэтому недостающих игроков я добрал из свежих матчей этого сезона с самым высоким рангом.`));
+      }
+      if (m.source === 'discovered' || m.source === 'list') {
+        body.push(h('div.howto', m.source === 'list'
+          ? 'Топ взят из твоего списка игроков (Настройки).'
+          : 'Ладдер текущего сезона пока пуст, поэтому топ собран из игроков с самым высоким рангом в свежих матчах этого сезона. Как только ладдер заполнится, программа переключится на него.'));
+      }
+      if (m.unresolved) {
+        body.push(h('div.howto', `У ${m.unresolved} ${plural(m.unresolved, 'игрок', 'игрока', 'игроков')} из ладдера не удалось определить аккаунт — их игры не учтены. Можно указать аккаунт вручную в разделе «Про-игроки».`));
+      }
+      body.push(S.metaTab === 'heroes' ? heroesSection(m) : playersSection(m));
+    }
+    v.replaceChildren(head, ...body);
+  }
+
+  function heroesSection(m) {
+    const rows = m.heroes.slice();
+    const { key, dir } = S.sort;
+    rows.sort((a, b) => (a[key] - b[key]) * dir || b.games - a.games);
+    const maxShare = Math.max(...rows.map((r) => r.pick_share), 0.0001);
+    const th = (label, k, cls = '') => {
+      const sorted = S.sort.key === k;
+      return h(`th.sortable${cls}${sorted ? '.sorted' : ''}`, {
+        onclick: () => {
+          S.sort = { key: k, dir: sorted ? -S.sort.dir : -1 };
+          renderMeta();
+        },
+      }, label + (sorted ? (S.sort.dir < 0 ? ' ↓' : ' ↑') : ''));
+    };
+    const table = h('table.table',
+      h('thead', h('tr', h('th', 'Герой'), th('Игр', 'games', '.r'), th('Пики', 'pick_share'), th('Винрейт', 'winrate'), th('Надёжно', 'ci_lo', '.r'), th('KDA', 'kda', '.r'))),
+      h('tbody', rows.map((r) => {
+        const lo = Math.max(0, Math.min(1, (r.ci_lo - 0.25) / 0.5));
+        const hi = Math.max(0, Math.min(1, (r.ci_hi - 0.25) / 0.5));
+        const pt = Math.max(0, Math.min(1, (r.winrate - 0.25) / 0.5));
+        return h(`tr.click${r.lowSample ? '.low' : ''}${S.selectedHero === r.hero_id ? '.selected' : ''}`, { onclick: () => loadHero(r.hero_id) },
+          h('td', h('div.hero-cell', heroIcon(r.hero_id), heroName(r.hero_id), r.lowSample ? h('span.pill', 'мало игр') : null)),
+          h('td.r.num', r.games),
+          h('td', h('div.row.nowrap', h('div.bar', { style: { width: '56px' } }, h('span', { style: { width: `${(r.pick_share / maxShare) * 100}%` } })), h('span.num.muted', F.pct(r.pick_share, 1)))),
+          h('td', h('div.wr', h('span.wr-val.num', { style: { color: r.winrate >= 0.5 ? 'var(--good)' : 'var(--bad)' } }, F.pct(r.winrate)),
+            h('div.wr-ci', { title: `С учётом числа игр реальный винрейт где-то между ${F.pct(r.ci_lo)} и ${F.pct(r.ci_hi)}` },
+              h('div.axis'), h('div.mid'), h('div.range', { style: { left: `${lo * 100}%`, width: `${(hi - lo) * 100}%` } }), h('div.dot', { style: { left: `${pt * 100}%` } })))),
+          h('td.r.num.muted', { title: 'Нижняя граница винрейта: чем выше, тем увереннее герой сильный' }, F.pct(r.ci_lo)),
+          h('td.r.num', r.kda.toFixed(1).replace('.', ',')));
+      })));
+    const legend = h('div.hint', 'Полоска в «Винрейте» — разброс, в котором реально лежит винрейт с учётом числа игр. Чем она короче, тем надёжнее цифра. Сортировка по «Надёжно» ставит наверх героев, которые сильны с большой уверенностью.');
+    if (S.selectedHero) return heroPage();
+    return h('div.panel', h('div.table-scroll', table), legend);
+  }
+
+  async function loadHero(heroId) {
+    document.querySelector('.main').scrollTop = 0;
+    S.selectedHero = heroId;
+    S.heroVariant = 0;
+    S.heroLoading = true;
+    S.heroDetail = null;
+    renderMeta();
+    try {
+      S.heroDetail = await dc.heroBuild(heroId);
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      S.heroLoading = false;
+      if (S.selectedHero === heroId) renderMeta();
+    }
+  }
+
+  function itemTile(it) {
+    return h(slotClass(it.id) ? `div.item.${slotClass(it.id)}` : 'div.item',
+      itemImg(it.id),
+      h('div.item-name', itemName(it.id)),
+      h('div.item-meta', `≈ ${F.time(it.medianT)} · берут ${F.pct(it.pick)}`),
+      it.winWith !== null && it.winWith !== undefined ? h('div.item-meta', { title: 'Винрейт топов в играх, где они купили этот предмет' }, `победы ${F.pct(it.winWith)}`) : null);
+  }
+
+  function buildChecklist(heroId, v) {
+    const lines = [`${heroName(heroId)} — ${v.label} (топы, ${v.games} ${plural(v.games, 'игра', 'игры', 'игр')}, винрейт ${F.pct(v.winrate)})`];
+    const ph = [['early', 'Ранняя игра'], ['mid', 'Середина'], ['late', 'Поздняя игра']];
+    for (const [k, title] of ph) {
+      if (!v.build.phases[k].length) continue;
+      lines.push('', `${title}:`);
+      for (const it of v.build.phases[k]) lines.push(`  ${F.time(it.medianT)}  ${itemName(it.id)} (берут ${F.pct(it.pick)})`);
+    }
+    if (v.spikes.length) {
+      lines.push('', 'Паверспайки (после них — идти драться):');
+      for (const s of v.spikes) lines.push(`  ${itemName(s.id)} ≈ ${F.time(s.topT)}: урон ${F.num(s.rateBefore)} → ${F.num(s.rateAfter)} в мин`);
+    }
+    if (v.build.situational.length) {
+      lines.push('', 'По ситуации:');
+      for (const it of v.build.situational.slice(0, 8)) lines.push(`  ${itemName(it.id)} (${F.pct(it.pick)})`);
+    }
+    return lines.join('\n');
+  }
+
+  // ---------- общие блоки нового стиля ----------
+  // Шкала времени предметов. lanes: [{ label, items: [{ id, t, sub }] }]
+  function itemTimeline(lanes, { maxT = null, spikeIds = new Set(), minMinutes = 10 } = {}) {
+    const all = lanes.flatMap((l) => l.items.map((i) => i.t)).filter((t) => t !== null && t !== undefined);
+    const end = Math.max(minMinutes * 60, maxT || 0, ...all) * 1.04;
+    const pct = (t) => 3 + (t / end) * 92;
+    const ROW = 70;
+    const box = h('div.tl');
+    let y = 10;
+    const laneEls = [];
+    lanes.forEach((lane, li) => {
+      const items = lane.items.filter((i) => i.t !== null && i.t !== undefined).slice().sort((a, b) => a.t - b.t);
+      const rowsEnd = [];
+      const placed = items.map((it) => {
+        const x = pct(it.t);
+        let r = rowsEnd.findIndex((last) => x - last >= 11);
+        if (r === -1) {
+          r = rowsEnd.length;
+          rowsEnd.push(x);
+        } else rowsEnd[r] = x;
+        return { it, x, r };
+      });
+      const rows = Math.max(1, rowsEnd.length);
+      if (lane.label) laneEls.push(h('div.tl-lane-label', { style: { top: `${y - 2}px` } }, lane.label));
+      for (const { it, x, r } of placed) {
+        const cls = ['tl-item', slotClass(it.id), spikeIds.has(it.id) ? 'spike' : ''].filter(Boolean).join('.');
+        laneEls.push(h(`div.${cls}`, { style: { left: `${x}%`, top: `${y + 12 + r * ROW}px` }, title: `${itemName(it.id)} — ${F.time(it.t)}` },
+          itemImg(it.id), h('div.tl-name', itemName(it.id)), h('div.tl-meta', `${F.time(it.t)}${it.sub ? ' · ' + it.sub : ''}`)));
+      }
+      y += 12 + rows * ROW + 6;
+      if (li < lanes.length - 1) {
+        laneEls.push(h('div.tl-lane', { style: { top: `${y}px` } }));
+        y += 8;
+      }
+    });
+    const height = y + 22;
+    for (let m = 0; m * 60 <= end; m += end > 1800 ? 10 : 5) {
+      box.append(h('div.tl-grid', { style: { left: `${pct(m * 60)}%` } }), h('div.tl-tick', { style: { left: `calc(${pct(m * 60)}% + 4px)` } }, `${m}:00`));
+    }
+    box.append(...laneEls);
+    box.style.height = `${height}px`;
+    return box;
+  }
+
+  function slotKey() {
+    return h('div.slot-key',
+      h('span', h('i', { style: { background: 'var(--weapon)' } }), 'оружие'),
+      h('span', h('i', { style: { background: 'var(--vitality)' } }), 'живучесть'),
+      h('span', h('i', { style: { background: 'var(--spirit)' } }), 'спирит'),
+      h('span', h('i', { style: { background: 'transparent', outline: '2px solid var(--orange)', outlineOffset: '-2px' } }), 'паверспайк'));
+  }
+
+  // Маленький график: урон в минуту до покупки и после.
+  function spikeChart(before, after, ariaLabel) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const W = 300;
+    const H = 96;
+    const max = Math.max(after, before, 1) * 1.18;
+    const y = (v) => H - 10 - (v / max) * (H - 22);
+    const pts = [[0, before * 0.86], [50, before * 0.92], [100, before * 0.97], [150, before], [172, (before + after) / 2], [200, after * 0.96], [250, after], [300, after * 1.02]];
+    const d = pts.map(([x, v], i) => `${i ? 'L' : 'M'}${x} ${y(v).toFixed(1)}`).join(' ');
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', ariaLabel);
+    svg.innerHTML =
+      `<line x1="0" y1="${H - 10}" x2="${W}" y2="${H - 10}" stroke="#1e2631"/>` +
+      `<line x1="150" y1="6" x2="150" y2="${H - 10}" stroke="#ff8a3d" stroke-dasharray="3 4"/>` +
+      `<path d="${d}" fill="none" stroke="#36d0c4" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>` +
+      `<text x="6" y="${(y(before) - 8).toFixed(0)}" fill="#8a97a8" font-size="11" font-family="JetBrains Mono, monospace">${F.esc(F.num(before))}/мин</text>` +
+      `<text x="${W - 6}" y="${Math.max(12, y(after) - 8).toFixed(0)}" fill="#e6edf5" font-size="11" text-anchor="end" font-family="JetBrains Mono, monospace">${F.esc(F.num(after))}/мин</text>`;
+    return h('div.spike-chart', svg);
+  }
+
+  function spikeCard(s, mine = null) {
+    return h(`div.spike${mine ? '.' + mine.level : ''}`,
+      h('div.spike-head', h('span.mini-items', itemImg(s.id)), h('b', itemName(s.id)), h('span.pill.hot', Icon('zap'), `≈ ${F.time(s.topT)}`)),
+      spikeChart(s.rateBefore, s.rateAfter, `Урон по героям: ${F.num(s.rateBefore)} в минуту до покупки, ${F.num(s.rateAfter)} после`),
+      h('div.spike-stats',
+        h('div', h('b', { style: { color: 'var(--good)' } }, F.signedPct(s.lift - 1)), h('span', 'сверх обычного роста урона')),
+        h('div', h('b', F.pct(s.fightShare)), h('span', 'игр — драка в 3 минуты')),
+        h('div', h('b', String(s.samples)), h('span', 'игр топов в расчёте'))),
+      mine ? h('div.spike-mine', mine.content) : null);
+  }
+
+  function variantSeg(variants, selected, onPick) {
+    return h('div.seg', { role: 'group', 'aria-label': 'Сборка' }, variants.map((v, i) =>
+      h(`button${i === selected ? '.on' : ''}`, { onclick: () => onPick(i), 'aria-pressed': i === selected ? 'true' : 'false' }, `${v.label.replace(/^(Вариант \d+|Основной билд): /, '')} · ${F.pct(v.winrate)}`)));
+  }
+
+  function heroPage() {
+    const back = h('button.btn.small', { onclick: () => { S.selectedHero = null; renderMeta(); } }, '← Все герои');
+    if (S.heroLoading || !S.heroDetail) return h('div', h('div.row', { style: { marginBottom: '14px' } }, back), h('div.panel', h('div.row', h('span.spin'), 'Считаю сборки…')));
+    const d = S.heroDetail;
+    const row = S.meta && S.meta.heroes.find((x) => x.hero_id === d.heroId);
+    const vi = Math.min(S.heroVariant || 0, Math.max(0, d.variants.length - 1));
+    const v = d.variants[vi];
+    const head = h('div.page-head.hero-banner', { style: heroCardStyle(d.heroId) },
+      h('div.row', { style: { gap: '18px' } }, heroIcon(d.heroId, '.lg'),
+        h('div', h('div.crumbs', `Мета / Герои / ${heroName(d.heroId)}`), h('h1', heroName(d.heroId)))),
+      h('div.row', back,
+        v ? h('button.btn', { onclick: () => document.getElementById('in-game') && document.getElementById('in-game').scrollIntoView({ behavior: 'smooth' }) }, 'Найти билд в игре') : null,
+        v ? h('button.btn.primary', { onclick: () => dc.copy(buildChecklist(d.heroId, v)).then(() => toast('Чек-лист скопирован')) }, Icon('copy'), 'Скопировать чек-лист') : null));
+    if (!d.games) return h('div', head, h('div.empty', h('strong', 'Нет игр топов'), 'Топы не играли на этом герое за выбранный период.'));
+    const wr = d.wins / d.games;
+    const parts = [head,
+      h('div.kpis',
+        kpi('Игр топов', String(d.games), row ? `${F.pct(row.pick_share, 1)} всех пиков` : null, null, row ? Math.min(100, row.pick_share * 800) : 50),
+        kpi('Винрейт', F.pct(wr), row ? `вероятно ${F.pct(row.ci_lo)}–${F.pct(row.ci_hi)}` : null, wr >= 0.5 ? 'good' : 'bad', wr * 100),
+        kpi('Топов играют', String(d.players.length), 'разных игроков', null, Math.min(100, d.players.length * 5)),
+        kpi('Сборок', String(d.variants.length), d.variants.length > 1 ? 'разные стили' : 'одна основная', null, v ? v.share * 100 : 100))];
+    if (d.spammers && d.spammers.length) {
+      const shown = d.spammers.slice().sort((a, b) => b.games / b.of - a.games / a.of).slice(0, 5);
+      const more = d.spammers.length - shown.length;
+      parts.push(h('div.note.hot', Icon('flame'), h('div', 'Сейчас спамят: ', shown.map((p, i) => [i ? ', ' : '', h('a', { href: '#', onclick: (e) => { e.preventDefault(); openPlayer(p.accountId); } }, `${p.rank ? '#' + p.rank + ' ' : ''}${p.name}`), ` (${p.games} из ${p.of})`]), more > 0 ? ` и ещё ${more}` : '')));
+    }
+
+    // левая колонка: сборка
+    const spikeIds = new Set(v.spikes.map((s) => s.id));
+    const left = h('section.panel', { style: { flex: '999 1 600px', minWidth: '0' } },
+      h('div.row', { style: { justifyContent: 'space-between', marginBottom: '14px' } }, h('h2', { style: { margin: 0 } }, 'Сборки топов'), d.variants.length > 1 ? variantSeg(d.variants, vi, (i) => { S.heroVariant = i; renderMeta(); }) : null),
+      h('div.variant-head',
+        h('div.grow', h('div', { style: { fontWeight: 800 } }, v.label.replace(/^(Вариант \d+|Основной билд): /, (m0) => (m0.startsWith('Основной') ? 'Основная сборка: ' : ''))),
+          h('div.muted', { style: { fontSize: '13px' } }, `${v.games} ${plural(v.games, 'игра', 'игры', 'игр')} · ${F.pct(v.share)} всех игр · ${v.players} ${plural(v.players, 'игрок', 'игрока', 'игроков')} · винрейт ${F.pct(v.winrate)} (вероятно ${F.pct(v.ci_lo)}–${F.pct(v.ci_hi)})`)),
+        v.signature.length ? h('div.row', { style: { gap: '6px' } }, h('span.muted', { style: { fontSize: '12px' } }, 'отличают'), h('div.mini-items', v.signature.map(itemImg))) : null),
+      h('h3', 'Когда что покупают'),
+      itemTimeline([{ items: v.build.core.map((it) => ({ id: it.id, t: it.medianT, sub: F.pct(it.pick) })) }], { spikeIds, minMinutes: 16 }),
+      slotKey(),
+      v.build.openers.length ? h('div', { style: { marginTop: '18px' } }, h('h3', 'Частое начало — первые 4 предмета'),
+        v.build.openers.map((o) => h('div.row', { style: { marginBottom: '6px' } }, h('div.mini-items', o.items.map(itemImg)), h('span.muted.num', `${F.pct(o.share)} игр`)))) : null,
+      v.build.situational.length ? h('div', { style: { marginTop: '14px' } }, h('h3', 'По ситуации'),
+        h('div.row', { style: { gap: '6px' } }, v.build.situational.slice(0, 10).map((it) => h('span.pill', { title: `≈ ${F.time(it.medianT)}` }, h('span.mini-items', itemImg(it.id)), itemName(it.id), h('span.num', F.pct(it.pick)))))) : null);
+
+    // правая колонка: паверспайки, кто играет, забрать в игру
+    const rightParts = [];
+    rightParts.push(h('section.panel', h('h2', 'Паверспайки'),
+      v.spikes.length
+        ? h('div.spikes', v.spikes.slice(0, 2).map((s) => spikeCard(s)))
+        : h('div.muted', 'Явных скачков урона не нашёл: мало игр или урон у топов растёт ровно.'),
+      v.spikes.length ? h('div.hint', { style: { marginTop: '10px' } }, 'Урон по героям за 3 минуты до и после покупки. Резкий рост сверх обычного — момент, когда топы идут драться.') : null));
+    rightParts.push(heroMatchupPanel(d.heroId));
+    if (d.players.length) {
+      const max = d.players[0].games;
+      rightParts.push(h('section.panel', h('h2', 'Кто из топов играет'),
+        d.players.slice(0, 8).map((p) => h('a', { href: '#', style: { display: 'block', padding: '9px 0', borderTop: '1px solid var(--line)', color: 'var(--text)' }, onclick: (e) => { e.preventDefault(); openPlayer(p.accountId); } },
+          h('div.row', { style: { justifyContent: 'space-between' } }, h('span', h('b', p.name), ' ', h('span.muted', { style: { fontSize: '12px' } }, p.rank ? `#${p.rank}` : '')),
+            h('span.num', { style: { color: p.spam ? 'var(--orange-2)' : 'var(--text-2)' } }, `${p.games} ${plural(p.games, 'игра', 'игры', 'игр')} · ${Math.round((p.wins / Math.max(1, p.games)) * 100)}% побед`)),
+          h(`div.bar${p.spam ? '.hot' : ''}`, { style: { marginTop: '7px' } }, h('span', { style: { width: `${(p.games / max) * 100}%` } }))))));
+    }
+    rightParts.push(h('section.panel', { id: 'in-game' }, h('h2', 'Забрать в игру'),
+      h('div.muted', { style: { fontSize: '13px', marginBottom: '10px' } }, 'Билды хранятся на серверах Valve, поэтому программа ищет самый похожий опубликованный. В игре: магазин (B) → Browse Builds → Public → поиск по названию.'),
+      v.similar.length ? v.similar.map((b) => h('div.build-card',
+        h('div.grow', h('div.build-name', b.name), h('div.muted', { style: { fontSize: '12px' } }, `в избранном у ${F.num(b.favorites)} · ${b.itemIds.length} предметов`)),
+        h('div.score', { title: 'Совпадение с основными предметами сборки' }, F.pct(b.score)),
+        h('button.btn.small.icon', { title: 'Скопировать название', 'aria-label': `Скопировать название ${b.name}`, onclick: () => dc.copy(b.name).then(() => toast('Название скопировано — вставь его в поиск билдов в игре')) }, Icon('copy'))))
+        : h('div.muted', d.buildsError ? `Не удалось загрузить билды: ${d.buildsError}` : 'Похожих опубликованных билдов не нашлось.')));
+    parts.push(h('div.row', { style: { alignItems: 'flex-start', gap: '18px' } }, left, h('div', { style: { flex: '1 1 360px', minWidth: '0', display: 'flex', flexDirection: 'column', gap: '18px' } }, rightParts)));
+    parts.push(skillsPanel(d.skills, { title: 'Порядок прокачки у топов', who: 'топов' }));
+    return h('div', parts);
+  }
+
+  // ================= СКИЛЛ-БИЛД =================
+  const abilityName = (id) => itemName(id);
+  function abilityIcon(id, n) {
+    const it = S.assets.items[id];
+    return h('span.ab-ico', { title: abilityName(id) }, it && it.img ? h('img', { src: it.img, alt: '', loading: 'lazy' }) : null, h('i', n));
+  }
+
+  // Таблица прокачки: строки — способности, столбцы — очки по порядку.
+  // steps: [{ id, level, share? }]
+  function skillGrid(abilities, steps, { compact = false } = {}) {
+    if (!abilities || !abilities.length || !steps || !steps.length) return null;
+    const cols = Math.max(steps.length, 16);
+    const head = h('div.skb-row.skb-head', h('div.skb-name'), [...Array(cols)].map((_, i) => h('div.skb-cell.num', i + 1)));
+    const rows = abilities.map((id, ai) => h('div.skb-row',
+      h('div.skb-name', abilityIcon(id, ai === 3 ? 'У' : ai + 1), compact ? null : h('span', abilityName(id))),
+      [...Array(cols)].map((_, i) => {
+        const st = steps[i];
+        if (!st || st.id !== id) return h('div.skb-cell');
+        const tip = [`${i + 1}-е очко: ${abilityName(id)}`, st.level === 1 ? 'открытие' : st.level === 4 ? 'максимум' : `улучшение ${st.level - 1}`,
+          typeof st.t === 'number' ? `на ${F.time(st.t)}` : null, typeof st.share === 'number' ? `${F.pct(st.share)} игр` : null].filter(Boolean).join(' · ');
+        return h(`div.skb-cell.on.l${st.level}${typeof st.share === 'number' && st.share < 0.35 ? '.weak' : ''}`, { title: tip }, st.level === 1 ? '●' : st.level === 4 ? 'M' : st.level - 1);
+      })));
+    return h(`div.skb-grid${compact ? '.compact' : ''}`, head, rows);
+  }
+
+  function skillLegend() {
+    return h('div.skb-legend', h('span', h('b', '●'), 'открыл'), h('span', h('b', '1 2'), 'улучшения'), h('span', h('b.max', 'M'), 'максимум'));
+  }
+
+  function skillsPanel(sk, { title, who = 'топов', extra = null, compact = false } = {}) {
+    if (!sk || !sk.path || !sk.path.length) {
+      return h('section.panel', h('h2', title), h('div.muted', 'Нет данных о прокачке способностей: мало игр или в этих матчах её нет.'));
+    }
+    const facts = [];
+    if (sk.firstMax) facts.push(h('div.skb-fact', abilityIcon(sk.firstMax.id, ''), h('div', h('b', `Первой максят «${abilityName(sk.firstMax.id)}»`), h('span', `${F.pct(sk.firstMax.share)} игр ${who}`))));
+    if (sk.maxPair && sk.maxPair.ids.length === 2) facts.push(h('div.skb-fact', h('div', h('b', `Потом «${abilityName(sk.maxPair.ids[1])}»`), h('span', `порядок максимумов в ${F.pct(sk.maxPair.share)} игр`))));
+    const ult = sk.abilities[3];
+    if (ult && sk.timing[ult] && sk.timing[ult].unlock !== null) facts.push(h('div.skb-fact', h('div', h('b', `Ульта — на ${F.time(sk.timing[ult].unlock)}`), h('span', 'обычно открывают'))));
+    return h('section.panel.skb-panel',
+      h('div.row', { style: { justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: '8px' } }, h('h2', { style: { margin: 0 } }, title), h('span.muted.small', `по ${sk.games} ${plural(sk.games, 'игре', 'играм', 'играм')} ${who}`)),
+      facts.length ? h('div.skb-facts', facts) : null,
+      skillGrid(sk.abilities, sk.path, { compact }),
+      h('div.row', { style: { justifyContent: 'space-between', marginTop: '8px', flexWrap: 'wrap', gap: '8px' } }, skillLegend(),
+        h('span.muted.small', 'Самый частый путь: на каждом шаге — что чаще всего брали дальше. Бледные клетки — шаги без явного лидера.')),
+      extra);
+  }
+
+  // ================= ВЫГРУЗКА БИЛДА ИЗ МАТЧА =================
+  const BM = { data: null, loading: false, error: null, back: null };
+
+  async function openBuild(matchId, accountId, back = null) {
+    BM.data = null;
+    BM.error = null;
+    BM.loading = true;
+    BM.back = back;
+    renderBuildModal();
+    try {
+      BM.data = await dc.matchBuild(matchId, accountId);
+    } catch (e) {
+      BM.error = e.message;
+    } finally {
+      BM.loading = false;
+      renderBuildModal();
+    }
+  }
+
+  function renderBuildModal() {
+    const box = $('modal');
+    box.hidden = false;
+    const close = h('button.btn.small', { onclick: closeModal }, 'Закрыть', Icon('close'));
+    const back = BM.back ? h('button.btn.small.ghost', { onclick: () => BM.back() }, '← К матчу') : null;
+    let body;
+    if (BM.loading) body = [skeleton('Собираю билд из матча')];
+    else if (BM.error) body = [h('div.empty', h('strong', 'Не получилось собрать билд'), BM.error)];
+    else body = buildExportBody(BM.data);
+    const sheet = h('div.modal-sheet', h('div.row', { style: { justifyContent: 'space-between', marginBottom: '6px' } }, back || h('span'), close), body);
+    box.replaceChildren(h('div.modal-back', { onclick: closeModal }), sheet);
+  }
+
+  function buildCard(b) {
+    const stageCol = (st) => h('div.bc-stage', h('div.bc-stage-name', st.name),
+      st.items.length ? h('div.bc-items', st.items.map((it) => h(`div.bc-item${slotClass(it.id) ? '.' + slotClass(it.id) : ''}${it.fate === 'sold' ? '.sold' : ''}`, { title: `${itemName(it.id)} · ${F.time(it.t)}${it.fate === 'sold' ? ` · продан на ${F.time(it.soldT)}` : it.fate === 'upgraded' ? ` · улучшен до «${itemName(it.into)}»` : ''}` },
+        itemImg(it.id), h('span.num', F.time(it.t))))) : h('div.muted.small', '—'));
+    return h('div.build-export', { id: 'build-card' },
+      h('div.bc-head', heroIcon(b.hero_id),
+        h('div.grow', h('div.bc-title', `${heroName(b.hero_id)} — билд ${b.playerName}`),
+          h('div.bc-sub', `${b.won ? 'Победа' : 'Поражение'} · ${b.k}/${b.d}/${b.a} · ${F.num(b.nw)} душ${b.duration_s ? ` · ${F.time(b.duration_s)}` : ''} · матч ${b.match_id}`)),
+        h('div.bc-brand', 'DEADLOCK', h('span', 'COACH'))),
+      b.skills.steps.length ? h('div.bc-block', h('div.bc-label', 'Способности'), skillGrid(b.skills.abilities, b.skills.steps)) : null,
+      h('div.bc-block', h('div.bc-label', 'Предметы по стадиям'), h('div.bc-stages', b.stages.map(stageCol))),
+      b.final.length ? h('div.bc-block', h('div.bc-label', 'К концу игры'), h('div.bc-final', b.final.map((it) => h('span.bc-fin', itemImg(it.id), itemName(it.id))))) : null);
+  }
+
+  function buildExportBody(b) {
+    const fileName = `${heroName(b.hero_id)} ${b.playerName} ${b.match_id}`;
+    const rectOf = () => {
+      const el = $('build-card');
+      el.scrollIntoView({ block: 'nearest' });
+      const r = el.getBoundingClientRect();
+      return { x: r.left, y: r.top, width: r.width, height: Math.min(r.height, window.innerHeight - r.top) };
+    };
+    const withText = async (fn) => {
+      try {
+        const t = await dc.buildText(b);
+        await fn(t);
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+    const actions = h('div.bc-actions',
+      h('button.btn', { onclick: () => withText((t) => dc.copy(t.text).then(() => toast('Билд скопирован текстом — вставь в Discord или заметки'))) }, Icon('copy'), 'Скопировать текстом'),
+      h('button.btn', { onclick: async () => { try { await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); await dc.copyBuildImage(rectOf()); toast('Картинка билда скопирована — вставь её в Discord'); } catch (e) { toast(e.message, true); } } }, 'Скопировать картинкой'),
+      h('button.btn', { onclick: async () => { try { await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); const r = await dc.buildPng(rectOf(), fileName); if (r.saved) toast('Картинка сохранена'); } catch (e) { toast(e.message, true); } } }, 'Сохранить картинку'),
+      h('button.btn.ghost', { onclick: () => withText(async (t) => { const r = await dc.saveBuild(fileName, t.text, 'txt'); if (r.saved) toast('Текст билда сохранён'); }) }, 'Сохранить .txt'),
+      h('button.btn.ghost', { onclick: () => withText(async (t) => { const r = await dc.saveBuild(fileName, t.file, 'json'); if (r.saved) toast('Файл билда сохранён'); }) }, 'Сохранить .json'));
+    const similar = h('section.panel', { style: { marginTop: '16px' } }, h('h2', 'Как забрать в игру'),
+      h('div.muted', { style: { fontSize: '13px', marginBottom: '10px' } }, 'Загрузить билд прямо в игру сторонняя программа не может — билды хранятся на серверах Valve. Есть два пути: собрать его в игровом редакторе по картинке (стадии совпадают с игровыми), или взять самый похожий опубликованный билд: магазин (B) → Browse Builds → Public → поиск по названию.'),
+      b.similar && b.similar.length ? b.similar.map((x) => h('div.build-card',
+        h('div.grow', h('div.build-name', x.name), h('div.muted', { style: { fontSize: '12px' } }, `в избранном у ${F.num(x.favorites)} · ${x.itemIds.length} предметов`)),
+        h('div.score', { title: 'Совпадение с предметами из этого матча' }, F.pct(x.score)),
+        h('button.btn.small.icon', { title: 'Скопировать название', 'aria-label': `Скопировать название ${x.name}`, onclick: () => dc.copy(x.name).then(() => toast('Название скопировано — вставь его в поиск билдов в игре')) }, Icon('copy'))))
+        : h('div.muted', b.similarError ? `Не удалось загрузить опубликованные билды: ${b.similarError}` : 'Похожих опубликованных билдов не нашлось.'));
+    const noSkills = !b.skills.steps.length ? h('div.note', { style: { marginTop: '10px' } }, Icon('info'), h('div', 'В данных этого матча нет прокачки способностей — в билде только предметы.')) : null;
+    return [buildCard(b), noSkills, actions, similar];
+  }
+
+  // ---------- избранные игроки: поиск по нику и добавление ----------
+  async function doSearch(q) {
+    S.search = { q, loading: true, results: null, error: null };
+    renderMeta();
+    try {
+      S.search.results = await dc.searchPlayers(q);
+    } catch (e) {
+      S.search.error = e.message;
+    } finally {
+      S.search.loading = false;
+      renderMeta();
+    }
+  }
+
+  async function addFav(accountId, name) {
+    try {
+      S.favs = await dc.addFavorite(accountId, name);
+      S.top = null;
+      toast(`${name} добавлен. Нажми «Обновить данные», чтобы скачать его матчи.`);
+    } catch (e) {
+      toast(e.message, true);
+    }
+    renderMeta();
+  }
+
+  async function removeFav(accountId) {
+    S.favs = await dc.removeFavorite(accountId);
+    S.top = null;
+    renderMeta();
+  }
+
+  function favoritesBlock() {
+    const input = h('input.input', { placeholder: 'Ник, ссылка на профиль Steam или ID', value: S.search.q, style: { flex: '1' },
+      onkeydown: (e) => { if (e.key === 'Enter' && input.value.trim()) doSearch(input.value.trim()); } });
+    const favIds = new Set(S.favs.map((f) => f.accountId));
+    const parts = [
+      h('div.fav-head', h('h2', 'Избранные игроки'), h('span.muted', `${S.favs.length} — их игры всегда входят в мету и сравнение`)),
+      h('div.row.nowrap', input, h('button.btn', { onclick: () => input.value.trim() && doSearch(input.value.trim()), disabled: S.search.loading }, Icon('search'), S.search.loading ? 'Ищу…' : 'Найти')),
+    ];
+    if (S.search.error) parts.push(h('div.muted', { style: { marginTop: '8px' } }, S.search.error));
+    if (S.search.results) {
+      if (!S.search.results.length) parts.push(h('div.muted', { style: { marginTop: '8px' } }, 'Никого не нашёл. Попробуй точный ник из Steam или вставь ссылку на профиль.'));
+      for (const r of S.search.results) {
+        parts.push(h('div.search-row',
+          r.avatar ? h('img.hero-ico', { src: r.avatar, alt: '' }) : h('div.hero-ico.ph', 'ID'),
+          h('div.grow',
+            h('div', h('b', r.name), h('span.dim', `  ID ${r.accountId}`)),
+            h('div.muted.small', r.totalGames ? `${r.games14} ${plural(r.games14, 'игра', 'игры', 'игр')} за 14 дней, последняя ${F.ago(r.lastPlayed)}` : 'нет матчей Deadlock в API — скорее всего, не тот аккаунт'),
+            r.heroes && r.heroes.length ? h('div.row', { style: { gap: '4px', marginTop: '6px' } }, r.heroes.map((x) => h('span.chip', heroIcon(x.hero_id, '.sm'), heroName(x.hero_id), ` ${x.games}`))) : null),
+          favIds.has(r.accountId) ? h('span.pill.good', 'уже в избранном') : h('button.btn.small', { onclick: () => addFav(r.accountId, r.name) }, 'Добавить')));
+      }
+    }
+    if (S.favs.length) {
+      parts.push(h('div.fav-list', S.favs.map((f) => h('span.fav', { title: [f.team, f.country].filter(Boolean).join(', ') },
+        h('button.fav-name', { onclick: () => openPlayer(f.accountId) }, f.name),
+        h('button.x', { title: 'Убрать из избранного', 'aria-label': `Убрать ${f.name}`, onclick: () => removeFav(f.accountId) }, Icon('close'))))));
+    }
+    return h('div.panel.favs', parts);
+  }
+
+  // ---------- окно с подробностями матча ----------
+  const MD = { data: null, chart: 'nw', loading: false, error: null };
+
+  function closeModal() {
+    $('modal').hidden = true;
+    $('modal').replaceChildren();
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('modal').hidden) closeModal();
+  });
+
+  async function openMatchDetail(matchId, accountId) {
+    MD.data = null;
+    MD.error = null;
+    MD.loading = true;
+    MD.chart = 'nw';
+    renderModal();
+    try {
+      MD.data = await dc.matchDetail(matchId, accountId);
+    } catch (e) {
+      MD.error = e.message;
+    } finally {
+      MD.loading = false;
+      renderModal();
+    }
+  }
+
+  function renderModal() {
+    const box = $('modal');
+    box.hidden = false;
+    const close = h('button.btn.small', { onclick: closeModal }, 'Закрыть', Icon('close'));
+    let body;
+    if (MD.loading) body = [h('div.row', h('span.spin'), 'Загружаю матч…')];
+    else if (MD.error) body = [h('div.empty', h('strong', 'Не получилось открыть матч'), MD.error)];
+    else body = matchDetailBody(MD.data);
+    const sheet = h('div.modal-sheet', h('div.row', { style: { justifyContent: 'flex-end', marginBottom: '6px' } }, close), body);
+    box.replaceChildren(h('div.modal-back', { onclick: closeModal }), sheet);
+  }
+
+  function matchDetailBody(d) {
+    const f = d.focus;
+    const me = d.players.find((p) => p.focus) || d.players[0];
+    const parts = [];
+    const toBuild = (accountId) => openBuild(d.match.match_id, accountId, () => renderModal());
+    parts.push(h('div.row', { style: { marginBottom: '14px' } }, heroIcon(f.hero_id),
+      h('div.grow', h('h2', { style: { margin: 0 } }, `${me.name} — ${heroName(f.hero_id)}, ${f.won ? 'победа' : 'поражение'}`),
+        h('div.muted', `Матч ${d.match.match_id} · ${F.clock(d.match.start_time)} · ${F.time(d.match.duration_s)} · ${me.k}/${me.d}/${me.a} · ${F.num(me.nw)} душ · ${F.num(me.pdmg)} урона по героям`)),
+      h('button.btn.small', { onclick: () => toBuild(f.account_id), title: 'Предметы и прокачка способностей из этой игры — картинкой, текстом или файлом' }, Icon('download'), 'Выгрузить билд')));
+
+    // таблица обеих команд
+    const teamTable = (team) => {
+      const rows = d.players.filter((p) => p.team === team).sort((a, b) => b.nw - a.nw);
+      const won = rows.length && rows[0].won;
+      return h('div.panel', h('h3', `${won ? 'Победители' : 'Проигравшие'} · команда ${team + 1}`),
+        h('table.table', h('thead', h('tr', h('th', 'Игрок'), h('th.r', 'K/D/A'), h('th.r', 'Души'), h('th.r', 'Урон'), h('th.r', 'Крипы'), h('th'))),
+          h('tbody', rows.map((p) => h(`tr${p.focus ? '.selected' : ''}`,
+            h('td', h('div.hero-cell', heroIcon(p.hero_id, '.sm'), h('span', p.name), p.rank ? h('span.pill', `#${p.rank}`) : null, p.favorite ? h('span.fav-star', Icon('star')) : null)),
+            h('td.r.num', `${p.k}/${p.d}/${p.a}`),
+            h('td.r.num', F.k(p.nw)),
+            h('td.r.num', F.k(p.pdmg)),
+            h('td.r.num', p.lh),
+            h('td.r', p.account_id ? h('button.btn.small.icon.ghost', { title: `Выгрузить билд: ${p.name}`, 'aria-label': `Выгрузить билд ${p.name}`, onclick: () => toBuild(p.account_id) }, Icon('download')) : null))))));
+    };
+    parts.push(h('div.grid-2', teamTable(f.team), teamTable(f.team === 0 ? 1 : 0)));
+    const focusSlot = d.map ? (d.map.players.find((p) => p.account_id === f.account_id) || {}).slot : null;
+    if (d.map) parts.push(mapPanel(d.map, focusSlot ?? null, 'Карта матча', me.name));
+
+    // графики
+    const tabs = [['nw', 'Души'], ['pdmg', 'Урон по героям'], ['farm', 'Крипы'], ['ka', 'Убийства + помощь']];
+    parts.push(h('div.panel', { style: { marginTop: '16px' } },
+      h('div.row', h('h2', { style: { margin: 0 } }, 'По минутам'), h('div.grow'),
+        h('div.legend', h('span', h('i', { style: { background: 'var(--you)' } }), me.name), h('span', h('i', { style: { background: 'var(--top)' } }), 'медиана остальных 11 игроков'))),
+      h('div.tabs', { style: { marginTop: '10px' } }, tabs.map(([k, label]) => h('button.tab' + (MD.chart === k ? '.active' : ''), { onclick: () => { MD.chart = k; renderModal(); } }, label))),
+      Charts.lineChart(d.curves[MD.chart], { yFmt: MD.chart === 'ka' ? (v) => String(Math.round(v)) : (v) => F.k(v), meLabel: me.name, topLabel: 'Остальные', markers: f.deaths.map((t) => ({ minute: t / 60, color: 'var(--bad)' })) }),
+      f.deaths.length ? h('div.hint', `Красные вертикали — смерти: ${f.deaths.map(F.time).join(', ')}${f.lost ? ` (потеряно ${F.num(f.lost)} душ)` : ''}.`) : null));
+
+    // предметы по порядку
+    parts.push(h('div.panel', h('h2', 'Покупки по порядку'),
+      h('div.buy-list', d.items.map((it) => h(`div.buy${slotClass(it.id) ? '.' + slotClass(it.id) : ''}`,
+        h('span.buy-time.num', F.time(it.t)), h('span.mini-items', itemImg(it.id)), h('span', itemName(it.id)),
+        it.fate === 'upgraded' ? h('span.dim', ` · улучшен${it.into && S.assets.items[it.into] ? ' до «' + itemName(it.into) + '»' : ''} на ${F.time(it.sold)}`)
+          : it.sold && it.fate !== 'kept' ? h('span.sold', ` · продан на ${F.time(it.sold)}`) : null)))));
+
+    // скачки урона
+    if (d.jumps.length) {
+      parts.push(h('div.panel', h('h2', 'Когда он включался в игру'),
+        h('div.hint', { style: { marginBottom: '10px' } }, 'Покупки, после которых его урон по героям резко вырос в этом матче.'),
+        h('div.spikes', d.jumps.map((j) => h('div.spike',
+          h('div.spike-head', h('span.mini-items', itemImg(j.id)), h('b', itemName(j.id)), h('span.pill.hot', Icon('zap'), `куплен на ${F.time(j.t)}`)),
+          spikeChart(j.before, j.after, `Урон по героям: ${F.num(j.before)} в минуту до покупки, ${F.num(j.after)} после`),
+          h('div.spike-stats',
+            h('div', h('b', { style: { color: 'var(--good)' } }, F.signedPct(j.lift - 1)), h('span', 'сверх обычного роста')),
+            h('div', h('b', j.fought ? 'да' : 'нет'), h('span', 'драка в 3 минуты'))))))));
+    }
+
+    // источники душ
+    const max = Math.max(1, ...d.sources.map((x) => x.value || 0));
+    parts.push(h('div.panel', h('h2', 'Откуда души за матч'),
+      d.sources.map((x) => h('div.src-row', h('div', x.name),
+        h('div.src-bars', h('span.you', { style: { width: `${((x.value || 0) / max) * 100}%` } })),
+        h('div.r.num', { style: { textAlign: 'right' } }, F.num(x.value))))));
+    return parts;
+  }
+
+  function recentChips(recent) {
+    if (!recent || !recent.heroes || !recent.heroes.length) return h('span.dim', '—');
+    return h('div.row.nowrap', { style: { gap: '4px' } }, recent.heroes.slice(0, 4).map((x) =>
+      h('span.chip', { title: `${heroName(x.hero_id)}: ${x.games} из ${recent.n} последних игр` }, heroIcon(x.hero_id, '.sm'), h('span', x.games))));
+  }
+
+  function spamPill(recent) {
+    if (!recent || !recent.spam) return null;
+    return h('span.pill.hot', { title: `${heroName(recent.spam.hero_id)} в ${recent.spam.games} из ${recent.spam.of} последних игр` }, Icon('flame'), `спамит ${heroName(recent.spam.hero_id)}`);
+  }
+
+  async function openPlayer(accountId) {
+    if (!accountId) return;
+    S.metaTab = 'players';
+    if (S.view !== 'meta') setView('players');
+    syncNav();
+    S.selectedPlayer = Number(accountId);
+    S.playerDetail = null;
+    S.playerLoading = true;
+    renderMeta();
+    try {
+      S.playerDetail = await dc.playerDetail(accountId);
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      S.playerLoading = false;
+      if (S.selectedPlayer === Number(accountId)) renderMeta();
+    }
+  }
+
+  function playersSection(m) {
+    if (!S.top) {
+      dc.topList().then((t) => {
+        S.top = t || { players: [] };
+        renderMeta();
+      });
+      return h('div.panel', h('span.spin'));
+    }
+    const info = new Map(S.top.players.map((p) => [p.name, p]));
+    const warn = (t) => {
+      if (!t || !t.accountId) return h('span.flag.bad', 'аккаунт не найден');
+      if (t.how === 'guess' || t.how === 'search') return h('span.flag', { title: 'Аккаунт определён по нику — может быть не тот' }, 'аккаунт угадан');
+      return null;
+    };
+    const table = h('table.table.players',
+      h('thead', h('tr', h('th.r', 'Место'), h('th', 'Игрок'), h('th.r', 'Игр'), h('th.r', 'Винрейт'), h('th', 'На ком играет'))),
+      h('tbody', m.players.map((p) => {
+        const t = info.get(p.name);
+        const recent = t && t.recent;
+        const fav = t && t.favorite;
+        return h(`tr.click${S.selectedPlayer === p.accountId ? '.selected' : ''}`, { onclick: () => openPlayer(p.accountId) },
+          h('td.r.num.muted', p.rank || ''),
+          h('td', h('div.pname', fav ? h('span.fav-dot', { title: 'В избранном' }) : null, h('b', p.name)),
+            h('div.psub', t && t.team ? h('span', t.team) : null, recent && recent.spam ? h('span.spam', `спамит ${heroName(recent.spam.hero_id)}`) : null, warn(t))),
+          h('td.r.num', p.games || '—'),
+          h('td.r.num', p.games ? F.pct(p.wins / p.games) : '—'),
+          h('td', recentChips(recent)));
+      })));
+    return h('div', favoritesBlock(), h('div.meta-split', h('div.panel.flush', h('div.table-scroll', table),
+      h('div.hint.pad', '«Спамит» — один герой занимает половину или больше последних 20 игр. Нажми на игрока, чтобы увидеть его матчи.')),
+    h('div.sticky', playerDetailPanel())));
+  }
+
+  function playerDetailPanel() {
+    if (!S.selectedPlayer) return h('div.empty', h('strong', 'Выбери игрока'), 'Покажу его последние матчи: героя, результат, KDA и купленные предметы, и на ком он сейчас сидит.');
+    if (S.playerLoading || !S.playerDetail) return h('div.panel', h('div.row', h('span.spin'), 'Загружаю матчи игрока…'));
+    const d = S.playerDetail;
+    const p = d.player;
+    const r = p.recent;
+    const parts = [
+      h('div.row', { style: { marginBottom: '10px' } },
+        h('div.grow', h('h2', { style: { margin: 0 } }, `${p.rank ? '#' + p.rank + ' ' : ''}${p.name}`), h('div.muted', `${p.team ? p.team + ' · ' : ''}ID ${p.accountId}${r && r.lastPlayed ? ' · последняя игра ' + F.ago(r.lastPlayed) : ''}`)),
+        h('button.btn.small', { onclick: () => dc.copy(String(p.accountId)).then(() => toast('ID скопирован')) }, 'Скопировать ID')),
+    ];
+    if (r && r.spam) parts.push(h('div.note.hot', Icon('flame'), h('div', `Сейчас спамит ${heroName(r.spam.hero_id)}: ${r.spam.games} из ${r.spam.of} последних игр.`)));
+    if (r && r.heroes && r.heroes.length) {
+      parts.push(h('h3', `На ком играет (последние ${r.n} ${plural(r.n, 'игра', 'игры', 'игр')})`));
+      const max = r.heroes[0].games;
+      parts.push(h('div', r.heroes.map((x) => h('div.hero-bar',
+        heroIcon(x.hero_id, '.sm'), h('span.hero-bar-name', heroName(x.hero_id)),
+        h('div.bar.grow', h('span', { style: { width: `${(x.games / max) * 100}%` } })),
+        h('span.num', `${x.games}`), h('span.muted.num', { style: { width: '74px', textAlign: 'right' } }, x.known ? `${F.pct(x.wins / x.known)} побед` : '')))));
+    }
+    if (d.error) parts.push(h('div.muted', `История недоступна: ${d.error}`));
+    parts.push(h('h3', { style: { marginTop: '16px' } }, 'Последние матчи'));
+    if (!d.games.length) parts.push(h('div.muted', 'Матчей не найдено.'));
+    for (const g of d.games) {
+      parts.push(h(`div.pgame.click${g.won === true ? '.win' : g.won === false ? '.loss' : ''}`, { title: 'Открыть матч подробно', onclick: () => openMatchDetail(g.match_id, p.accountId) },
+        heroIcon(g.hero_id, '.sm'),
+        h('div.pgame-main',
+          h('div.row', { style: { gap: '8px' } }, h('b', heroName(g.hero_id)), h('span.muted', `${F.ago(g.start_time)}${g.duration_s ? ' · ' + F.time(g.duration_s) : ''}`),
+            g.won === true ? h('span.res.win', 'победа') : g.won === false ? h('span.res.loss', 'поражение') : null),
+          g.items ? h('div.mini-items', { style: { marginTop: '4px', flexWrap: 'wrap' } }, g.items.map((it) => h('span', { title: `${itemName(it.id)} — ${F.time(it.t)}` }, itemImg(it.id))))
+            : h('div.dim', { style: { fontSize: '12px' } }, 'предметы — после скачивания матча')),
+        h('div.pgame-kda.num', g.k !== undefined ? `${g.k}/${g.d}/${g.a}` : '', h('div.dim', g.nw ? `${F.k(g.nw)} душ` : ''))));
+    }
+    return h('div.panel', parts);
+  }
+
+  // ================= СКЕЛЕТОНЫ И ПОЯВЛЕНИЕ =================
+  function skeleton(caption, kind = 'page') {
+    const blocks = kind === 'list'
+      ? [h('div.sk.sk-row'), h('div.sk.sk-row'), h('div.sk.sk-row'), h('div.sk.sk-row')]
+      : [h('div.sk-grid', h('div.sk.sk-tile'), h('div.sk.sk-tile'), h('div.sk.sk-tile'), h('div.sk.sk-tile')), h('div.sk.sk-block'), h('div.sk-grid.two', h('div.sk.sk-block.short'), h('div.sk.sk-block.short'))];
+    return h('div.skeleton', { 'aria-busy': 'true' }, h('div.sk-caption', h('span.spin'), caption), blocks);
+  }
+  function animateView(id) {
+    const el = $(`view-${id}`);
+    if (!el) return;
+    el.classList.remove('enter');
+    void el.offsetWidth;
+    el.classList.add('enter');
+    clearTimeout(el._enterT);
+    el._enterT = setTimeout(() => el.classList.remove('enter'), 900);
+  }
+
+  // ================= ТРЕНЕР =================
+  async function loadCoach(forceNew = false) {
+    if (!S.auth) return;
+    S.coach.loading = true;
+    S.coach.error = null;
+    if (S.view === 'coach') renderCoach();
+    try {
+      S.coach.data = await dc.coach({ forceNew });
+      S.coach.for = S.auth.accountId;
+      if (forceNew) toast('Новый план готов');
+    } catch (e) {
+      S.coach.error = e.message;
+    } finally {
+      S.coach.loading = false;
+      if (S.view === 'coach') renderCoach();
+      if (S.view === 'overview') renderOverview();
+    }
+  }
+
+  const goalStatus = { active: 'в работе', done: 'выполнена', expired: 'неделя закончилась' };
+
+  function goalCard(g) {
+    const heroTargets = g.byHero ? Object.entries(g.byHero).filter(([hid]) => S.assets.heroes[hid]) : [];
+    const rate = g.rate;
+    return h(`div.goal.${g.status}`,
+      h('div.goal-head',
+        h('span.goal-area', g.area),
+        h('span.goal-state', g.status === 'done' ? Icon('trophy') : null, goalStatus[g.status] || g.status)),
+      h('div.goal-title', g.title),
+      heroTargets.length > 1 ? h('div.goal-heroes', heroTargets.slice(0, 4).map(([hid, t]) => h('span.chip', heroIcon(Number(hid), '.sm'), String(g.key === 'firstBigT' ? F.time(t) : g.key === 'kp' ? F.pct(t) : F.num(t))))) : null,
+      h('div.goal-stats',
+        h('div', h('b.num', g.games ? `${g.passed}/${g.games}` : '—'), h('span', 'игр с выполнением')),
+        h('div', h('b.num', g.streak ? `${g.streak}` : '0'), h('span', 'подряд')),
+        h('div', h('b.num', g.baselineText), h('span', 'было обычно'))),
+      g.rows.length ? Charts.goalChart(g.rows, g.cmp) : h('div.dim.small', 'Пока нет игр для проверки'),
+      h('div.goal-bar', h('span', { style: { width: `${Math.round((rate || 0) * 100)}%` } })),
+      g.tip ? h('div.tip', Icon('bulb'), h('span', g.tip)) : null);
+  }
+
+  function gameCard(c) {
+    return h(`button.gcard${c.won ? '.win' : c.won === false ? '.loss' : ''}`, { onclick: () => { setView('matches'); openMatch(c.match_id); }, title: 'Открыть разбор матча' },
+      h('div.gcard-head', heroIcon(c.hero),
+        h('div.grow', h('div.gcard-title', heroName(c.hero), h('span', { class: `res ${c.won ? 'win' : 'loss'}` }, c.won ? 'победа' : 'поражение')),
+          h('div.gcard-sub', `${c.start_time ? F.ago(c.start_time + (c.duration_s || 0)) : ''} · ${F.time(c.duration_s)} · ${c.k}/${c.d}/${c.a}`)),
+        c.counted ? h(`div.gcard-score${c.passed === c.counted ? '.full' : c.passed === 0 ? '.zero' : ''}`, h('b.num', `${c.passed}/${c.counted}`), h('span', 'цели')) : null),
+      c.checks.length ? h('div.gcard-checks', c.checks.map((x) => h(`span.check-chip${x.pass === true ? '.ok' : x.pass === false ? '.no' : ''}`, { title: `цель: ${x.targetText}` },
+        x.pass === true ? '✓' : x.pass === false ? '✕' : '·', ` ${x.short}: `, h('b', x.text)))) : null,
+      c.mistake ? h('div.gcard-mistake', h('b', c.mistake.title), c.mistake.tip ? h('div', c.mistake.tip) : null) : null,
+      c.good ? h('div.gcard-good', '+ ', c.good.title) : null);
+  }
+
+  function renderCoach() {
+    const v = $('view-coach');
+    if (!v) return;
+    const d = S.coach.data;
+    const head = h('div.page-head',
+      h('div', h('div.crumbs', 'Моя игра / Тренер'), h('h1', 'Тренер'), h('div.sub', 'Цели на неделю из твоих главных проблем, проверка каждой игры и прогресс.')),
+      h('div.row',
+        h('button.btn', { onclick: () => loadCoach(false), disabled: S.coach.loading || null }, Icon('refresh'), 'Проверить новые игры'),
+        d && d.plan ? h('button.btn.primary', { onclick: () => loadCoach(true), disabled: S.coach.loading || null, title: 'Пересчитать цели по последним играм' }, 'Новый план') : null));
+    if (!S.auth) {
+      v.replaceChildren(head, h('div.empty', h('strong', 'Войди через Steam'), 'Тренер строит план по твоим матчам.', h('div', { style: { marginTop: '14px' } }, h('button.btn.steam', { onclick: login }, 'Войти через Steam'))));
+      return;
+    }
+    if (S.coach.loading && !d) return void v.replaceChildren(head, skeleton('Тренер смотрит твои последние матчи — в первый раз это может занять минуту'));
+    if (S.coach.error && !d) return void v.replaceChildren(head, h('div.empty', h('strong', 'Не получилось'), S.coach.error, h('div', { style: { marginTop: '12px' } }, h('button.btn', { onclick: () => loadCoach(false) }, 'Попробовать ещё раз'))));
+    if (!d) return void v.replaceChildren(head);
+    if (!d.plan) {
+      v.replaceChildren(head, h('div.empty', h('strong', 'Мало игр для плана'), `Нужно ещё ${d.need || 5} ${plural(d.need || 5, 'игра', 'игры', 'игр')} с подробными данными. Сыграй пару матчей — и тренер составит план.`));
+      return;
+    }
+    const active = d.goals.filter((g) => g.status === 'active');
+    const done = d.goals.filter((g) => g.status === 'done');
+    const ends = new Date(d.plan.endsAt * 1000).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+    const score = d.score;
+    const hero = h('div.coach-hero',
+      h('div.coach-ring', Charts.ring(score || 0, { size: 132, stroke: 10, color: score === null ? 'var(--line-2)' : score >= 0.7 ? 'var(--good)' : score >= 0.4 ? 'var(--warn)' : 'var(--bad)' }),
+        h('div.ring-label', h('b', score === null ? '—' : F.pct(score)), h('span', 'целей выполнено'))),
+      h('div.coach-hero-text',
+        h('div.coach-kicker', `План до ${ends}`),
+        h('div.coach-headline', active.length ? `${active.length} ${plural(active.length, 'цель', 'цели', 'целей')} в работе` : 'Все цели закрыты'),
+        h('div.muted', d.gamesSince ? `После начала плана сыграно ${d.gamesSince} ${plural(d.gamesSince, 'игра', 'игры', 'игр')}. Цель закрывается, когда выполнена в 4 из 5 игр подряд.` : 'Сыграй матч — после него здесь появится проверка целей.'),
+        !d.topsReady ? h('div.note', { style: { marginTop: '10px' } }, Icon('info'), h('div', 'Данных топов пока нет — цели посчитаны против игроков твоего уровня. Обнови мету в «Мете героев», чтобы цели были по топам.')) : null),
+      h('div.coach-hero-stats',
+        h('div', h('b.num', String(d.done || 0)), h('span', 'целей закрыто')),
+        h('div', h('b.num', String(d.loaded || 0)), h('span', 'игр разобрано'))));
+    const goals = h('section.panel', h('h2', 'Цели недели'),
+      h('div.goals', active.concat(done).map(goalCard)));
+    const cards = h('section.panel', h('h2', d.cards.length && d.cards[0].beforePlan ? 'Последние игры (до плана)' : 'Проверка после каждой игры'),
+      d.cards.length ? h('div.gcards', d.cards.map(gameCard)) : h('div.muted', 'Игр после начала плана пока нет.'));
+    const feedIcon = { plan: 'bulb', done: 'trophy', game: 'zap', streak: 'flame' };
+    const feed = h('section.panel', h('h2', 'Сообщения тренера'),
+      d.events.length ? h('div.feed', d.events.map((e) => h(`div.feed-item.${e.kind}`,
+        h('div.feed-ico', Icon(feedIcon[e.kind] || 'info')),
+        h('div', h('div.feed-title', e.title, h('span.dim', ` · ${F.ago(e.t)}`)), h('div.feed-text', e.text))))) : h('div.muted', 'Пока тихо.'));
+    const archive = d.archive && d.archive.length ? h('section.panel', h('h2', 'Прошлые цели'),
+      h('div.archive', d.archive.map((g) => h(`div.arch.${g.status}`, h('span', g.status === 'done' ? '✓' : '·'), g.title)))) : null;
+    v.replaceChildren(head, hero, goals, h('div.coach-cols', cards, h('div.coach-side', feed, archive)));
+  }
+
+  // ================= ПЕРЕД ИГРОЙ =================
+  const allHeroes = () => Object.values(S.assets.heroes).filter((x) => x && !x.disabled && !x.inDev).sort((a, b) => a.name.localeCompare(b.name));
+
+  async function loadMyMatchups() {
+    if (!S.auth || S.prep.muLoading) return;
+    S.prep.muLoading = true;
+    try {
+      S.prep.mu = await dc.myMatchups();
+      if (!S.prep.myHero && S.prep.mu.myHeroes.length) S.prep.myHero = S.prep.mu.myHeroes[0].hero_id;
+    } catch (e) {
+      S.prep.muError = e.message;
+    } finally {
+      S.prep.muLoading = false;
+      if (S.view === 'prep') renderPrep();
+    }
+  }
+
+  // Прогноз для выбранного героя: удобные/неудобные соперники и напарники по линии.
+  async function loadOutlook(heroId) {
+    if (!heroId || S.prep.outlook[heroId] !== undefined) return;
+    S.prep.outlook[heroId] = null;
+    try {
+      S.prep.outlook[heroId] = await dc.heroOutlook(heroId);
+    } catch (e) {
+      S.prep.outlook[heroId] = { error: e.message };
+    }
+    if (S.view === 'prep' && S.prep.myHero === heroId) renderPrep();
+  }
+
+  async function runPrep() {
+    if (!S.prep.myHero || !S.prep.enemies.length) return;
+    S.prep.loading = true;
+    renderPrep();
+    try {
+      S.prep.result = await dc.prepareGame({ myHero: S.prep.myHero, enemies: S.prep.enemies, laneFoe: S.prep.laneFoe });
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      S.prep.loading = false;
+      renderPrep();
+    }
+  }
+
+  function heroGrid(selected, onPick, { mine = [], disabled = new Set(), multi = false, lane = null } = {}) {
+    const order = new Map(mine.map((x, i) => [x.hero_id, i]));
+    const list = allHeroes().slice().sort((a, b) => (order.has(a.id) ? order.get(a.id) : 999) - (order.has(b.id) ? order.get(b.id) : 999) || a.name.localeCompare(b.name));
+    const sel = new Set(multi ? selected : [selected]);
+    return h('div.hgrid', list.map((x) => h(`button.hpick${sel.has(x.id) ? '.on' : ''}${lane === x.id ? '.lane' : ''}`, { disabled: disabled.has(x.id) || null, onclick: () => onPick(x.id), title: x.name },
+      x.img ? h('img', { src: x.img, alt: '' }) : h('span.ph', x.name.slice(0, 2)),
+      h('span', x.name),
+      lane === x.id ? h('i', 'линия') : null)));
+  }
+
+  function renderPrep() {
+    const v = $('view-prep');
+    if (!v) return;
+    const P = S.prep;
+    const head = h('div.page-head', h('div', h('div.crumbs', `Мета · топ-${S.settings.topN} / Перед игрой`), h('h1', 'Перед игрой'),
+      h('div.sub', 'Выбери своего героя и героев соперников — покажу, как против них играют топы, что докупают и какой у тебя опыт против них.')),
+      S.auth ? h('button.btn.primary', { onclick: () => dc.toggleOverlay(true), title: 'Окно поверх игры: отметь соперников в паузе перед рейтинговым матчем — получишь лучший пик из своих героев' }, Icon('zap'), `Оверлей пика${S.settings.overlayKey ? ' · ' + S.settings.overlayKey : ''}`) : null);
+    if (!Object.keys(S.assets.heroes).length) return void v.replaceChildren(head, h('div.empty', h('strong', 'Нет списка героев'), 'Нажми «Обновить данные» в «Мете героев».'));
+    const mine = (P.mu && P.mu.myHeroes) || [];
+    const step1 = h('section.panel', h('div.step-head', h('span.step-n', '1'), h('h2', 'Твой герой')),
+      heroGrid(P.myHero, (id) => { P.myHero = id; P.enemies = P.enemies.filter((e) => e !== id); P.result = null; renderPrep(); }, { mine }));
+    const step2 = h('section.panel', h('div.step-head', h('span.step-n', '2'), h('h2', 'Соперники'), h('span.muted.small', `${P.enemies.length} из 6 · повторный клик по выбранному — «он на моей линии»`)),
+      heroGrid(P.enemies, (id) => {
+        if (P.enemies.includes(id)) {
+          if (P.laneFoe !== id) P.laneFoe = id;
+          else {
+            P.laneFoe = null;
+            P.enemies = P.enemies.filter((e) => e !== id);
+          }
+        } else if (P.enemies.length < 6) P.enemies = P.enemies.concat([id]);
+        P.result = null;
+        renderPrep();
+      }, { multi: true, disabled: new Set([P.myHero]), lane: P.laneFoe }),
+      h('div.row', { style: { marginTop: '14px' } },
+        h('button.btn.primary', { onclick: runPrep, disabled: !P.myHero || !P.enemies.length || P.loading || null }, P.loading ? h('span.spin') : Icon('zap'), 'Показать план'),
+        P.enemies.length ? h('button.btn', { onclick: () => { P.enemies = []; P.laneFoe = null; P.result = null; renderPrep(); } }, 'Сбросить') : null));
+    const parts = [head, h('div.prep-steps', step1, step2)];
+    const r = P.result;
+    if (r) {
+      const kindIcon = { good: 'trophy', warn: 'flame', info: 'bulb' };
+      parts.push(h('section.panel.prep-plan', h('h2', `План: ${heroName(P.myHero)} против ${P.enemies.map(heroName).join(', ')}`),
+        r.topGames < 10 ? h('div.note', Icon('info'), h('div', `У топов всего ${r.topGames} ${plural(r.topGames, 'игра', 'игры', 'игр')} на ${heroName(P.myHero)} за период — выводы приблизительные. Увеличь период в настройках, чтобы данных было больше.`)) : null,
+        r.tips.length ? h('div.prep-tips', r.tips.map((t) => h(`div.prep-tip.${t.kind}`, Icon(kindIcon[t.kind] || 'info'), h('div', h('b', t.title), h('div', t.text))))) : h('div.muted', 'Для этих соперников у топов мало данных.'),
+        h('table.table.prep-table', h('thead', h('tr', h('th', 'Соперник'), h('th.r', 'Топы против него'), h('th.r', 'Ты против него'), h('th.r', 'Линия к 10:00'), h('th', 'Топы докупают'))),
+          h('tbody', r.rows.map((x) => h(`tr${x.isLane ? '.selected' : ''}`,
+            h('td', h('div.hero-cell', heroIcon(x.hero_id, '.sm'), heroName(x.hero_id), x.isLane ? h('span.pill.hot', 'на линии') : null)),
+            h('td.r.num', x.top ? h('span', { style: { color: x.top.wr >= 0.5 ? 'var(--good)' : 'var(--bad)' } }, F.pct(x.top.wr)) : '—', x.top ? h('div.dim.small', `${x.top.games} ${plural(x.top.games, 'игра', 'игры', 'игр')}`) : null),
+            h('td.r.num', x.mine ? `${x.mine.wins}–${x.mine.losses}` : '—'),
+            h('td.r.num', x.top && x.top.laneDiff !== null ? h('span', { style: { color: x.top.laneDiff >= 0 ? 'var(--good)' : 'var(--bad)' } }, `${x.top.laneDiff > 0 ? '+' : ''}${F.num(x.top.laneDiff)}`) : '—'),
+            h('td', x.top && x.top.counters.length ? h('div.mini-items', x.top.counters.map((c) => h('span', { title: `${itemName(c.id)}: ${F.pct(c.pick)} игр против него (обычно ${F.pct(c.base)})` }, itemImg(c.id)))) : h('span.dim', '—')))))),
+        h('div.hint', '«Линия к 10:00» — на сколько душ топы на твоём герое обгоняют этого соперника на линии к 10-й минуте. «Топы докупают» — предметы, которые против него берут заметно чаще обычного.')));
+    }
+    // прогноз по выбранному герою: твои игры + игры топового уровня
+    if (P.myHero) {
+      const o = P.outlook[P.myHero];
+      if (o === undefined) loadOutlook(P.myHero);
+      if (!o) parts.push(skeleton(`Считаю матчапы для ${heroName(P.myHero)}`, 'list'));
+      else if (o.error) parts.push(h('section.panel', h('div.note', Icon('info'), h('div', `Не получилось посчитать матчапы: ${o.error}`))));
+      else parts.push(...outlookPanels(o, P.myHero));
+    } else if (P.muLoading) parts.push(skeleton('Собираю твоих героев', 'list'));
+    v.replaceChildren(...parts);
+  }
+
+  function outlookPanels(o, heroId) {
+    const name = heroName(heroId);
+    const pct = (d) => `${d > 0 ? '+' : d < 0 ? '−' : ''}${Math.abs(Math.round(d * 100))}%`;
+    const rec = (x, label) => (x ? h('span.mu-chip', { title: label === 'топы' ? `Игры топового уровня (топы и игроки в их матчах): ${x.wins} побед, ${x.losses} поражений` : `Твои игры: ${x.wins} побед, ${x.losses} поражений` }, h('i', label), `${x.wins}–${x.losses}`) : null);
+    const lane = (x, duo) => (x.laneDiff === null ? null : h(`span.mu-lane.${x.laneDiff >= 0 ? 'pos' : 'neg'}`, { title: duo ? 'Разница душ вашей пары и пары соперников к 10:00' : 'Разница душ с ним на линии к 10:00' },
+      `линия ${x.laneDiff > 0 ? '+' : x.laneDiff < 0 ? '−' : ''}${F.num(Math.abs(Math.round(x.laneDiff)))}`));
+    const row = (x, kind, duo = false) => h(`div.mu-row.ol.${kind}`,
+      heroIcon(x.hero_id, '.sm'),
+      h('div.grow', h('div.mu-name', heroName(x.hero_id)),
+        h('div.mu-meta', rec(x.pro, 'топы'), rec(x.mine, 'ты'), lane(x, duo),
+          kind === 'bad' && x.counters && x.counters.length ? h('span.mu-counter', { title: 'Что топы докупают против него' }, h('i', 'докупают'), h('span.mini-items', x.counters.map((c) => h('span', { title: itemName(c.id) }, itemImg(c.id))))) : null)),
+      h(`div.mu-delta.${x.delta >= 0 ? 'pos' : 'neg'}`, { title: 'Насколько чаще обычного побеждают в таких играх' }, h('b.num', pct(x.delta)), h('span', 'к победам')));
+    const empty = (t) => h('div.muted', { style: { padding: '8px 0' } }, t);
+    const basis = [
+      o.myGames ? `${o.myGames} ${plural(o.myGames, 'твоя игра', 'твои игры', 'твоих игр')} на ${name}` : (S.auth ? `на ${name} у тебя пока нет игр с подробностями` : 'войди через Steam, чтобы учитывать твои игры'),
+      `${o.proGames} ${plural(o.proGames, 'игра', 'игры', 'игр')} топового уровня (из них ${o.topsGames} — сами топы)`,
+    ].join(' · ');
+    const head = h('section.panel.ol-head',
+      h('div.row', { style: { alignItems: 'baseline', gap: '12px', flexWrap: 'wrap' } }, h('h2', { style: { margin: 0 } }, `Матчапы ${name}`), h('span.muted.small', basis)),
+      h('div.hint', { style: { marginTop: '8px' } }, `Процент справа — насколько чаще обычного побеждают на ${name}, когда этот герой у соперников (или с тобой на линии). Твои игры весят вдвое больше игр топов, а редкие встречи учитываются осторожно.`),
+      o.myGames < 5 && S.auth ? h('div.note', { style: { marginTop: '10px' } }, Icon('info'), h('div', `Твоих игр на ${name} мало, поэтому списки в основном по играм топов.`)) : null,
+      o.proGames < 15 ? h('div.note', { style: { marginTop: '10px' } }, Icon('info'), h('div', `Игр топового уровня на ${name} мало — увеличь период или выбери топ-100 в настройках, чтобы списки были точнее.`)) : null);
+    return [
+      head,
+      h('div.grid-2.ol-grid',
+        h('section.panel', h('h2', h('span.dot.good'), 'Против кого играть легко'), h('div.muted.small', { style: { marginBottom: '8px' } }, 'Эти герои у соперников — тебе в плюс. Ищи с ними драки.'),
+          o.good.length ? o.good.map((x) => row(x, 'good')) : empty('Явно удобных соперников пока не видно — мало игр.')),
+        h('section.panel', h('h2', h('span.dot.bad'), 'Против кого играть тяжело'), h('div.muted.small', { style: { marginBottom: '8px' } }, 'Не дерись с ними один на один без преимущества. Справа — что топы докупают против них.'),
+          o.bad.length ? o.bad.map((x) => row(x, 'bad')) : empty('Явно неудобных соперников пока не видно — мало игр.'))),
+      h('section.panel', h('h2', h('span.dot.ally'), `С кем хорошо стоять линию на ${name}`), h('div.muted.small', { style: { marginBottom: '8px' } }, '«Линия» — разница душ вашей пары и пары соперников к 10:00.'),
+        o.mates.length ? h('div.ol-mates', o.mates.map((x) => row(x, 'ally', true))) : empty('Пока мало игр, где известны напарники по линии.'),
+        o.matesBad && o.matesBad.length ? h('div.muted.small', { style: { marginTop: '10px' } }, `Хуже всего линия идёт с: ${o.matesBad.map((x) => `${heroName(x.hero_id)} (${pct(x.delta)})`).join(', ')}.`) : null),
+    ];
+  }
+
+  // ================= МАТЧАПЫ НА СТРАНИЦЕ ГЕРОЯ (МЕТА) =================
+  function heroMatchupPanel(heroId) {
+    const c = S.heroMu[heroId];
+    if (c === undefined) {
+      S.heroMu[heroId] = null;
+      dc.heroMatchups(heroId).then((r) => { S.heroMu[heroId] = r; if (S.selectedHero === heroId) renderMeta(); }).catch(() => { S.heroMu[heroId] = { rows: [], hard: [], easy: [], total: 0 }; });
+      return h('section.panel', h('h2', 'Против кого'), skeleton('Считаю матчапы топов', 'list'));
+    }
+    if (c === null) return h('section.panel', h('h2', 'Против кого'), skeleton('Считаю матчапы топов', 'list'));
+    if (!c.rows.length) return h('section.panel', h('h2', 'Против кого'), h('div.muted', 'Мало игр топов для матчапов.'));
+    const line = (x) => h('div.mu-row', heroIcon(x.hero_id, '.sm'), h('span.grow', heroName(x.hero_id)), h('span.num.muted', `${x.games} ${plural(x.games, 'игра', 'игры', 'игр')}`),
+      x.counters.length ? h('div.mini-items', { title: 'Что топы докупают против него' }, x.counters.map((k) => itemImg(k.id))) : null,
+      h('b.num', { style: { color: x.wr >= 0.5 ? 'var(--good)' : 'var(--bad)' } }, F.pct(x.wr)));
+    return h('section.panel', h('h2', 'Против кого'),
+      h('h3', 'Неудобные соперники'), c.hard.length ? c.hard.map(line) : h('div.muted.small', 'Нет явно неудобных'),
+      h('h3', { style: { marginTop: '14px' } }, 'Удобные соперники'), c.easy.length ? c.easy.map(line) : h('div.muted.small', 'Нет явно удобных'),
+      h('div.hint', `Винрейт топов на ${heroName(heroId)} против героя в команде соперника. Иконки — предметы, которые против него берут чаще обычного.`));
+  }
+
+  // ================= БОК О БОК С ПРО-ИГРОКОМ =================
+  async function openVersusPicker() {
+    const matchId = S.my.selected;
+    MD.data = null;
+    $('modal').hidden = false;
+    const close = h('button.btn.small', { onclick: closeModal }, 'Закрыть', Icon('close'));
+    const sheet = h('div.modal-sheet.narrow', h('div.row', { style: { justifyContent: 'space-between', marginBottom: '10px' } }, h('h2', { style: { margin: 0 } }, 'С кем сравнить'), close), skeleton('Ищу матчи топов на этом герое', 'list'));
+    $('modal').replaceChildren(h('div.modal-back', { onclick: closeModal }), sheet);
+    let list = [];
+    try {
+      list = await dc.proCandidates(matchId);
+    } catch (e) {
+      sheet.replaceChildren(h('div.empty', h('strong', 'Не получилось'), e.message));
+      return;
+    }
+    sheet.replaceChildren(
+      h('div.row', { style: { justifyContent: 'space-between', marginBottom: '6px' } }, h('h2', { style: { margin: 0 } }, 'С кем сравнить'), close),
+      h('div.muted', { style: { marginBottom: '12px' } }, 'Матчи топов на том же герое. Сверху — самые похожие по сборке и победы.'),
+      list.length ? h('div.vs-list', list.map((c) => h(`button.vs-cand${c.won ? '.win' : '.loss'}`, { onclick: () => { closeModal(); openVersus(matchId, c.match_id, c.account_id); } },
+        h('div.grow', h('b', c.name), h('div.muted.small', `${c.won ? 'победа' : 'поражение'} · ${F.time(c.duration_s)} · ${c.k}/${c.d}/${c.a} · ${F.k(c.nw)} душ`)),
+        h('div.vs-sim', h('b.num', F.pct(c.similarity)), h('span', 'сборка совпадает')))))
+        : h('div.empty', h('strong', 'Нет матчей топов на этом герое'), 'Обнови мету или увеличь период в настройках.'));
+  }
+
+  async function openVersus(matchId, proMatchId, proAccountId) {
+    S.my.vs = { loading: true, data: null };
+    renderCamp();
+    try {
+      S.my.vs.data = await dc.versus({ matchId, proMatchId, proAccountId });
+    } catch (e) {
+      S.my.vs = null;
+      toast(e.message, true);
+    } finally {
+      if (S.my.vs) S.my.vs.loading = false;
+      renderCamp();
+    }
+  }
+
+  function versusView() {
+    const vs = S.my.vs;
+    const back = h('button.btn.small', { onclick: () => { S.my.vs = null; renderCamp(); } }, '← К разбору матча');
+    if (vs.loading || !vs.data) return h('div', h('div.row', { style: { marginBottom: '14px' } }, back), skeleton('Загружаю матч топа'));
+    const { me, pro } = vs.data;
+    const card = (s, who) => h(`div.vs-card${s.won ? '.win' : '.loss'}`,
+      heroIcon(s.hero, '.lg'),
+      h('div', h('div.vs-who', who), h('div.vs-name', `${heroName(s.hero)}`), h('div.muted', `${s.won ? 'победа' : 'поражение'} · ${F.time(s.duration_s)}`)),
+      h('div.vs-nums', h('div', h('b.num', `${s.k}/${s.d}/${s.a}`), h('span', 'K/D/A')), h('div', h('b.num', F.k(s.nw)), h('span', 'душ'))));
+    // синхронные карты
+    let t = 600;
+    const m1 = MapView(me.map, { focusSlot: me.slot, focusName: 'Ты', heroName, heroImg: heroImgSrc, mapAsset: S.assets.map || null, compact: true });
+    const m2 = MapView(pro.map, { focusSlot: pro.slot, focusName: pro.name, heroName, heroImg: heroImgSrc, mapAsset: S.assets.map || null, compact: true });
+    const maxT = Math.min(me.map.duration, pro.map.duration);
+    const clock = h('span.map-clock.num', F.time(t));
+    const range = h('input.map-range', { type: 'range', min: 0, max: Math.round(Math.max(me.map.duration, pro.map.duration)), value: t, 'aria-label': 'Минута' });
+    const setT = (x) => { t = x; clock.textContent = F.time(t); m1.setTime(t); m2.setTime(t); };
+    range.addEventListener('input', () => setT(Number(range.value)));
+    let timer = null;
+    const play = h('button.btn.small', { onclick: () => {
+      if (timer) { clearInterval(timer); timer = null; play.textContent = 'Пуск'; return; }
+      play.textContent = 'Пауза';
+      timer = setInterval(() => {
+        if (!document.body.contains(play)) return clearInterval(timer);
+        const nt = Math.min(maxT, t + 1);
+        range.value = String(nt);
+        setT(nt);
+        if (nt >= maxT) { clearInterval(timer); timer = null; play.textContent = 'Пуск'; }
+      }, 100);
+    } }, 'Пуск');
+    setT(t);
+    const maps = h('section.panel', h('h2', 'Где были в одну и ту же минуту'),
+      h('div.vs-maps', h('div', h('div.vs-map-label', 'Ты'), m1), h('div', h('div.vs-map-label', pro.name), m2)),
+      h('div.map-controls', play, h('span'), clock, range));
+    // графики
+    const tabs = [['nw', 'Души'], ['pdmg', 'Урон по героям'], ['farm', 'Крипы'], ['ka', 'Убийства + помощь']];
+    const k = S.my.vsChart || 'nw';
+    const len = Math.max(me.curves[k].length, pro.curves[k].length);
+    const pad = (a) => a.concat(Array(Math.max(0, len - a.length)).fill(null));
+    const chart = h('section.panel', h('div.row', h('h2', { style: { margin: 0 } }, 'По минутам'), h('div.grow'),
+      h('div.legend', h('span', h('i', { style: { background: 'var(--you)' } }), 'Ты'), h('span', h('i', { style: { background: 'var(--top)' } }), pro.name))),
+      h('div.tabs', { style: { marginTop: '10px' } }, tabs.map(([kk, label]) => h('button.tab' + (k === kk ? '.active' : ''), { onclick: () => { S.my.vsChart = kk; renderCamp(); } }, label))),
+      Charts.lineChart({ me: pad(me.curves[k]), med: pad(pro.curves[k]), p25: Array(len).fill(null), p75: Array(len).fill(null), n: [] }, { yFmt: k === 'ka' ? (x) => String(Math.round(x)) : (x) => F.k(x), meLabel: 'Ты', topLabel: pro.name, markers: me.deaths.map((x) => ({ minute: x / 60, color: 'var(--bad)' })) }),
+      me.deaths.length ? h('div.hint', `Красные линии — твои смерти: ${me.deaths.map(F.time).join(', ')}. У ${pro.name}: ${pro.deaths.length ? pro.deaths.map(F.time).join(', ') : 'ни одной'}.`) : null);
+    // фазы
+    const cell = (a, b, invert = false, fmt = F.num) => {
+      if (a === null || b === null) return h('td.r.num', '—');
+      const good = invert ? a <= b : a >= b;
+      return h('td.r.num', h('b', { style: { color: good ? 'var(--good)' : 'var(--bad)' } }, fmt(a)), h('span.muted', ` / ${fmt(b)}`));
+    };
+    const phases = h('section.panel', h('h2', 'По фазам: ты / он'),
+      h('table.table', h('thead', h('tr', h('th', 'Фаза'), h('th.r', 'Души'), h('th.r', 'Урон по героям'), h('th.r', 'Смерти'), h('th.r', 'Уб. + пом.'))),
+        h('tbody', me.phases.map((ph, i) => h('tr', h('td', `${ph.name} ${ph.to >= 60 ? ph.from + '+' : ph.from + '–' + ph.to}`),
+          cell(ph.nw, pro.phases[i].nw), cell(ph.pdmg, pro.phases[i].pdmg), cell(ph.d, pro.phases[i].d, true, (x) => String(Math.round(x))), cell(ph.ka, pro.phases[i].ka, false, (x) => String(Math.round(x))))))),
+      h('table.table', { style: { marginTop: '14px' } }, h('thead', h('tr', h('th', 'Души с источника'), ...me.sources.map((s, i) => h('th.r', me.phases[i].name)))),
+        h('tbody', me.sources[0].rows.map((r, ri) => h('tr', h('td', r.short), ...me.sources.map((s, i) => cell(s.rows[ri].v, pro.sources[i].rows[ri].v, r.field === 'g_lost')))))),
+      h('div.hint', 'Жирное — ты, после черты — про-игрок. Зелёный — не хуже него.'));
+    // предметы
+    const items = h('section.panel', h('h2', 'Покупки'),
+      itemTimeline([{ label: 'Ты', items: me.items.slice(0, 14).map((it) => ({ id: it.id, t: it.t })) }, { label: pro.name, items: pro.items.slice(0, 14).map((it) => ({ id: it.id, t: it.t })) }], { maxT: Math.max(me.duration_s, pro.duration_s) }),
+      slotKey());
+    return h('div', h('div.row', { style: { marginBottom: '14px' } }, back),
+      h('div.vs-head', card(me, 'Ты'), h('div.vs-vs', 'VS'), card(pro, `${pro.rank ? '#' + pro.rank + ' ' : ''}${pro.name}`)),
+      maps, chart, phases, items);
+  }
+
+  // ================= ОБЗОР =================
+  const RANK_NAMES = ['Obscurus', 'Initiate', 'Seeker', 'Acolyte', 'Sentinel', 'Mystic', 'Ritualist', 'Emissary', 'Oracle', 'Phantom', 'Ascendant', 'Eternus'];
+  const rankName = (tier) => {
+    const r = S.assets.ranks && S.assets.ranks[tier];
+    return (r && r.name) || RANK_NAMES[tier] || `Ранг ${tier}`;
+  };
+  function rankImg(tier, sub) {
+    const r = S.assets.ranks && S.assets.ranks[tier];
+    const src = r && r.sub ? r.sub[`small_subrank${sub}`] || r.sub.small || r.img : r && r.img;
+    if (src) return h('img.rank-img', { src, alt: '' });
+    return h('div.rank-img.ph', h('span', String(tier)));
+  }
+  const modeName = (mm) => ({ 4: 'рейтинг', 1: 'обычная' })[mm] || '';
+  function dayLabel(ts) {
+    const d = new Date(ts * 1000);
+    const today = new Date();
+    const y = new Date();
+    y.setDate(today.getDate() - 1);
+    const same = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    if (same(d, today)) return 'Сегодня';
+    if (same(d, y)) return 'Вчера';
+    return d.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
+  }
+  const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+
+  // Строка матча — общая для лагеря и обзора. Список группируется по дням.
+  function matchRows(list, { selected = null, onOpen }) {
+    const out = [];
+    let day = null;
+    let group = null;
+    for (const m of list) {
+      if (m.pending) {
+        out.push(h(`button.match.pending${selected === m.match_id ? '.active' : ''}`, { onclick: () => onOpen(m.match_id), title: 'Матч найден в кэше Steam и ещё обрабатывается в deadlock-api' },
+          h('div.hero-ico.ph', '?'),
+          h('div.match-body', h('div.match-title', h('span.match-hero', 'Новый матч')), h('div.match-sub', 'обрабатывается — нажми, чтобы проверить')),
+          h('div.match-kda', h('div.souls', `ID ${m.match_id}`))));
+        continue;
+      }
+      const dl = m.start_time ? dayLabel(m.start_time) : '—';
+      if (dl !== day) {
+        day = dl;
+        const games = list.filter((x) => x.start_time && dayLabel(x.start_time) === dl);
+        const w = games.filter((x) => x.won === true).length;
+        const l = games.filter((x) => x.won === false).length;
+        group = h('div.day-group', h('div.day-head', h('span', dl), h('span.num', h('b.diff-pos', `${w}`), h('span.dim', ' – '), h('b.diff-neg', `${l}`))));
+        out.push(group);
+      }
+      const cls = m.won === true ? '.win' : m.won === false ? '.loss' : '';
+      group.append(h(`button.match${cls}${selected === m.match_id ? '.active' : ''}`, { onclick: () => onOpen(m.match_id), title: `Матч ${m.match_id}${modeName(m.match_mode) ? ' · ' + modeName(m.match_mode) : ''}` },
+        heroIcon(m.hero_id),
+        h('div.match-body',
+          h('div.match-title', h('span.match-hero', heroName(m.hero_id))),
+          h('div.match-sub', m.won === true ? h('span.res.win', 'победа') : m.won === false ? h('span.res.loss', 'поражение') : null,
+            F.time(m.duration_s))),
+        h('div.match-kda', h('div.kda', h('b', m.k), h('span.dim', ' / '), h('b.d', m.d), h('span.dim', ' / '), h('b', m.a)),
+          h('div.souls', [m.start_time ? hhmm(m.start_time) : null, `${F.k(m.nw)} душ`].filter(Boolean).join(' · ')))));
+    }
+    return out;
+  }
+
+  async function loadOverview() {
+    if (!S.auth) return;
+    S.ov.loading = true;
+    S.ov.error = null;
+    renderOverview();
+    try {
+      S.ov.data = await dc.overview(S.ov.days);
+      S.ov.for = S.auth.accountId;
+    } catch (e) {
+      S.ov.error = e.message;
+    } finally {
+      S.ov.loading = false;
+      if (S.view === 'overview') renderOverview();
+    }
+  }
+
+  function seg(options, value, onPick) {
+    return h('div.seg', options.map(([v, label]) => h(`button${v === value ? '.on' : ''}`, { onclick: () => onPick(v) }, label)));
+  }
+
+  function deltaPill(cur, prev, { lowBetter = false, fmt = (v) => v.toFixed(1).replace('.', ',') } = {}) {
+    if (cur === null || prev === null || cur === undefined || prev === undefined) return null;
+    const d = cur - prev;
+    if (Math.abs(d) < 1e-9) return h('span.delta', '±0');
+    const good = lowBetter ? d < 0 : d > 0;
+    return h(`span.delta.${good ? 'good' : 'bad'}`, { title: 'Разница с предыдущим таким же периодом' }, `${d > 0 ? '+' : '−'}${fmt(Math.abs(d))}`);
+  }
+
+  function rankLadder(tier) {
+    const bars = [];
+    for (let t = 1; t <= 11; t++) bars.push(h(`span${t === tier ? '.on' : t < tier ? '.past' : ''}`, { style: { height: `${18 + t * 4}px` }, title: rankName(t) }));
+    return h('div.rank-ladder', h('div.rank-bars', bars), h('div.rank-ends', h('span', rankName(1)), h('span', rankName(11))));
+  }
+
+  // Источники душ по фазам — карточки. Используется в обзоре и лагере.
+  function sourcePhaseCards(phases, { refLabel = 'топы', unitNote = null } = {}) {
+    const cards = phases.filter((p) => p.rows).map((p) => {
+      const max = Math.max(1, ...p.rows.flatMap((r) => [Math.abs(r.me || 0), Math.abs(r.ref || 0)]));
+      const diffCell = (r) => {
+        if (r.diff === null) return h('span.dim', '—');
+        const bad = r.invert ? r.diff > 60 : r.diff < -60;
+        const good = r.invert ? r.diff < -60 : r.diff > 60;
+        return h(`span.num.src-diff${bad ? '.neg' : good ? '.pos' : ''}`, `${r.diff > 0 ? '+' : r.diff < 0 ? '−' : ''}${F.num(Math.abs(r.diff))}`);
+      };
+      const worstField = p.worst ? p.worst.field : null;
+      const tot = p.total || {};
+      return h(`div.src-phase.${p.level || 'none'}`,
+        h('div.ph-title', h('b', p.name), h('span.muted.num', p.to >= 60 ? `${p.from}:00 и дальше` : `${p.from}:00–${p.to}:00`)),
+        h('div.src-total', h('span.muted', 'Всего'), h('span.num', h('b', F.num(tot.me)), h('span.muted', ` / ${F.num(tot.ref)}`)),
+          tot.diff !== null && tot.diff !== undefined ? h(`span.num.src-diff${tot.diff < -60 ? '.neg' : tot.diff > 60 ? '.pos' : ''}`, `${tot.diff > 0 ? '+' : tot.diff < 0 ? '−' : ''}${F.num(Math.abs(tot.diff))}`) : null),
+        h('div.src-rows', p.rows.map((r) => h(`div.src-line${r.field === worstField ? '.worst' : ''}${r.invert ? '.lost' : ''}`, { title: r.name },
+          h('div.src-name', r.short || r.name),
+          diffCell(r),
+          h('div.src-vals.num', F.num(r.me), h('span.dim', ` / ${F.num(r.ref)}`)),
+          h('div.src-bars', h('span.you', { style: { width: `${(Math.abs(r.me || 0) / max) * 100}%` } }), h('span.top', { style: { width: `${(Math.abs(r.ref || 0) / max) * 100}%` } }))))),
+        p.worst ? h('div.src-worst', h('div', h('b', p.worst.field === 'g_lost' ? 'Главное: ' : 'Главный недобор: '), p.worst.name.toLowerCase(), p.worst.field === 'g_lost' ? ` (+${F.num(p.worst.loss)})` : ` (−${F.num(p.worst.loss)})`),
+          p.worst.tip ? h('div.tip', Icon('bulb'), h('span', p.worst.tip)) : null)
+          : h('div.src-worst.ok', `На уровне: ${refLabel} не набирают заметно больше`));
+    });
+    return h('div',
+      h('div.legend', { style: { marginBottom: '12px' } }, h('span', h('i', { style: { background: 'var(--you)' } }), 'Ты'), h('span', h('i', { style: { background: 'var(--top)' } }), refLabel[0].toUpperCase() + refLabel.slice(1)), unitNote ? h('span.dim', unitNote) : null),
+      h('div.src-phases', cards));
+  }
+
+  function renderOverview() {
+    const v = $('view-overview');
+    const periodSeg = seg([[3, '3 дня'], [7, '7 дней'], [14, '14 дней']], S.ov.days, (d) => { S.ov.days = d; loadOverview(); });
+    const head = h('div.page-head',
+      h('div', h('div.crumbs', 'Моя игра / Главная'), h('h1', S.auth && S.auth.name ? `Привет, ${S.auth.name.trim() || 'игрок'}` : 'Главная'), h('div.sub', 'Твоя форма за последние дни, цифры против игроков твоего уровня, задачи тренера и над чем работать.')),
+      h('div.row', S.ov.loading ? h('span.muted.row', h('span.spin'), 'Считаю…') : null, periodSeg,
+        h('button.btn.small.icon', { onclick: loadOverview, title: 'Обновить', 'aria-label': 'Обновить', disabled: S.ov.loading }, Icon('refresh'))));
+    if (!S.auth) {
+      const input = h('input.input', { placeholder: 'или ссылка на профиль Steam: …/id/ник или …/profiles/7656…', style: { flex: '1' } });
+      const metaReady = S.meta && S.meta.totalRecords;
+      v.replaceChildren(h('div.welcome',
+        h('div.welcome-main',
+          h('div.crumbs', 'Добро пожаловать'),
+          h('h1.welcome-title', 'Личный тренер по Deadlock'),
+          h('p.welcome-text', `Программа следит за мета-игрой топ-${S.settings.topN} текущего сезона и учит тебя на их примере: разбирает каждый твой матч, ставит цели на неделю и показывает, где ты отстаёшь от топов.`),
+          h('div.welcome-steps',
+            h('div.wstep', h('span.step-n', '1'), h('div', h('b', 'Войди через Steam'), h('div.muted', 'Пароль вводится только на сайте Steam — программа получает лишь твой Steam ID.'),
+              h('div.row', { style: { marginTop: '10px' } }, h('button.btn.steam', { onclick: login }, 'Войти через Steam')),
+              h('div.row.nowrap', { style: { marginTop: '8px' } }, input, h('button.btn', { onclick: () => loginManual(input.value) }, 'OK')))),
+            h('div.wstep', h('span.step-n', '2'), h('div', h('b', `Собери мету топ-${S.settings.topN}`), h('div.muted', metaReady ? `Готово: ${S.meta.totalMatches} ${plural(S.meta.totalMatches, 'матч', 'матча', 'матчей')} топов.` : 'Первый сбор занимает несколько минут.'),
+              h('div.row', { style: { marginTop: '10px' } }, h('button.btn', { onclick: () => { setView('meta'); if (!metaReady) refreshTop(); } }, metaReady ? 'Открыть мету' : 'Собрать мету')))))),
+        h('div.welcome-side',
+          [['coach', 'Тренер', 'Цели на неделю и проверка каждой игры'], ['matches', 'Мои матчи', 'Разбор по минутам, карта, бок о бок с про-игроком'], ['prep', 'Перед игрой', 'Матчапы и контр-предметы против состава соперника']]
+            .map(([k, t, d]) => h('button.wfeat', { onclick: () => setView(k) }, h('b', t), h('span', d), Icon('arrow'))))));
+      return;
+    }
+    const o = S.ov.data;
+    if (!o) {
+      v.replaceChildren(head, S.ov.error ? h('div.empty', h('strong', 'Не получилось'), S.ov.error) : skeleton('Загружаю твои матчи — в первый раз это может занять минуту'));
+      return;
+    }
+    const s = o.summary;
+    if (!s.n) {
+      v.replaceChildren(head, h('div.empty', h('strong', `За ${o.days} дн. игр нет`), 'Выбери период побольше или сыграй пару матчей. Если игры были, но их не видно — в «Моих матчах» нажми «Найти в кэше Steam».'));
+      return;
+    }
+
+    // ---- профиль ----
+    const rk = o.rank;
+    const profile = h('div.panel.profile',
+      h('div.prof-head', S.auth.avatar ? h('img.prof-ava', { src: S.auth.avatar, alt: '' }) : h('div.prof-ava.ph', 'ID'),
+        h('div', h('div.prof-name', S.auth.name || `ID ${S.auth.accountId}`), h('div.muted', s.lastPlayed ? `Последняя игра ${F.ago(s.lastPlayed)}` : ''))),
+      rk ? h('div.prof-rank', rankImg(rk.tier, rk.sub),
+        h('div', h('div.rank-name', `${rankName(rk.tier)} ${rk.sub}`), h('div.muted', { title: 'Средний значок твоей команды в загруженных матчах' }, `средний ранг твоих матчей · ${rk.n} ${plural(rk.n, 'игра', 'игры', 'игр')}`)))
+        : h('div.prof-rank', h('div.muted', 'Ранг появится, когда скачаются подробности матчей.')),
+      rk ? rankLadder(rk.tier) : null,
+      h('div.prof-stats',
+        h('div', h('span.muted', 'Матчей'), h('b.num', s.n)),
+        h('div', h('span.muted', 'Время в игре'), h('b.num', `${String(Math.round(s.hours * 10) / 10).replace('.', ',')} ч`)),
+        h('div', h('span.muted', 'Героев'), h('b.num', s.heroes)),
+        h('div', h('span.muted', 'Лучшая серия'), h('b.num', `${s.bestStreak} ${s.bestStreak === 1 ? 'победа' : s.bestStreak >= 2 && s.bestStreak <= 4 ? 'победы' : 'побед'}`)),
+        s.streak ? h('div', h('span.muted', 'Сейчас'), h(`b.num.${s.streak.win ? 'diff-pos' : 'diff-neg'}`, `${s.streak.n} ${s.streak.win ? 'W' : 'L'} подряд`)) : null));
+
+    // ---- форма ----
+    const form = h('div.panel.form-card',
+      h('div.row', h('div.grow', h('h2', { style: { marginBottom: '2px' } }, 'Форма'), h('div.muted', `Винрейт по последним ${o.form.window} играм, всего ${o.form.results.length} ${plural(o.form.results.length, 'игра', 'игры', 'игр')} за ${o.days} дн.`)),
+        h('div.legend', h('span', h('i.sq', { style: { background: 'var(--good)' } }), 'Победа'), h('span', h('i.sq', { style: { background: 'var(--bad)' } }), 'Поражение'))),
+      Charts.formChart(o.form, { heroName }),
+      h('div.form-foot', h('span.dim', `${o.days} дн. назад`), h('span.dim', 'сейчас')));
+
+    // ---- полоса плиток ----
+    const last20 = o.form.results.slice(-20);
+    const w20 = last20.filter((x) => x.won).length;
+    const wr20 = last20.length ? w20 / last20.length : 0;
+    const ringBox = h('div.kstrip-ring',
+      h('div.ring', Charts.ring(wr20, { color: wr20 >= 0.5 ? 'var(--good)' : 'var(--bad)' }), h('div.ring-label', h('b', F.pct(wr20)), h('span', `${w20}W ${last20.length - w20}L`))),
+      h('div', h('div.kpi-label', `Последние ${last20.length} ${plural(last20.length, 'игра', 'игры', 'игр')}`), h('div.wl-bars', last20.map((x) => h(`span.${x.won ? 'w' : 'l'}`, { style: { height: x.won ? '22px' : '14px' } }))), h('div.dim', { style: { fontSize: '12px', marginTop: '4px' } }, 'от старых к новым')));
+    const P = o.prev;
+    const tile = (label, value, prevVal, series, ref, opts = {}) => h('div.ktile',
+      h('div.ktile-head', h('span.kpi-label', label), deltaPill(value, prevVal, opts)),
+      h('div.ktile-value.num', value === null ? '—' : (opts.fmt || ((x) => x.toFixed(1).replace('.', ',')))(value)),
+      Charts.sparkline(series, { ref, color: 'var(--text-2)' }),
+      h('div.ktile-foot.dim', ref !== null && ref !== undefined ? `медиана твоих матчей ${(opts.fmt || ((x) => x.toFixed(1).replace('.', ',')))(ref)}` : P ? `прошлые ${o.days} дн.: ${prevVal === null ? '—' : (opts.fmt || ((x) => x.toFixed(1).replace('.', ',')))(prevVal)}` : ' '));
+    const kstrip = h('div.panel.kstrip', ringBox,
+      tile('KDA', s.kda, P && P.kda, o.series.kda, o.lobbyMedian.kda),
+      tile('Души / мин', s.soulsMin, P && P.soulsMin, o.series.soulsMin, o.lobbyMedian.soulsMin, { fmt: (x) => F.num(x) }),
+      tile('Крипы / мин', s.lhMin, P && P.lhMin, o.series.lhMin, null),
+      tile('Смерти за игру', s.deaths, P && P.deaths, o.series.deaths, o.lobbyMedian.deaths, { lowBetter: true }));
+
+    // ---- советы ----
+    const tipText = (t) => (t.hero ? t.text.replace('{hero}', heroName(t.hero)) : t.text);
+    const focus = o.tips.filter((t) => t.level !== 'good').slice(0, 3);
+    const rest = o.tips.filter((t) => !focus.includes(t));
+    const tipsPanel = h('div.panel',
+      h('div.row', h('h2', { style: { margin: 0 } }, 'Над чем работать'), h('div.grow'), h('span.muted', `по ${s.n} играм за ${o.days} дн.`)),
+      h('ol.priorities', { style: { marginTop: '14px' } }, focus.map((t) => h(`li.${t.level === 'info' ? 'warn' : t.level}`, h('div',
+        h('div.prio-title', h('span.pill', t.area), ' ', t.title), h('div', tipText(t)), t.tip ? h('div.tip', Icon('bulb'), h('span', t.tip)) : null)))),
+      rest.length ? h('div.insights', { style: { marginTop: '12px' } }, rest.map((t) => h(`div.insight.${t.level}`, h('div.insight-area', t.area), h('div', h('div', h('b', t.title)), h('div', tipText(t)), t.tip ? h('div.tip', Icon('bulb'), h('span', t.tip)) : null)))) : null);
+
+    // ---- против твоего уровня ----
+    const cmpMode = S.ov.mode;
+    const block = o.compare[cmpMode];
+    const poolN = cmpMode === 'lobby' ? o.lobbyN : o.topN;
+    const rangeRow = (m) => {
+      if (m.me === null || m.median === null) return h('div.cmp-row', h('div.cmp-label', h('div', m.label)), h('div.dim.cmp-none', 'мало данных — нужно больше игр с подробностями'));
+      const lo = Math.min(m.p05, m.me);
+      const hi = Math.max(m.p95, m.me);
+      const pos = (x) => `${((x - lo) / Math.max(1e-9, hi - lo)) * 100}%`;
+      const good = m.place ? m.place.top : null;
+      const color = good === null ? 'var(--muted)' : good ? 'var(--good)' : 'var(--bad)';
+      const left = Math.min(m.me, m.median);
+      const right = Math.max(m.me, m.median);
+      return h('div.cmp-row',
+        h('div.cmp-label', h('div', m.label), h('div.dim.num', `медиана ${m.medianText}`)),
+        h('div.cmp-val.num', m.meText),
+        h('div.cmp-track',
+          h('span.cmp-iqr', { style: { left: pos(m.p25), width: `calc(${pos(m.p75)} - ${pos(m.p25)})` } }),
+          h('span.cmp-link', { style: { left: pos(left), width: `calc(${pos(right)} - ${pos(left)})`, background: color } }),
+          h('span.cmp-med', { style: { left: pos(m.median) } }),
+          h('span.cmp-dot', { style: { left: pos(m.me), background: color, boxShadow: `0 0 0 5px color-mix(in srgb, ${color} 25%, transparent)` } })),
+        m.place ? h(`span.place.${good ? 'good' : 'bad'}`, `${good ? 'Топ' : 'Низ'} ${m.place.value}%`) : h('span.place', '—'));
+    };
+    const cmpPanel = h('div.panel',
+      h('div.row', h('div.grow', h('h2', { style: { marginBottom: '2px' } }, 'Против твоего уровня'), h('div.muted', cmpMode === 'lobby' ? 'Твоя типичная игра среди всех игроков твоих матчей — это и есть твой уровень.' : 'Твоя типичная игра среди игр топ-50 (все герои).')),
+        seg([['lobby', 'Мои матчи'], ['top', 'Топ-50']], cmpMode, (x) => { S.ov.mode = x; renderOverview(); })),
+      h('div.cmp-legend.dim', h('span', h('i.iqr'), 'обычные 50%'), h('span', h('i.med'), 'медиана'), h('span', `игр в сравнении: ${F.num(poolN)}`)),
+      o.loaded ? h('div.cmp-rows', block.map(rangeRow)) : h('div.muted', 'Нужны подробности матчей — их пока нет в deadlock-api.'),
+      o.missing ? h('div.hint', `Подробностей нет для ${o.missing} из ${s.n} игр — сравнение по остальным ${o.loaded}.`) : null);
+
+    // ---- игра за игрой и длина ----
+    const barCol = (label, sub, wr, games, hiLite) => h('div.wbar',
+      h('div.wbar-val', wr === null ? '—' : F.pct(wr)),
+      h('div.wbar-track', h(`span${hiLite ? '.hi' : ''}${wr !== null && wr < 0.5 ? '.lo' : ''}`, { style: { height: `${wr === null ? 0 : Math.max(4, wr * 100)}%` } })),
+      h('div.wbar-label', h('b', label), h('div.dim', sub)));
+    const bestPos = o.sessions.buckets.filter((b) => b.games >= 3).sort((a, b) => b.wr - a.wr)[0];
+    const sessPanel = h('div.panel',
+      h('h2', { style: { marginBottom: '2px' } }, 'Игра за игрой'), h('div.muted', `Винрейт по номеру игры в сессии · сессий: ${o.sessions.sessions}, в среднем ${String(Math.round(o.sessions.avgLen * 10) / 10).replace('.', ',')} игры`),
+      h('div.wbars', o.sessions.buckets.map((b) => barCol(`#${b.label}`, `${b.games} ${plural(b.games, 'игра', 'игры', 'игр')}`, b.games ? b.wr : null, b.games, bestPos && bestPos.pos === b.pos))),
+      h('h3', { style: { marginTop: '18px' } }, 'По длине матча'),
+      h('div.wbars.small', o.durations.map((d) => barCol(d.label, `${d.games} ${plural(d.games, 'игра', 'игры', 'игр')}`, d.games ? d.wr : null, d.games, false))),
+      o.tilt.afterLoss >= 3 ? h('div.hint', `После поражения следующая игра: винрейт ${F.pct(o.tilt.afterLossWr)} (${o.tilt.afterLoss}). После победы: ${F.pct(o.tilt.afterWinWr)} (${o.tilt.afterWin}).`) : null);
+
+    // ---- источники душ ----
+    const srcMode = o.sources.top.some((p) => p.rows) ? S.ov.srcMode : 'lobby';
+    const srcPanel = h('div.panel',
+      h('div.row', h('div.grow', h('h2', { style: { marginBottom: '2px' } }, 'Откуда души — по фазам игры'),
+        h('div.muted', srcMode === 'top' ? 'Сколько душ ты набираешь с каждого источника за 10 минут — против топов на тех же героях.' : 'Сколько душ ты набираешь с каждого источника за 10 минут — против среднего игрока в твоих матчах.')),
+        o.sources.top.some((p) => p.rows) ? seg([['top', 'Топы на моих героях'], ['lobby', 'Мои матчи']], srcMode, (x) => { S.ov.srcMode = x; renderOverview(); }) : null),
+      o.sources[srcMode].some((p) => p.rows)
+        ? sourcePhaseCards(o.sources[srcMode], { refLabel: srcMode === 'top' ? 'топы' : 'игроки твоих матчей', unitNote: 'души за 10 минут фазы, среднее по играм' })
+        : h('div.muted', { style: { marginTop: '10px' } }, 'Пока нет подробностей матчей для этого сравнения.'));
+
+    // ---- герои ----
+    const heroesPanel = h('div.panel', h('h2', 'Герои'),
+      h('table.table', h('thead', h('tr', h('th', 'Герой'), h('th.r', 'Игр'), h('th.r', 'В–П'), h('th.r', 'Винрейт'), h('th.r', 'KDA'), h('th.r', 'Души/мин'))),
+        h('tbody', o.heroes.map((x) => h('tr.click', { title: 'Открыть мету героя', onclick: () => { setView('meta'); loadHero(x.hero_id); } },
+          h('td', h('div.hero-cell', heroIcon(x.hero_id), heroName(x.hero_id))),
+          h('td.r.num', x.games),
+          h('td.r.num', h('span.diff-pos', x.wins), h('span.dim', '–'), h('span.diff-neg', x.losses)),
+          h('td.r.num', { style: { color: x.wr === null ? '' : x.wr >= 0.5 ? 'var(--good)' : 'var(--bad)' } }, F.pct(x.wr)),
+          h('td.r.num', x.kda === null ? '—' : x.kda.toFixed(1).replace('.', ',')),
+          h('td.r.num', F.num(x.soulsMin)))))));
+
+    // ---- история ----
+    const histPanel = h('div.panel', h('div.row', h('h2', { style: { margin: 0 } }, 'История матчей'), h('div.grow'), h('span.muted', 'нажми — откроется разбор')),
+      h('div.match-list.tall', { style: { marginTop: '12px' } }, matchRows(o.games, { onOpen: (id) => { setView('matches'); openMatch(id); } })));
+
+    // ---- задачи тренера ----
+    const cd = S.coach.data;
+    const coachPanel = h('section.panel.coach-strip',
+      h('div.row', h('h2', { style: { margin: 0 } }, 'Задачи тренера'), h('div.grow'), h('button.btn.small', { onclick: () => setView('coach') }, 'Открыть тренера', Icon('arrow'))),
+      cd && cd.goals && cd.goals.length
+        ? h('div.cs-goals', cd.goals.filter((g) => g.status === 'active').map((g) => h('button.cs-goal', { onclick: () => setView('coach') },
+          h('span.goal-area', g.area), h('b', g.title),
+          h('div.goal-bar', h('span', { style: { width: `${Math.round((g.rate || 0) * 100)}%` } })),
+          h('span.muted.small', g.games ? `${g.passed} из ${g.games} игр` : 'ещё не проверялась'))))
+        : S.coach.loading ? h('div.muted', { style: { marginTop: '10px' } }, h('span.spin'), ' Тренер составляет план…')
+          : h('div.muted', { style: { marginTop: '10px' } }, cd && !cd.plan ? 'Сыграй ещё пару матчей — тренер составит план.' : 'Открой тренера — он составит план на неделю.'));
+    if (!S.coach.data && !S.coach.loading && S.auth) setTimeout(() => loadCoach(false), 0);
+
+    v.replaceChildren(head,
+      h('div.ov-top', profile, form),
+      kstrip,
+      coachPanel,
+      tipsPanel,
+      h('div.ov-two', cmpPanel, sessPanel),
+      srcPanel,
+      h('div.ov-two.even', heroesPanel, histPanel));
+  }
+
+  // ================= ЛАГЕРЬ =================
+  async function loadMyMatches(silent = false) {
+    if (!silent) {
+      S.my.loading = true;
+      S.my.error = null;
+      renderCamp();
+    }
+    try {
+      const before = S.my.list ? new Set(S.my.list.map((m) => m.match_id)) : null;
+      S.my.list = await dc.myMatches();
+      const fresh = before ? S.my.list.filter((m) => !m.pending && !before.has(m.match_id)) : [];
+      if (silent && fresh.length) toast(`Появился новый матч: ${heroName(fresh[0].hero_id)}`);
+    } catch (e) {
+      if (!silent) S.my.error = e.message;
+    } finally {
+      S.my.loading = false;
+      if (S.view === 'camp') renderCamp();
+      schedulePoll();
+    }
+  }
+
+  // Пока открыт лагерь и последний матч старый — проверяем историю каждые 3 минуты (до 10 раз).
+  let pollTimer = null;
+  let pollCount = 0;
+  function lastFinished() {
+    const done = (S.my.list || []).filter((m) => !m.pending && m.start_time);
+    return done.length ? Math.max(...done.map((m) => m.start_time + (m.duration_s || 0))) : 0;
+  }
+  function schedulePoll() {
+    clearTimeout(pollTimer);
+    const stale = Date.now() / 1000 - lastFinished() > 20 * 60;
+    if (S.view !== 'camp' || !S.auth || !stale || pollCount >= 10) return;
+    pollTimer = setTimeout(() => {
+      pollCount += 1;
+      if (S.view === 'camp') loadMyMatches(true);
+    }, 3 * 60e3);
+  }
+
+  async function freshMatches() {
+    S.my.freshBusy = true;
+    renderCamp();
+    try {
+      const r = await dc.freshMatches();
+      S.my.list = r.list;
+      if (r.fresh && r.fresh.ok) toast('История обновлена прямо из Steam');
+      else if (r.fresh && r.fresh.limited) toast('Запросить историю у Steam можно примерно раз в час. Пока попробуй «Найти в кэше Steam» или открыть матч по ID.', true);
+      else toast(`Steam не ответил: ${(r.fresh && r.fresh.error) || 'ошибка'}. Попробуй позже.`, true);
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      S.my.freshBusy = false;
+      renderCamp();
+    }
+  }
+
+  async function scanCache() {
+    try {
+      S.my.scanBusy = true;
+      renderCamp();
+      const r = await dc.scanCache();
+      if (!r.steamDir) toast('Не нашёл папку Steam. Укажи её в настройках.', true);
+      else if (r.added) toast(`Нашёл новых матчей: ${r.added}. Они уже в списке — если матч ещё обрабатывается, нажми на него через пару минут.`);
+      else toast(r.found ? `В кэше ${r.found} ${plural(r.found, 'матч', 'матча', 'матчей')}, новых нет. Если сыгранного матча нет — открой его в игре: «Профиль» → «История матчей», потом нажми эту кнопку ещё раз.` : 'В кэше Steam матчей нет. Открой матч в игре: «Профиль» → «История матчей» → нужный матч, потом нажми эту кнопку ещё раз.');
+      await loadMyMatches(true);
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      S.my.scanBusy = false;
+      renderCamp();
+    }
+  }
+
+  async function openMatch(matchId) {
+    S.my.selected = Number(matchId);
+    S.my.vs = null;
+    S.my.analysis = null;
+    S.my.error2 = null;
+    S.my.target = { type: 'top' };
+    await runAnalysis(true);
+  }
+
+  async function runAnalysis(loadTargets = false) {
+    S.my.analyzing = true;
+    renderCamp();
+    try {
+      const winsOnly = S.my.winsOnly === null ? S.settings.winsOnly : S.my.winsOnly;
+      S.my.analysis = await dc.analyze({ matchId: S.my.selected, target: S.my.target, winsOnly });
+      if (loadTargets) S.my.targets = await dc.campTargets(S.my.analysis.match.hero_id);
+      const row = S.my.list && S.my.list.find((x) => x.match_id === S.my.selected);
+      if (row) {
+        row.loaded = true;
+        row.won = S.my.analysis.match.won;
+      }
+    } catch (e) {
+      S.my.error2 = e.message;
+    } finally {
+      S.my.analyzing = false;
+      renderCamp();
+    }
+  }
+
+  function renderCamp() {
+    const v = $('view-camp');
+    const hero = S.my.mode === 'hero';
+    const head = h('div.page-head', h('div', h('div.crumbs', hero ? 'Моя игра / Мои герои' : 'Моя игра / Мои матчи'), h('h1', hero ? 'Мои герои' : 'Мои матчи'),
+      h('div.sub', hero ? 'Сводка по каждому твоему герою против топов на нём: что получается, что повторяется из игры в игру, матчапы.' : 'Выбери игру — сравню её с топами на том же герое по минутам и покажу, где ты отстаёшь. Можно сравнить бок о бок с матчем про-игрока.')));
+    if (!S.auth) {
+      const input = h('input.input', { placeholder: 'Ссылка на профиль Steam: …/id/ник или …/profiles/7656…', style: { width: '100%' } });
+      v.replaceChildren(head, h('div.login', h('div.panel',
+        h('h2', 'Войди, чтобы увидеть свои игры'),
+        h('p', 'Вход через официальное окно Steam: пароль вводится только на сайте Steam, программа получает лишь твой Steam ID.'),
+        h('button.btn.steam', { onclick: login, style: { padding: '12px 22px', fontSize: '15px' } }, 'Войти через Steam'),
+        h('div.or', 'или'),
+        h('div.row', input, h('button.btn', { onclick: () => loginManual(input.value) }, 'OK')))));
+      return;
+    }
+    if (hero) v.replaceChildren(head, heroModeArea());
+    else if (S.my.vs) v.replaceChildren(head, versusView());
+    else v.replaceChildren(head, h('div.split', matchListPanel(), analysisArea()));
+  }
+
+  // ---------- сводка по герою ----------
+  async function loadMyHeroes() {
+    S.my.heroesLoading = true;
+    renderCamp();
+    try {
+      S.my.heroes = await dc.myHeroes();
+      if (!S.my.hero && S.my.heroes.length) openHeroSummary(S.my.heroes[0].hero_id);
+    } catch (e) {
+      toast(e.message, true);
+      S.my.heroes = [];
+    } finally {
+      S.my.heroesLoading = false;
+      renderCamp();
+    }
+  }
+
+  async function openHeroSummary(heroId) {
+    S.my.hero = heroId;
+    S.my.heroRep = null;
+    S.my.heroRepError = null;
+    S.my.heroRepLoading = true;
+    renderCamp();
+    try {
+      const rep = await dc.heroSummary(heroId);
+      if (S.my.hero === heroId) S.my.heroRep = rep;
+    } catch (e) {
+      S.my.heroRepError = e.message;
+    } finally {
+      S.my.heroRepLoading = false;
+      if (S.view === 'camp') renderCamp();
+    }
+  }
+
+  function heroModeArea() {
+    if (S.my.heroesLoading && !S.my.heroes) return h('div.panel', h('div.row', h('span.spin'), 'Собираю твоих героев…'));
+    if (!S.my.heroes || !S.my.heroes.length) return h('div.empty', h('strong', 'Пока нет игр'), 'Сыграй пару матчей — и здесь появится сводка по каждому твоему герою.');
+    const picker = h('div.hero-picker', S.my.heroes.map((x) => h(`button.hero-pick${S.my.hero === x.hero_id ? '.on' : ''}`, { onclick: () => openHeroSummary(x.hero_id), title: x.topGames ? `Игр топов на этом герое: ${x.topGames}` : 'Игр топов на этом герое пока нет' },
+      heroIcon(x.hero_id),
+      h('span.hero-pick-name', heroName(x.hero_id)),
+      h('span.hero-pick-meta.num', `${x.games} · ${x.games ? Math.round((x.wins / x.games) * 100) : 0}%`))));
+    return h('div', picker, heroReportView());
+  }
+
+  function heroReportView() {
+    if (S.my.heroRepLoading) return skeleton(`Скачиваю твои игры на ${heroName(S.my.hero)} и сравниваю с топами`);
+    if (S.my.heroRepError) return h('div.empty', h('strong', 'Не получилось'), S.my.heroRepError);
+    const r = S.my.heroRep;
+    if (!r) return null;
+    const hero = heroName(r.heroId);
+
+    const head = h('div.panel.hero-sum.hero-banner', { style: heroCardStyle(r.heroId) },
+      h('div.hero-sum-main',
+        heroIcon(r.heroId, '.xl'),
+        h('div',
+          h('div.hero-sum-name', hero),
+          h('p.hero-sum-text', r.summary))),
+      h('dl.hero-sum-stats',
+        h('div', h('dt', 'Игр'), h('dd.num', r.games)),
+        h('div', h('dt', 'Победы и поражения'), h('dd.num', h('span.diff-pos', r.wins), '–', h('span.diff-neg', r.losses))),
+        h('div', h('dt', 'Винрейт'), h('dd.num', F.pct(r.wr))),
+        h('div', h('dt', 'KDA'), h('dd.num', r.kda === null ? '—' : r.kda.toFixed(1).replace('.', ','))),
+        h('div', h('dt', 'Игр топов для сравнения'), h('dd.num', r.benchN))),
+      r.loaded < r.games ? h('div.hint', `Подробности есть для ${r.loaded} из ${r.games} игр — сравнение по ним.`) : null);
+
+    const good = h('div.panel.verdict-col.good',
+      h('h2', 'Что получается'),
+      r.strengths.length ? h('ul.verdict-list', r.strengths.map((s) => h('li', h('b', s.title), h('div', s.text))))
+        : h('div.muted', 'Пока нет показателей, где ты заметно сильнее топов на этом герое. Это нормально — топы задают высокую планку.'));
+    const bad = h('div.panel.verdict-col.bad',
+      h('h2', 'Чего не хватает'),
+      r.weaknesses.length ? h('ul.verdict-list', r.weaknesses.map((w) => h(`li.${w.level}`,
+        h('div.verdict-head', h('b', w.title), h('span.freq.num', { title: 'В скольких играх это повторилось' }, `${w.count} из ${w.of}`)),
+        h('div.freq-bar', h('span', { style: { width: `${Math.round(w.share * 100)}%` } })),
+        h('div', w.text),
+        w.tip ? h('div.tip', Icon('bulb'), h('span', w.tip)) : null)))
+        : h('div.muted', 'Повторяющихся ошибок не нашлось: в разных играх проблемы разные. Разбери отдельные игры в разделе «Мои матчи».'));
+
+    // цифры против топов
+    const metricRow = (m) => {
+      const pct = m.ratio === null ? 0 : Math.max(-1, Math.min(1, (m.ratio - 1) / 0.5));
+      const good = m.verdict === 'good';
+      const color = m.verdict === 'good' ? 'var(--good)' : m.verdict === 'bad' ? 'var(--bad)' : m.verdict === 'warn' ? 'var(--warn)' : 'var(--muted)';
+      const goodSide = m.better === 'high' ? pct : -pct;
+      return h('tr',
+        h('td', m.label),
+        h('td.r.num', h('b', m.meText)),
+        h('td.r.num.muted', m.topText),
+        h('td.diverge-cell', h('div.diverge', h('span.mid'),
+          h('span.fill', { style: { background: color, left: goodSide >= 0 ? '50%' : `${50 + goodSide * 50}%`, width: `${Math.abs(goodSide) * 50}%` } }))),
+        h('td', h('span', { style: { color } }, { good: 'лучше', bad: 'сильно хуже', warn: 'хуже', even: 'на уровне' }[m.verdict] || '')));
+    };
+    const metrics = h('div.panel', h('h2', `Ты и топы на ${hero}`),
+      h('div.muted', { style: { marginBottom: '10px' } }, 'Средние по твоим играм против медианы топ-50 на этом герое. Полоска вправо — в твою пользу.'),
+      h('table.table.metrics', h('thead', h('tr', h('th', 'Показатель'), h('th.r', 'Ты'), h('th.r', 'Топы'), h('th', ''), h('th', ''))),
+        h('tbody', r.metrics.map(metricRow))));
+
+    const src = r.sources.some((p) => p.rows) ? h('div.panel', h('h2', 'Откуда души по фазам'),
+      h('div.muted', { style: { marginBottom: '12px' } }, `Сколько душ за каждые 10 минут ты набираешь на ${hero} с каждого источника — против топов на нём же.`),
+      sourcePhaseCards(r.sources, { refLabel: 'топы', unitNote: 'души за 10 минут фазы' })) : null;
+
+    const items = r.items.length ? h('div.panel', h('h2', `Предметы: ты и топы${r.variantLabel ? ` (сборка ${r.variantLabel})` : ''}`),
+      h('table.table', h('thead', h('tr', h('th', 'Предмет'), h('th.r', 'Топы берут'), h('th.r', 'Ты берёшь'), h('th', ''))),
+        h('tbody', r.items.map((it) => h('tr',
+          h('td', h('div.row.nowrap', { style: { gap: '8px' } }, h('span.mini-items', itemImg(it.id)), itemName(it.id))),
+          h('td.r.num', F.time(it.topT), h('div.dim.small', `в ${F.pct(it.topPick)} игр`)),
+          h('td.r.num', it.myT === null ? '—' : F.time(it.myT), h('div.dim.small', `в ${F.pct(it.myShare)} игр`)),
+          h('td', it.myShare < 0.3 && it.topPick >= 0.5 ? h('span.pill.warn', 'почти не берёшь') : it.delay === null ? null : it.delay > 150 ? h('span.pill.bad', `позже на ${F.time(it.delay)}`) : it.delay < -120 ? h('span.pill.good', `раньше на ${F.time(-it.delay)}`) : h('span.pill.good', 'вовремя'))))))) : null;
+
+    const games = h('div.panel', h('h2', `Игры на ${hero}`), h('div.muted', { style: { marginBottom: '10px' } }, 'Нажми на игру — откроется её подробный разбор.'),
+      h('div.match-list.flat', matchRows(r.list, { onOpen: (id) => { setView('matches'); openMatch(id); } })));
+
+    const mu = r.matchups;
+    const muRow = (x) => h('div.mu-row', heroIcon(x.hero_id, '.sm'), h('span.grow', heroName(x.hero_id)), h('span.num.muted', `${x.wins}–${x.losses}`),
+      x.laneDiff !== null && x.laneDiff !== undefined ? h('span.num.small', { style: { color: x.laneDiff >= 0 ? 'var(--good)' : 'var(--bad)' }, title: 'Разница душ с ним на линии к 10:00' }, `${x.laneDiff > 0 ? '+' : ''}${F.num(x.laneDiff)}`) : null,
+      h('div.mu-bar', h('span', { style: { width: `${Math.round(x.wr * 100)}%`, background: x.wr >= 0.5 ? 'var(--good)' : 'var(--bad)' } })), h('b.num', F.pct(x.wr)));
+    const muPanel = mu && mu.all.length ? h('div.grid-2',
+      h('section.panel', h('h2', `Против кого на ${hero} тяжело`), mu.worst.length ? mu.worst.map(muRow) : h('div.muted', 'Явно неудобных соперников нет (нужно минимум 3 встречи).')),
+      h('section.panel', h('h2', 'Соперники на твоей линии'), mu.lanes.length ? mu.lanes.slice(0, 6).map(muRow) : h('div.muted', 'Нет данных о линиях в этих матчах.'),
+        h('div.hint', 'Справа от имени — сколько душ ты обгонял или отставал от него к 10:00.'))) : null;
+    const sk = r.skills;
+    const skPanel = sk && (sk.mine || sk.top) ? h('div.grid-2', { style: { margin: '18px 0' } },
+      skillsPanel(sk.mine, { title: `Твоя прокачка на ${hero}`, who: 'твоих', compact: true,
+        extra: sk.compare ? h(`div.note${sk.compare.same ? '.good' : ''}`, { style: { marginTop: '12px', marginBottom: 0 } }, Icon(sk.compare.same ? 'trophy' : 'info'), h('div', sk.compare.text)) : null }),
+      skillsPanel(sk.top, { title: `Прокачка топов на ${hero}`, who: 'топов', compact: true })) : null;
+    return h('div', head, h('div.grid-2.verdicts', good, bad), metrics, skPanel, muPanel, src, items, games);
+  }
+
+  function missingHint() {
+    if (!S.my.list) return null;
+    const ageMin = (Date.now() / 1000 - lastFinished()) / 60;
+    if (S.my.list.length && ageMin < 20) return null;
+    return h('details.missing', { open: true },
+      h('summary', 'Только что сыграл, а матча нет?'),
+      h('ol',
+        h('li', 'deadlock-api добавляет матчи в историю с задержкой — от пары минут до нескольких часов. Пока открыт этот раздел, я сам проверяю каждые 3 минуты.'),
+        h('li', 'Быстрее всего: в игре открой «Профиль» → «История матчей» → свой матч, затем нажми «Найти в кэше Steam». Матч сразу появится в списке.'),
+        h('li', '«Запросить у Steam» — свежая история напрямую из Steam (примерно раз в час).'),
+        h('li', 'Или впиши ID матча (виден в истории матчей в игре) и нажми «Открыть».')));
+  }
+
+  function matchListPanel() {
+    const idInput = h('input.input', { placeholder: 'ID матча', style: { flex: '1' } });
+    const items = [];
+    if (S.my.loading) items.push(h('div.row.muted', h('span.spin'), 'Загружаю историю…'));
+    else if (S.my.error) items.push(h('div.muted', S.my.error));
+    else if (S.my.list && !S.my.list.length) items.push(h('div.muted', 'Матчей не найдено. Если ты недавно играл, нажми «Найти в кэше Steam».'));
+    else if (S.my.list) items.push(...matchRows(S.my.list, { selected: S.my.selected, onOpen: openMatch }));
+    return h('div.panel',
+      h('div.row', { style: { marginBottom: '12px' } }, h('h2', { style: { margin: 0 } }, 'Твои матчи'), h('div.grow'),
+        h('button.btn.small.icon', { onclick: loadMyMatches, title: 'Обновить список', 'aria-label': 'Обновить список' }, Icon('refresh'))),
+      h('div.row.nowrap', { style: { marginBottom: '10px' } }, idInput, h('button.btn.small', { onclick: () => idInput.value.trim() && openMatch(idInput.value.trim()) }, 'Открыть')),
+      h('div.find-row',
+        h('button.btn.small', { onclick: scanCache, disabled: S.my.scanBusy || null, title: 'Ищет твои матчи в кэше Steam и отправляет их в deadlock-api на обработку' }, S.my.scanBusy ? h('span.spin') : Icon('search'), 'Найти в кэше Steam'),
+        h('button.btn.small', { onclick: freshMatches, disabled: S.my.freshBusy || null, title: 'Просит deadlock-api взять свежую историю прямо из Steam. Можно примерно раз в час.' }, S.my.freshBusy ? h('span.spin') : Icon('download'), 'Запросить у Steam')),
+      missingHint(),
+      h('div.match-list', items));
+  }
+
+  function analysisArea() {
+    if (!S.my.selected) return h('div.empty', h('strong', 'Выбери матч слева'), 'Покажу поминутно: души, урон по героям, источники фарма, тайминги предметов и после каких покупок топы идут драться.');
+    if (S.my.analyzing && !S.my.analysis) return skeleton('Загружаю матч и сравниваю с топами');
+    if (S.my.error2) return h('div.empty', h('strong', 'Не получилось'), S.my.error2);
+    const A = S.my.analysis;
+    if (!A) return h('div');
+    const r = A.result;
+    const m = A.match;
+
+    const head = h('div.row', { style: { marginBottom: '14px' } }, heroIcon(m.hero_id),
+      h('div.grow', h('h2', { style: { margin: 0 } }, `${heroName(m.hero_id)} — ${m.won ? 'победа' : 'поражение'}`),
+        h('div.muted', `Матч ${m.match_id} · ${F.clock(m.start_time)} · ${F.time(m.duration_s)} · ${m.k}/${m.d}/${m.a} · ${F.num(m.nw)} душ`)),
+      S.my.analyzing ? h('span.spin') : null,
+      h('button.btn.small', { onclick: () => openBuild(m.match_id, S.auth && S.auth.accountId), title: 'Твои предметы и прокачка способностей из этой игры — картинкой, текстом или файлом' }, Icon('download'), 'Выгрузить билд'),
+      h('button.btn.small', { onclick: openVersusPicker, title: 'Сравнить этот матч с матчем топа на том же герое' }, Icon('arrow'), 'Бок о бок с про-игроком'));
+
+    const sel = h('select.select', {
+      onchange: (e) => {
+        const val = e.target.value;
+        S.my.target = val === 'top' ? { type: 'top' } : { type: 'player', accountId: Number(val) };
+        runAnalysis();
+      },
+    }, h('option', { value: 'top', selected: S.my.target.type === 'top' }, `Средний топ-${S.settings.topN}`),
+    S.my.targets.map((t) => h('option', { value: t.accountId, selected: S.my.target.accountId === t.accountId }, `#${t.rank} ${t.name} — ${t.games} ${plural(t.games, 'игра', 'игры', 'игр')} на герое`)));
+    const wins = h('input', { type: 'checkbox', checked: (S.my.winsOnly ?? S.settings.winsOnly) || null, onchange: (e) => { S.my.winsOnly = e.target.checked; runAnalysis(); } });
+    const bar = h('div.compare-bar', h('span.muted', 'Сравнить с:'), sel, h('label.check', wins, 'только победы'), h('div.grow'),
+      h('span.muted', r.benchN ? `в сравнении ${r.benchN} ${plural(r.benchN, 'игра', 'игры', 'игр')} (${A.targetLabel}) за ${A.benchDays} дн.` : ''));
+
+    if (!r.benchN) {
+      return h('div', h('div.panel', head, bar, h('div.empty', h('strong', 'Не с кем сравнить'),
+        'В сохранённых матчах топов нет игр на этом герое. Обнови мету кнопкой «Обновить данные» в «Мете героев», увеличь период в настройках или включи сравнение со «всеми игроками в матчах топов».')));
+    }
+
+    const sc = r.scores;
+    const barOf = (s, kind) => {
+      if (s.value === null || s.value === undefined) return 0;
+      if (kind === 'ratio') return Math.max(4, Math.min(100, s.value * 100));
+      if (kind === 'deaths') return Math.max(4, Math.min(100, 50 + s.value * 12));
+      return Math.max(4, Math.min(100, 50 + s.value / 6));
+    };
+    const scoreCard = (label, s, value, hint, kind = 'ratio') => h(`div.score-card.${s.level}`, h('div.score-label', label), h('div.score-value', value), h('div.score-hint', hint),
+      h('div.score-bar', h('span', { style: { width: `${barOf(s, kind)}%` } })));
+    const scores = h('div.scores',
+      scoreCard('Фарм', sc.farm, sc.farm.value !== null ? `${F.signedPct(sc.farm.value - 1)}` : '—', `души против топов · ${levelText[sc.farm.level]}`),
+      scoreCard('Драки', sc.fight, sc.fight.value !== null ? `${F.signedPct(sc.fight.value - 1)}` : '—', `урон по героям · ${levelText[sc.fight.level]}`),
+      scoreCard('Выживание', sc.survive, sc.survive.value !== null ? `${sc.survive.value > 0 ? '+' : ''}${String(Math.round(sc.survive.value * 10) / 10).replace('.', ',')}` : '—', `смертей к 20:00 против топов · ${levelText[sc.survive.level]}`, 'deaths'),
+      scoreCard('Предметы', sc.items, sc.items.value !== null ? `${sc.items.value > 0 ? '+' : ''}${F.time(sc.items.value)}` : '—', `средняя задержка · ${levelText[sc.items.level]}`, 'delay'));
+
+    // Главное — 3 приоритета
+    const mainPanel = h('div.panel', h('h2', 'Главное в этой игре'),
+      r.priorities.length
+        ? h('ol.priorities', r.priorities.map((i) => h(`li.${i.level}`, h('div', h('div.prio-title', i.title || i.area), h('div', i.text), i.tip ? h('div.tip', Icon('bulb'), h('span', i.tip)) : null))))
+        : h('div.muted', 'Явных отставаний от топов не видно — игра на их уровне. Ниже детали по минутам.'));
+
+    // Твоя сборка
+    const V = r.variant;
+    const variantPanel = V ? h('div.panel', h('h2', 'Твоя сборка'),
+      h('div', 'По купленным предметам ты играл ', h('b', V.label.replace(/^Вариант \d+: /, '')),
+        V.coreSize ? ` — совпадает ${V.haveCore} из ${V.coreSize} основных предметов этой сборки у топов.` : '.'),
+      h('div.hint', V.curveScope === 'variant'
+        ? `Поэтому сравниваю с ${V.curveGames} играми топов именно на этой сборке — за другую сборку ругать не буду.`
+        : `На этой сборке у топов всего ${V.games} ${plural(V.games, 'игра', 'игры', 'игр')}, поэтому фарм и урон сравниваю со всеми ${V.curveGames} их играми на герое, а предметы — только с этой сборкой.`),
+      r.variants.length > 1 ? h('div.vtabs', { style: { marginTop: '10px' } }, r.variants.map((v) => h(`div.vtab${v.index === V.index ? '.active' : ''}`,
+        h('div.vtab-title', v.label + (v.index === V.index ? ' — твоя' : '')),
+        h('div.vtab-meta', `${v.games} ${plural(v.games, 'игра', 'игры', 'игр')} топов · винрейт `, h('b', { style: { color: v.winrate >= 0.5 ? 'var(--good)' : 'var(--bad)' } }, F.pct(v.winrate))),
+        v.signature.length ? h('div.mini-items', { style: { marginTop: '6px' } }, v.signature.map(itemImg)) : null))) : null) : null;
+
+    // По фазам
+    const phasePanel = r.phases.length ? h('div.panel', h('h2', 'По фазам игры'),
+      h('div.phases', r.phases.map((ph) => {
+        const st = ph.stats;
+        const row = (label, me, top, invert = false, fmt = F.num) => {
+          const ok = me === null || top === null ? null : invert ? me <= top + 0.5 : me >= top * 0.92;
+          return h('div.ph-row', h('span.muted', label), h('span.num', h('b', { style: { color: ok === null ? '' : ok ? 'var(--good)' : 'var(--bad)' } }, fmt(me)), h('span.muted', ` / ${fmt(top)}`)));
+        };
+        return h(`div.phase-card.${ph.level}`,
+          h('div.ph-title', h('b', ph.name), h('span.muted', ph.to >= 60 ? `${ph.from}:00 и дальше` : `${ph.from}:00–${ph.to}:00`)),
+          row('Души', st.nw.me, st.nw.top),
+          row('Урон по героям', st.pdmg.me, st.pdmg.top),
+          row('Крипы', st.farm.me, st.farm.top),
+          row('Смерти', st.d.me, st.d.top, true, (v) => (v === null ? '—' : String(Math.round(v * 10) / 10).replace('.', ','))),
+          h('div.ph-verdict', ph.level === 'good' ? 'На уровне топов' : ph.notes.join(', ')));
+      })),
+      h('div.hint', 'Сколько ты набрал именно за эту часть игры. Жирное — ты, после черты — медиана топов.')) : null;
+
+    // Паверспайки
+    const spikePanel = r.spikes.length ? h('div.panel', h('h2', 'Паверспайки твоей сборки'),
+      h('div.hint', { style: { marginBottom: '10px' } }, 'После этих предметов топы резко поднимают урон и идут драться. Ниже — как это было у тебя.'),
+      h('div.spikes', r.spikes.map((s) => spikeCard(s, {
+        level: s.verdict.level,
+        content: [h('b', 'У тебя: '), s.myT === null ? 'не куплен. ' : `куплен на ${F.time(s.myT)}${s.myT - s.topT > 60 ? ` (позже на ${F.time(s.myT - s.topT)})` : ''}. `,
+          s.my ? `Урон ${F.num(s.my.before)} → ${F.num(s.my.after)}/мин${s.my.fought ? ', была драка' : ', драк не было'}. ` : '', s.verdict.text],
+      })))) : null;
+
+    const insights = h('div.panel', h('h2', 'Все выводы'),
+      r.insights.length ? h('div.insights', r.insights.map((i) => h(`div.insight.${i.level}`, h('div.insight-area', i.area), h('div', h('div', i.text), i.tip ? h('div.tip', Icon('bulb'), h('span', i.tip)) : null))))
+        : h('div.muted', 'Явных отставаний не видно — игра на уровне топов.'));
+
+    // графики
+    const tabs = [['nw', 'Души'], ['pdmg', 'Урон по героям'], ['farm', 'Убитые крипы'], ['d', 'Смерти'], ['ka', 'Убийства + помощь']];
+    const curve = r.curves[S.my.chart];
+    const markers = [];
+    if (S.my.chart === 'pdmg') for (const s of r.spikes) markers.push({ minute: s.topT / 60, color: 'var(--top)' });
+    const chartPanel = h('div.panel',
+      h('div.row', h('h2', { style: { margin: 0 } }, 'Поминутно'), h('div.grow'),
+        h('div.legend', h('span', h('i', { style: { background: 'var(--you)' } }), 'Ты'), h('span', h('i', { style: { background: 'var(--top)' } }), 'Топы (медиана)'), h('span', h('i', { style: { background: 'var(--top)', opacity: 0.3, height: '8px' } }), 'обычный разброс топов'))),
+      h('div.tabs', { style: { marginTop: '10px' } }, tabs.map(([k, label]) => h('button.tab' + (S.my.chart === k ? '.active' : ''), { onclick: () => { S.my.chart = k; renderCamp(); } }, label))),
+      Charts.lineChart(curve, { yFmt: S.my.chart === 'd' || S.my.chart === 'ka' ? (v) => String(Math.round(v)) : (v) => F.k(v), markers }),
+      S.my.chart === 'pdmg' && r.spikes.length ? h('div.hint', 'Пунктирные вертикали — моменты, когда топы обычно покупают предмет-паверспайк.') : null);
+
+    // источники душ по фазам
+    const sourcesPanel = r.sourcePhases && r.sourcePhases.some((p) => p.rows)
+      ? h('div.panel', h('h2', { style: { marginBottom: '2px' } }, 'Где ты недобираешь души'),
+        h('div.muted', { style: { marginBottom: '12px' } }, 'Сколько душ ты набрал с каждого источника в каждой фазе игры — против медианы топов. Красным — где отстаёшь.'),
+        sourcePhaseCards(r.sourcePhases, { refLabel: 'топы', unitNote: 'души за фазу: ты / топы' }))
+      : null;
+
+    // предметы
+    const statusPill = (it) => {
+      if (it.status === 'late') return h('span.pill.bad', `позже на ${F.time(it.delay)}`);
+      if (it.status === 'early') return h('span.pill.good', `раньше на ${F.time(-it.delay)}`);
+      if (it.status === 'missing') return h('span.pill.warn', 'не купил');
+      if (it.status === 'na') return h('span.pill', 'игра кончилась');
+      return h('span.pill.good', 'вовремя');
+    };
+    const spikeIds = new Set(r.spikes.map((s) => s.id));
+    const itemsPanel = h('div.panel', h('h2', 'Предметы твоей сборки: ты и топы'),
+      itemTimeline([
+        { label: 'Топы', items: r.items.map((it) => ({ id: it.id, t: it.topT })) },
+        { label: 'Ты', items: r.items.filter((it) => it.myT !== null).map((it) => ({ id: it.id, t: it.myT })) },
+      ], { spikeIds: new Set(r.spikes.map((s) => s.id)), maxT: m.duration_s }),
+      slotKey(),
+      h('table.table', h('thead', h('tr', h('th', 'Предмет'), h('th.r', 'Топы'), h('th.r', 'Ты'), h('th', ''))),
+        h('tbody', r.items.map((it) => h('tr',
+          h('td', h('div.row.nowrap', { style: { gap: '8px' } }, h('span.mini-items', itemImg(it.id)), itemName(it.id), spikeIds.has(it.id) ? h('span.pill.warn', { title: 'После этого предмета топы резко поднимают урон' }, 'спайк') : null)),
+          h('td.r.num', F.time(it.topT), h('div.dim', { style: { fontSize: '11px' } }, `берут ${F.pct(it.topPick)}`)),
+          h('td.r.num', F.time(it.myT)),
+          h('td', statusPill(it)))))),
+      r.extras && r.extras.length ? h('div.hint', `Ещё ты купил (в этой сборке топы берут редко — это не ошибка, просто иначе): ${r.extras.slice(0, 8).map((x) => itemName(x.id)).join(', ')}`) : null);
+
+    // контрольные точки
+    const cpTable = h('div.panel', h('h2', 'Контрольные точки'),
+      h('table.table', h('thead', h('tr', h('th', 'Время'), h('th.r', 'Души'), h('th.r', 'Урон по героям'), h('th.r', 'Крипы'), h('th.r', 'Смерти'), h('th.r', 'Уб.+пом.'))),
+        h('tbody', r.checkpoints.map((c) => {
+          const cell = (f, invert = false) => {
+            const me = c.me[f];
+            const top = c.top[f];
+            const better = invert ? me <= top : me >= top;
+            return h('td.r.num', h('span', { style: { color: better ? 'var(--good)' : 'var(--bad)' } }, f === 'd' || f === 'ka' ? Math.round(me) : F.num(me)), h('span.muted', ` / ${f === 'd' || f === 'ka' ? Math.round(top * 10) / 10 : F.num(top)}`));
+          };
+          return h('tr', h('td.num', `${c.minute}:00`), cell('nw'), cell('pdmg'), cell('farm'), cell('d', true), cell('ka'));
+        }))),
+      h('div.hint', 'Слева твоё значение, справа — медиана топов. Зелёный — не хуже топов.'));
+
+    return h('div', h('div.panel', head, bar, scores), mainPanel, variantPanel, phasePanel, sourcesPanel, spikePanel, chartPanel, A.map ? mapPanel(A.map, A.mySlot ?? null, 'Карта матча') : null, itemsPanel, insights, cpTable);
+  }
+
+  // ================= НАСТРОЙКИ =================
+  function renderSettings() {
+    const s = S.settings;
+    const f = {};
+    const field = (label, el, hint) => [h('label', label), h('div', el, hint ? h('div.hint', hint) : null)];
+    f.region = h('select.select', ['Europe', 'NAmerica', 'SAmerica', 'Asia', 'Oceania'].map((r) => h('option', { value: r, selected: s.region === r }, { Europe: 'Европа', NAmerica: 'Северная Америка', SAmerica: 'Южная Америка', Asia: 'Азия', Oceania: 'Океания' }[r])));
+    f.topN = h('select.select', [50, 100].map((n) => h('option', { value: n, selected: Number(s.topN) === n || null }, `Топ-${n}`)));
+    f.topSource = h('select.select',
+      h('option', { value: 'auto', selected: s.topSource !== 'list' || null }, 'Ладдер текущего сезона'),
+      h('option', { value: 'list', selected: s.topSource === 'list' || null }, 'Только мой список игроков'));
+    f.days = h('input.input', { type: 'number', min: 1, max: 14, value: s.days });
+    f.onlyRanked = h('input', { type: 'checkbox', checked: s.onlyRanked || null });
+    f.benchmarkSource = h('select.select', h('option', { value: 'top', selected: s.benchmarkSource === 'top' }, 'Только игроки из топа'), h('option', { value: 'lobby', selected: s.benchmarkSource === 'lobby' }, 'Все игроки в матчах топов (больше данных)'));
+    f.winsOnly = h('input', { type: 'checkbox', checked: s.winsOnly || null });
+    f.autoRefreshHours = h('input.input', { type: 'number', min: 0, max: 24, value: s.autoRefreshHours });
+    f.keepDays = h('input.input', { type: 'number', min: 1, max: 60, value: s.keepDays });
+    f.apiKey = h('input.input', { type: 'password', value: s.apiKey || '', placeholder: 'не обязательно', style: { width: '320px' } });
+    f.manualTop = h('textarea.input', { rows: 4, placeholder: 'по одному на строку: ссылка на профиль Steam или ID', style: { width: '420px', resize: 'vertical' } }, s.manualTop || '');
+    f.steamDir = h('input.input', { value: s.steamDir || '', placeholder: 'найдётся автоматически', style: { width: '320px' } });
+    const save = async () => {
+      try {
+        const patch = {
+          region: f.region.value,
+          topN: Number(f.topN.value) || 50,
+          topSource: f.topSource.value,
+          days: Number(f.days.value),
+          onlyRanked: f.onlyRanked.checked,
+          benchmarkSource: f.benchmarkSource.value,
+          winsOnly: f.winsOnly.checked,
+          autoRefreshHours: Number(f.autoRefreshHours.value),
+          keepDays: Number(f.keepDays.value),
+          apiKey: f.apiKey.value.trim(),
+          steamDir: f.steamDir.value.trim(),
+          manualTop: f.manualTop.value.trim(),
+        };
+        const regionChanged = patch.region !== s.region || patch.topN !== s.topN || patch.topSource !== s.topSource;
+        const r = await dc.saveSettings(patch);
+        S.settings = r.settings;
+        if (r.meta) S.meta = r.meta;
+        toast(regionChanged ? 'Сохранено. Нажми «Обновить данные» на вкладке меты.' : 'Сохранено');
+        renderSettings();
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+    $('view-settings').replaceChildren(
+      h('div.page-head', h('div', h('div.crumbs', 'Приложение'), h('h1', 'Настройки'))),
+      h('div.panel', h('div.settings-grid',
+        field('Регион ладдера', f.region),
+        field('Сколько топов брать', f.topN, 'Топ-100 даёт больше игр на редких героях, топ-50 — только самые сильные игроки.'),
+        field('Источник топа', f.topSource, 'Только текущий сезон. Если ладдер ещё короткий, недостающие игроки добираются из свежих матчей этого сезона с самым высоким рангом.'),
+        field('За сколько дней статистика', f.days, 'По умолчанию 3 дня — свежая мета. Больше дней — больше игр на редких героях.'),
+        field('Только рейтинговые матчи', h('label.check', f.onlyRanked, 'учитывать только ranked')),
+        field('С кем сравнивать мои матчи', f.benchmarkSource, '«Все игроки в матчах топов» — это тоже очень высокий уровень, а данных в несколько раз больше.'),
+        field('Сравнивать только с победами', h('label.check', f.winsOnly, 'показывать, как играют топы, когда выигрывают')),
+        field('Автообновление, часов', f.autoRefreshHours, '0 — выключено. Обновление идёт, пока приложение открыто.'),
+        field('Хранить матчи топов, дней', f.keepDays, 'Старые матчи топов удаляются. Твои матчи не удаляются никогда.'),
+        field('Ключ deadlock-api', f.apiKey, 'Не обязателен. С ключом выше лимиты запросов — бесплатно выдают в Discord проекта deadlock-api.'),
+        field('Папка Steam', f.steamDir, 'Нужна для поиска матчей в кэше Steam. Обычно находится сама.'),
+        field('Свой список топов', f.manualTop, 'Используется, когда ладдер пуст (первые дни нового сезона). Можно вставить ссылки на профили сильных игроков с сайтов статистики.'),
+        h('div'), h('div', h('button.btn.primary', { onclick: save }, 'Сохранить')))),
+      updatesPanel(),
+      overlaySettingsPanel(),
+      h('div.panel', h('h2', 'О данных'),
+        h('p.muted', 'Все данные — из открытого сервиса deadlock-api.com (не связан с Valve). Статистика матчей топов, их предметы, души и урон по минутам берутся из метаданных матчей.'),
+        h('p.muted', 'Не каждый матч сразу есть в сервисе. Чтобы твои игры попадали туда надёжно, используй кнопку «Найти в кэше Steam» в «Моих матчах» или поставь официальную утилиту сбора.'),
+        h('div.row', h('button.btn', { onclick: () => dc.openUrl('https://deadlock-api.com/ingest-cache') }, 'Утилита сбора матчей'), h('button.btn', { onclick: () => dc.openUrl('https://deadlock-api.com') }, 'deadlock-api.com')),
+        h('p.dim', `Версия ${S.version || ''}`)),
+      S.status && S.status.report ? diagnosticsPanel(S.status.report) : null);
+  }
+
+  // ---------- обновления ----------
+  const UP = { info: null, state: 'idle', pct: 0, error: null, hidden: false, checking: false };
+
+  // «Что нового» из описания релиза: простые строки и пункты списка.
+  function releaseNotes(text, max = 8) {
+    const lines = String(text || '').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !/^#/.test(l) && !/^[-=*_]{3,}$/.test(l))
+      .map((l) => l.replace(/\*\*(.+?)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1'));
+    if (!lines.length) return null;
+    const shown = lines.slice(0, max);
+    return h('ul.up-notes', shown.map((l) => h('li', l.replace(/^[-*•]\s*/, ''))), lines.length > max ? h('li.dim', `и ещё ${lines.length - max}…`) : null);
+  }
+
+  async function startUpdate() {
+    UP.state = 'downloading';
+    UP.pct = 0;
+    UP.error = null;
+    renderUpdate();
+    try {
+      await dc.updateDownload();
+      UP.state = 'ready';
+    } catch (e) {
+      UP.state = 'error';
+      UP.error = e.message;
+    }
+    renderUpdate();
+    if (S.view === 'settings') renderSettings();
+  }
+
+  function updateActions(compact = false) {
+    const r = UP.info;
+    if (!r || !r.available) return null;
+    if (r.mode !== 'installed') {
+      return h('div.row', { style: { gap: '8px', flexWrap: 'wrap' } },
+        h('button.btn.primary', { onclick: () => dc.openUrl(r.release.page) }, 'Открыть страницу релиза'),
+        h('span.hint', r.mode === 'portable' ? 'Переносную версию обновляют вручную: скачай новый .exe со страницы релиза.' : 'Эта копия запущена из исходников — скачай установщик со страницы релиза.'));
+    }
+    if (UP.state === 'downloading') {
+      return h('div', h('div.up-bar', h('span', { style: { width: `${Math.max(3, UP.pct)}%` } })), h('div.hint', `Скачиваю… ${UP.pct > 0 ? UP.pct + '%' : ''}`));
+    }
+    if (UP.state === 'ready') {
+      return h('div.row', { style: { gap: '8px' } },
+        h('button.btn.primary', { onclick: () => dc.updateInstall().catch((e) => toast(e.message, true)) }, Icon('refresh'), 'Перезапустить и обновить'),
+        compact ? null : h('span.hint', 'Программа закроется на несколько секунд и откроется уже новой.'));
+    }
+    return h('div', h('div.row', { style: { gap: '8px', flexWrap: 'wrap' } },
+      h('button.btn.primary', { onclick: startUpdate }, Icon('download'), r.release.setup ? `Обновить${r.release.setup.size ? ` · ${Math.round(r.release.setup.size / 1048576)} МБ` : ''}` : 'Обновить'),
+      compact ? h('button.btn.ghost', { onclick: () => { UP.hidden = true; renderUpdate(); } }, 'Позже') : null,
+      compact ? h('button.btn.ghost', { onclick: () => { dc.updateSkip(r.release.version); UP.hidden = true; renderUpdate(); } }, 'Пропустить версию') : null),
+      UP.state === 'error' ? h('div.hint', { style: { color: 'var(--bad)', marginTop: '6px' } }, UP.error) : null);
+  }
+
+  function renderUpdate() {
+    let box = $('update-card');
+    if (!box) {
+      box = h('div#update-card');
+      document.body.appendChild(box);
+    }
+    const r = UP.info;
+    if (!r || !r.available || UP.hidden) return void box.replaceChildren();
+    box.replaceChildren(h('div.up-card', { role: 'dialog', 'aria-label': 'Доступно обновление' },
+      h('div.up-head', h('span.up-dot'), h('b', `Вышла версия ${r.release.version}`), h('span.dim', `у тебя ${r.current}`)),
+      releaseNotes(r.release.notes, 5),
+      updateActions(true)));
+  }
+
+  dc.on('update:available', (r) => {
+    UP.info = r;
+    UP.hidden = false;
+    renderUpdate();
+  });
+  dc.on('update:progress', (p) => {
+    UP.pct = p.pct >= 0 ? p.pct : UP.pct;
+    renderUpdate();
+    if (S.view === 'settings') renderSettings();
+  });
+
+  function updatesPanel() {
+    const r = UP.info;
+    const check = async () => {
+      UP.checking = true;
+      renderSettings();
+      try {
+        UP.info = await dc.updateCheck();
+        UP.hidden = false;
+        if (UP.info.available) renderUpdate();
+        else toast(UP.info.reason || 'У тебя последняя версия');
+      } catch (e) {
+        toast(`Не получилось проверить: ${e.message}`, true);
+      } finally {
+        UP.checking = false;
+        renderSettings();
+      }
+    };
+    const auto = h('input', { type: 'checkbox', checked: S.settings.autoUpdateCheck !== false || null, onchange: async (e) => {
+      const res = await dc.saveSettings({ autoUpdateCheck: e.target.checked });
+      S.settings = res.settings;
+    } });
+    return h('div.panel', h('h2', 'Обновления'),
+      h('div.settings-grid',
+        h('label', 'Версия'), h('div', h('b', S.version || '—'), r && r.mode ? h('span.dim', ` · ${{ installed: 'установленная', portable: 'переносная', dev: 'из исходников' }[r.mode] || ''}`) : null),
+        h('label', 'Проверка'), h('div', h('div.row', { style: { gap: '10px' } }, h('button.btn', { onclick: check, disabled: UP.checking || null }, UP.checking ? h('span.spin') : Icon('refresh'), 'Проверить обновления'),
+          h('label.check', auto, 'проверять при запуске')),
+          r && !r.available && r.reason ? h('div.hint', r.reason) : r && !r.available ? h('div.hint', 'У тебя последняя версия.') : null),
+        r && r.available ? h('label', `Новая версия ${r.release.version}`) : null,
+        r && r.available ? h('div', releaseNotes(r.release.notes, 12), updateActions(false)) : null));
+  }
+
+  // ---------- оверлей «Пик против состава»: настройки ----------
+  const OV = { data: null, loading: false, error: null, log: null, logLoading: false, recording: false, key: null };
+
+  async function loadOverlayData() {
+    if (OV.loading || !S.auth) return;
+    OV.loading = true;
+    try {
+      OV.data = await dc.pickAdvise({});
+      OV.key = await dc.overlayKey().catch(() => null);
+      OV.error = null;
+    } catch (e) {
+      OV.error = e.message;
+    } finally {
+      OV.loading = false;
+      if (S.view === 'settings') renderSettings();
+    }
+  }
+
+  // Клавиши в формате Electron: Ctrl+Shift+D, Alt+F2 и т. п.
+  function accelFromEvent(e) {
+    const k = e.key;
+    if (['Control', 'Shift', 'Alt', 'Meta'].includes(k)) return null;
+    let key = k.length === 1 ? k.toUpperCase() : k;
+    if (/^F\d{1,2}$/.test(k)) key = k;
+    else if (k === ' ') key = 'Space';
+    else if (e.code && /^Key[A-Z]$/.test(e.code)) key = e.code.slice(3);
+    else if (e.code && /^Digit\d$/.test(e.code)) key = e.code.slice(5);
+    else if (!/^[A-Z0-9]$/.test(key) && !['Insert', 'Home', 'End', 'PageUp', 'PageDown', 'Delete'].includes(key)) return null;
+    const mods = [e.ctrlKey ? 'Ctrl' : null, e.altKey ? 'Alt' : null, e.shiftKey ? 'Shift' : null].filter(Boolean);
+    if (!mods.length && !/^F\d{1,2}$/.test(key)) return null; // одиночная буква мешала бы играть
+    return [...mods, key].join('+');
+  }
+
+  function overlaySettingsPanel() {
+    if (!S.auth) return h('div.panel', h('h2', 'Оверлей «Пик против состава»'), h('p.muted', 'Войди через Steam — оверлей подбирает пик из твоих героев.'));
+    if (!OV.data && !OV.loading && !OV.error) loadOverlayData();
+    const s = S.settings;
+    const keyBox = h('input.input.key-input', { readonly: true, value: s.overlayKey || '', placeholder: 'нажми сочетание клавиш', style: { width: '200px' },
+      onfocus: () => { OV.recording = true; },
+      onblur: () => { OV.recording = false; },
+      onkeydown: async (e) => {
+        e.preventDefault();
+        if (e.key === 'Escape') return e.target.blur();
+        if (e.key === 'Backspace' || e.key === 'Delete') {
+          e.target.value = '';
+          return;
+        }
+        const acc = accelFromEvent(e);
+        if (acc) e.target.value = acc;
+      } });
+    const saveKey = async () => {
+      try {
+        const r = await dc.saveSettings({ overlayKey: keyBox.value.trim() || null });
+        S.settings = r.settings;
+        const k = r.overlayKey;
+        if (k && !k.ok && keyBox.value.trim()) toast('Это сочетание занято другой программой — выбери другое', true);
+        else toast(keyBox.value.trim() ? `Готово: ${keyBox.value.trim()} показывает и прячет оверлей` : 'Горячая клавиша выключена');
+        OV.key = await dc.overlayKey().catch(() => null);
+        renderSettings();
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+    const d = OV.data;
+    let poolBlock;
+    if (OV.loading && !d) poolBlock = h('div.row', h('span.spin'), 'Загружаю твоих героев…');
+    else if (OV.error) poolBlock = h('div.muted', OV.error);
+    else if (d) {
+      const inPool = new Set(d.pool);
+      const toggle = async (id) => {
+        const next = inPool.has(id) ? d.pool.filter((x) => x !== id) : [...d.pool, id];
+        try {
+          const r = await dc.saveSettings({ pickPool: next.length ? next : null });
+          S.settings = r.settings;
+          OV.data = null;
+          loadOverlayData();
+        } catch (e) {
+          toast(e.message, true);
+        }
+      };
+      const list = d.allHeroes.filter((x) => x.games >= 1).slice(0, 40);
+      poolBlock = h('div',
+        h('div.hint', { style: { marginBottom: '8px' } }, d.manual ? 'Список задан вручную.' : 'Сейчас — герои, на которых у тебя 15+ побед (столько нужно для рейтинга). Нажми на героя, чтобы добавить или убрать.'),
+        h('div.pool-grid', list.map((x) => h(`button.pool-hero${inPool.has(x.hero_id) ? '.on' : ''}`, { onclick: () => toggle(x.hero_id), title: `${x.games} игр, ${x.wins} побед` },
+          heroIcon(x.hero_id, '.sm'), h('span', heroName(x.hero_id)), h('span.num.dim', `${x.wins}п`)))),
+        d.manual ? h('button.btn.small', { style: { marginTop: '10px' }, onclick: async () => { const r = await dc.saveSettings({ pickPool: null }); S.settings = r.settings; OV.data = null; loadOverlayData(); } }, 'Вернуть автоматический список') : null,
+        h('div.hint', { style: { marginTop: '8px' } }, d.ready < d.poolSize ? `Таблицы матчапов готовы для ${d.ready} из ${d.poolSize} героев — остальные считаются в фоне (первый раз до нескольких минут).` : `Таблицы матчапов готовы для всех ${d.poolSize}.`));
+    }
+    const lg = OV.log;
+    let logBlock = null;
+    if (OV.logLoading) logBlock = h('div.row', h('span.spin'), 'Читаю лог игры…');
+    else if (lg) {
+      logBlock = !lg.found
+        ? h('div.note', Icon('info'), h('div', lg.reason, lg.gameDir ? h('div.dim', lg.gameDir) : null))
+        : h('div.log-res',
+          h('div', h('b', 'Файл найден: '), h('span.dim', lg.file), ` · ${F.num(lg.size / 1024)} КБ · изменён ${F.clock(Math.round(lg.modified / 1000))}`),
+          lg.heroes.length
+            ? h('div', { style: { marginTop: '6px' } }, h('b', 'Герои в последних строках: '), lg.heroes.slice(0, 20).map((x) => `${heroName(x.id)} (${x.n})`).join(', '))
+            : h('div', { style: { marginTop: '6px' } }, 'Имён героев в логе не нашёл.'),
+          lg.samples.length ? h('pre.log-pre', lg.samples.map((x) => x.text).join('\n')) : h('pre.log-pre', lg.last.join('\n')),
+          h('div.hint', 'Сыграй матч с -condebug, потом нажми проверку и пришли мне скриншот этого блока — по нему станет ясно, можно ли узнавать состав автоматически.'));
+    }
+    return h('div.panel',
+      h('h2', 'Оверлей «Пик против состава»'),
+      h('p.muted', { style: { marginTop: 0 } }, 'Окно поверх игры для паузы перед рейтинговым матчем: отмечаешь стартовых героев соперников — получаешь лучший пик из своих героев. Видно поверх игры в режиме «В окне без рамки» (Borderless). Игру не трогает: не читает память и не меняет файлы.'),
+      h('div.settings-grid',
+        h('label', 'Горячая клавиша'), h('div', h('div.row', keyBox, h('button.btn', { onclick: saveKey }, 'Сохранить клавишу'), h('button.btn.primary', { onclick: () => dc.toggleOverlay(true) }, 'Открыть оверлей')),
+          h('div.hint', OV.key && OV.key.key ? `Работает: ${OV.key.key}. Нажми в поле и зажми новое сочетание; Backspace — выключить.` : 'Клавиша не активна — нажми в поле и зажми сочетание, например Ctrl+Shift+D.')),
+        h('label', 'Мои герои для рейтинга'), h('div', poolBlock),
+        h('label', 'Автоматически узнавать состав'), h('div',
+          h('div.hint', { style: { marginBottom: '8px' } }, 'Эксперимент. В Steam: Deadlock → Свойства → Параметры запуска → добавь -condebug. Игра начнёт писать лог консоли; проверим, видно ли там героев матча.'),
+          h('button.btn', { onclick: async () => { OV.logLoading = true; renderSettings(); try { OV.log = await dc.gameLogCheck(); } catch (e) { toast(e.message, true); } finally { OV.logLoading = false; renderSettings(); } } }, 'Проверить лог игры'),
+          logBlock)));
+  }
+
+  // ---------- старт ----------
+  (async function start() {
+    try {
+      const init = await dc.init();
+      S.settings = init.settings;
+      S.auth = init.auth;
+      S.meta = init.meta;
+      S.status = init.status;
+      S.version = init.version;
+      if (init.assets) S.assets = init.assets;
+      S.favs = await dc.favorites().catch(() => []);
+    } catch (e) {
+      toast(e.message, true);
+    }
+    setView('home');
+    if (S.meta && S.meta.source === 'prev_season') {
+      toast('Топ был собран по прошлому сезону — собираю топ текущего сезона');
+      refreshTop();
+    }
+  })();
+})();

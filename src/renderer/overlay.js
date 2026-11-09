@@ -1,0 +1,289 @@
+'use strict';
+// Оверлей «Пик против состава»: отмечаешь стартовых героев соперников —
+// получаешь лучший пик из своих героев. Все расчёты — из заранее готовых таблиц.
+(function () {
+  const dc = window.dc;
+  const h = F.h;
+  const $ = (id) => document.getElementById(id);
+
+  const S = {
+    assets: null,
+    auth: null,
+    mode: 'enemies', // enemies | allies | me
+    enemies: [],
+    allies: [],
+    me: null,
+    q: '',
+    advice: null,
+    error: null,
+    loading: false,
+    progress: null,
+    lastEdit: 0,
+    timerStart: 0,
+  };
+  const LIMIT = { enemies: 6, allies: 5 };
+
+  const heroName = (id) => (S.assets && S.assets.heroes[id] ? S.assets.heroes[id].name : `Герой ${id}`);
+  const heroImg = (id, cls = '') => {
+    const hero = S.assets && S.assets.heroes[id];
+    if (hero && hero.img) return h(`img.hi${cls}`, { src: hero.img, alt: '', draggable: 'false' });
+    return h(`span.hi.ph${cls}`, heroName(id).slice(0, 2));
+  };
+  const heroes = () =>
+    Object.values((S.assets && S.assets.heroes) || {})
+      .filter((x) => !x.disabled && !x.inDev)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  const pts = (x) => `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(Math.round(x * 100))}`;
+  const ochki = (x) => {
+    const n = Math.abs(Math.round(x * 100));
+    const a = n % 100;
+    const b = n % 10;
+    return `${n} ${a > 10 && a < 20 ? 'очков' : b === 1 ? 'очко' : b >= 2 && b <= 4 ? 'очка' : 'очков'}`;
+  };
+  const SCORE_TIP = 'Оценка — сумма: насколько чаще обычного побеждают на этом герое против каждого соперника (в процентах, каждый максимум ±15), плюс твой опыт на герое и немного меты топов.';
+
+  // ---------- выбор героев ----------
+  function where(id) {
+    if (S.enemies.includes(id)) return 'enemies';
+    if (S.allies.includes(id)) return 'allies';
+    if (S.me === id) return 'me';
+    return null;
+  }
+
+  function removeHero(id) {
+    S.enemies = S.enemies.filter((x) => x !== id);
+    S.allies = S.allies.filter((x) => x !== id);
+    if (S.me === id) S.me = null;
+  }
+
+  function assign(id, mode = S.mode) {
+    const was = where(id);
+    removeHero(id);
+    if (was === mode) return changed(); // повторный клик — убрать
+    if (mode === 'me') S.me = id;
+    else if (S[mode].length < LIMIT[mode]) S[mode].push(id);
+    if (mode === 'enemies' && !S.timerStart) S.timerStart = Date.now();
+    if (mode === 'enemies' && S.enemies.length === LIMIT.enemies && !S.me) S.mode = 'me';
+    changed();
+  }
+
+  let adviseTimer = null;
+  function changed() {
+    S.lastEdit = Date.now();
+    S.q = '';
+    $('search').value = '';
+    renderLeft();
+    clearTimeout(adviseTimer);
+    adviseTimer = setTimeout(advise, 60);
+  }
+
+  async function advise() {
+    if (!S.auth) return renderRight();
+    S.loading = true;
+    try {
+      S.advice = await dc.pickAdvise({ enemies: S.enemies, allies: S.allies, current: S.me });
+      S.error = null;
+    } catch (e) {
+      S.error = e.message;
+    } finally {
+      S.loading = false;
+      renderRight();
+    }
+  }
+
+  function reset() {
+    S.enemies = [];
+    S.allies = [];
+    S.me = null;
+    S.mode = 'enemies';
+    S.timerStart = 0;
+    changed();
+  }
+
+  // ---------- левая часть ----------
+  function slot(id, kind, i) {
+    if (!id) return h(`div.slot.empty.${kind}`, h('span', kind === 'me' ? 'ты' : String(i + 1)));
+    return h(`button.slot.${kind}`, { title: `${heroName(id)} — убрать`, onclick: () => { removeHero(id); changed(); } }, heroImg(id), h('span.slot-name', heroName(id)));
+  }
+
+  function renderLeft() {
+    const enemySlots = [...Array(LIMIT.enemies)].map((_, i) => slot(S.enemies[i], 'enemy', i));
+    const allySlots = [...Array(LIMIT.allies)].map((_, i) => slot(S.allies[i], 'ally', i));
+    $('slots').replaceChildren(
+      h('div.slot-group', h('div.slot-label', 'Соперники'), h('div.slot-row', enemySlots)),
+      h('div.slot-group.small', h('div.slot-label', 'Союзники ', h('span', '(не обязательно)')), h('div.slot-row', allySlots)),
+      h('div.slot-group.small', h('div.slot-label', 'Твой герой'), h('div.slot-row', slot(S.me, 'me', 0))),
+    );
+    const modes = [
+      ['enemies', `Соперники ${S.enemies.length}/6`],
+      ['allies', `Союзники ${S.allies.length}/5`],
+      ['me', 'Мой герой'],
+    ];
+    $('modes').replaceChildren(...modes.map(([k, label]) => h(`button.mode.${k}${S.mode === k ? '.on' : ''}`, { role: 'tab', 'aria-selected': String(S.mode === k), onclick: () => { S.mode = k; renderLeft(); $('search').focus(); } }, label)));
+    const q = S.q.trim().toLowerCase();
+    const list = heroes().filter((x) => !q || x.name.toLowerCase().includes(q));
+    const pool = new Set((S.advice && S.advice.pool) || []);
+    $('grid').replaceChildren(...list.map((x, i) => {
+      const w = where(x.id);
+      return h(`button.gh${w ? '.' + w : ''}${q && i === 0 ? '.first' : ''}${pool.has(x.id) ? '.mine' : ''}`, {
+        title: `${x.name}${pool.has(x.id) ? ' · твой герой для рейтинга' : ''}`,
+        onclick: (e) => assign(x.id, e.shiftKey ? 'me' : S.mode),
+        oncontextmenu: (e) => { e.preventDefault(); assign(x.id, 'allies'); },
+      }, heroImg(x.id), h('span', x.name));
+    }));
+  }
+
+  // ---------- правая часть: совет ----------
+  function chip(x, good) {
+    return h(`span.chip.${good ? 'good' : 'bad'}`, { title: `${good ? 'Удобный' : 'Неудобный'} соперник: ${pts(x.d)} к победам` }, heroImg(x.hero_id, '.xs'), pts(x.d));
+  }
+
+  function renderRight() {
+    const r = $('right');
+    if (!S.auth) {
+      r.replaceChildren(h('div.ov-empty', h('b', 'Войди через Steam в основном окне'), 'Совет строится по твоим героям и твоим играм.'));
+      return;
+    }
+    if (S.error) {
+      r.replaceChildren(h('div.ov-empty', h('b', 'Не получилось посчитать'), S.error));
+      return;
+    }
+    const a = S.advice;
+    if (!a) {
+      r.replaceChildren(h('div.ov-empty', h('span.spin'), 'Загружаю твоих героев…'));
+      return;
+    }
+    const parts = [];
+    if (!a.poolSize) {
+      parts.push(h('div.ov-empty', h('b', 'Нет героев для рейтинга'), 'В рейтинге можно играть героями с 15 победами. Если список неверный — выбери своих героев в основном окне: Настройки → «Мои герои для рейтинга».'));
+      r.replaceChildren(...parts);
+      return;
+    }
+    const best = a.rows[0];
+    if (!S.enemies.length) {
+      parts.push(h('div.verdict.idle', h('div.v-kicker', 'Жду состав соперников'), h('div.v-text', 'Отметь стартовых героев соперников — их видно в паузе перед игрой. Хватит и 2–3, совет обновляется сразу.')));
+    } else if (best) {
+      const v = a.verdict;
+      const keep = v && v.keep;
+      const hid = keep ? v.hero_id : best.hero_id;
+      const row = a.all.find((x) => x.hero_id === hid) || best;
+      parts.push(h(`div.verdict${keep ? '.keep' : ''}`,
+        heroImg(hid, '.big'),
+        h('div.v-main',
+          h('div.v-kicker', keep ? 'Оставайся' : v ? `Меняй ${heroName(v.from)} на` : 'Лучший пик'),
+          h('div.v-name', heroName(hid)),
+          h('div.v-sub', keep
+            ? v.gap > 0.005 ? `${heroName(best.hero_id)} сильнее всего на ${ochki(v.gap)} — менять не стоит.` : 'Твой герой — лучший из доступных против этого состава.'
+            : v ? `Сильнее, чем ${heroName(v.from)}, на ${ochki(v.gap)} против этого состава.` : 'Сильнее всего против этого состава из твоих героев.')),
+        h('div.v-score', { title: SCORE_TIP }, h('b', pts(row.score)), h('span', 'оценка'))));
+    }
+    const list = a.rows.map((x, i) => h(`div.pick${S.me === x.hero_id ? '.cur' : ''}`,
+      h('span.pk-n', String(i + 1)),
+      heroImg(x.hero_id, '.md'),
+      h('div.pk-main',
+        h('div.pk-name', heroName(x.hero_id), S.me === x.hero_id ? h('em', 'сейчас') : null),
+        h('div.pk-why',
+          x.pros.map((p) => chip(p, true)),
+          x.cons.map((p) => chip(p, false)),
+          h('span.pk-rec', { title: 'Твои игры на этом герое' }, x.games ? `ты ${x.wins}–${x.games - x.wins}` : 'нет твоих игр'),
+          x.noTable ? h('span.pk-warn', 'считаю…') : null)),
+      h(`b.pk-score${Math.abs(x.score) < 0.005 ? '' : x.score > 0 ? '.pos' : '.neg'}`, pts(x.score))));
+    parts.push(h('div.picks-head', h('span', 'Твои герои'), h('span', { title: SCORE_TIP }, 'оценка ⓘ')), h('div.picks', list));
+    const taken = a.all.filter((x) => x.taken).map((x) => heroName(x.hero_id));
+    if (taken.length) parts.push(h('div.ov-note', `Заняты: ${taken.join(', ')}.`));
+    const notReady = a.poolSize - a.ready;
+    parts.push(h('div.ov-foot',
+      h('span', S.progress && S.progress.stage === 'pick' ? S.progress.text : notReady > 0 ? `Готовлю таблицы: ${a.ready} из ${a.poolSize} героев` : `Таблицы готовы для ${a.poolSize} ${a.poolSize === 1 ? 'героя' : 'героев'}${a.tablesAt ? ` · ${ago(a.tablesAt)}` : ''}`),
+      h('button.ov-btn.ghost.small', { onclick: () => dc.pickPrepare(true).then(() => { S.progress = { stage: 'pick', text: 'Пересчитываю…' }; renderRight(); }) }, 'Пересчитать')));
+    r.replaceChildren(...parts);
+  }
+
+  function ago(ms) {
+    const m = Math.round((Date.now() - ms) / 60000);
+    if (m < 1) return 'только что';
+    if (m < 60) return `${m} мин назад`;
+    return `${Math.round(m / 60)} ч назад`;
+  }
+
+  // ---------- таймер паузы перед игрой (~30 с) ----------
+  setInterval(() => {
+    const t = $('timer');
+    if (!S.timerStart) {
+      t.hidden = true;
+      return;
+    }
+    const left = Math.max(0, 30 - Math.floor((Date.now() - S.timerStart) / 1000));
+    t.hidden = false;
+    t.textContent = left ? `≈ ${left} с на смену героя` : 'пауза, скорее всего, закончилась';
+    t.classList.toggle('hot', left <= 10);
+  }, 250);
+
+  // ---------- клавиатура ----------
+  $('search').addEventListener('input', (e) => {
+    S.q = e.target.value;
+    renderLeft();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      dc.toggleOverlay(false);
+      return;
+    }
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const order = ['enemies', 'allies', 'me'];
+      S.mode = order[(order.indexOf(S.mode) + (e.shiftKey ? 2 : 1)) % 3];
+      renderLeft();
+      return;
+    }
+    if (e.key === 'Enter') {
+      const first = document.querySelector('#grid .gh.first') || (S.q ? document.querySelector('#grid .gh') : null);
+      if (first) first.click();
+      return;
+    }
+    if (e.key === 'Backspace' && !S.q) {
+      const list = S.mode === 'me' ? (S.me ? [S.me] : []) : S[S.mode];
+      const last = list[list.length - 1];
+      if (last) {
+        removeHero(last);
+        changed();
+      }
+    }
+  });
+  $('close').onclick = () => dc.toggleOverlay(false);
+  $('reset').onclick = reset;
+
+  dc.on('progress', (p) => {
+    if (p.stage === 'pick') {
+      S.progress = p;
+      renderRight();
+    } else if (p.stage === 'done' && S.progress) {
+      S.progress = null;
+      advise();
+    }
+  });
+  dc.on('overlay:shown', () => {
+    // новый матч: если с последней правки прошло больше 4 минут — начинаем с чистого листа
+    if (S.lastEdit && Date.now() - S.lastEdit > 4 * 60e3) reset();
+    else advise();
+    $('search').focus();
+  });
+
+  async function start() {
+    try {
+      const init = await dc.init();
+      S.assets = init.assets;
+      S.auth = init.auth;
+    } catch (e) {
+      S.error = e.message;
+    }
+    try {
+      const k = await dc.overlayKey();
+      $('key').textContent = k.key ? `${k.key} — показать/скрыть` : 'горячая клавиша не задана';
+    } catch {}
+    renderLeft();
+    renderRight();
+    if (S.auth) advise();
+    $('search').focus();
+  }
+  start();
+})();

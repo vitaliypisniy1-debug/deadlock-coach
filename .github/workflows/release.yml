@@ -1,0 +1,57 @@
+# Сборка Deadlock Coach в .exe на серверах GitHub.
+# Как выпустить версию: GitHub → Releases → «Draft a new release» → тег вида v0.9.0 →
+# в описании «что нового» → Publish. Через 5–10 минут к релизу прикрепятся
+# установщик и переносная версия, а программы у всех сами предложат обновиться.
+name: Сборка релиза
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch: # ручной запуск во вкладке Actions — пробная сборка без релиза
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Версия из тега и адрес репозитория для обновлений
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            V="${GITHUB_REF_NAME#v}"
+            npm version "$V" --no-git-tag-version --allow-same-version
+          fi
+          node -e "const f='package.json';const p=require('./'+f);p.updateRepo=process.env.GITHUB_REPOSITORY;require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\n')"
+          node -e "const p=require('./package.json');console.log('Версия',p.version,'· обновления из',p.updateRepo)"
+
+      - name: Зависимости и Electron
+        run: npm install --no-audit --no-fund
+
+      - name: Тесты
+        run: npm test
+
+      - name: Сборка .exe
+        run: npx --yes electron-builder@25.1.8 --win nsis portable --publish never
+
+      - name: Прикрепить к релизу
+        if: github.event_name == 'release'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/*.exe --clobber
+
+      - name: Сохранить сборку (для ручного запуска)
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: deadlock-coach-windows
+          path: dist/*.exe

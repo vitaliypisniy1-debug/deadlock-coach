@@ -1,0 +1,51 @@
+{
+  "name": "deadlock-coach",
+  "productName": "Deadlock Coach",
+  "version": "0.9.0",
+  "description": "Deadlock Coach — личный тренер и мета топ-50/100 текущего сезона на данных deadlock-api.com",
+  "main": "src/main/main.js",
+  "private": true,
+  "scripts": {
+    "postinstall": "node tools/get-electron.js",
+    "start": "electron .",
+    "test": "node test/run.js",
+    "dist": "npx --yes electron-builder@25.1.8 --win nsis portable --publish never"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1"
+  },
+  "build": {
+    "appId": "local.deadlock.coach",
+    "productName": "Deadlock Coach",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Deadlock Coach",
+      "runAfterFinish": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "artifactName": "DeadlockCoach-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "DeadlockCoach-Portable-${version}.${ext}"
+    }
+  },
+  "updateRepo": ""
+}

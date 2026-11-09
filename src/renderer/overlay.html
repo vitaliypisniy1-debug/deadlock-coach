@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self'; connect-src 'none'" />
+  <title>Deadlock Coach — пик</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&amp;family=Geist+Mono:wght@500;600;700&amp;display=swap" />
+  <link rel="stylesheet" href="overlay.css" />
+</head>
+<body>
+  <div class="ov" id="ov">
+    <header class="ov-bar">
+      <span class="ov-mark" aria-hidden="true"></span>
+      <b>Пик против состава</b>
+      <span class="ov-timer" id="timer" hidden></span>
+      <span class="grow"></span>
+      <span class="ov-key" id="key"></span>
+      <button class="ov-x" id="close" title="Скрыть (Esc)" aria-label="Скрыть">×</button>
+    </header>
+    <main class="ov-body">
+      <section class="ov-left">
+        <div class="ov-slots" id="slots"></div>
+        <div class="ov-tools">
+          <div class="ov-modes" id="modes" role="tablist"></div>
+          <input id="search" class="ov-search" placeholder="Начни печатать имя героя…" autocomplete="off" spellcheck="false" />
+          <button class="ov-btn ghost" id="reset" title="Очистить всё">Сбросить</button>
+        </div>
+        <div class="ov-grid" id="grid"></div>
+        <div class="ov-help">Клик — соперник · правый клик — союзник · Shift+клик — твой текущий герой · Enter — первый из поиска · Tab — сменить режим</div>
+      </section>
+      <section class="ov-right" id="right"></section>
+    </main>
+  </div>
+  <script src="format.js"></script>
+  <script src="icons.js"></script>
+  <script src="overlay.js"></script>
+</body>
+</html>

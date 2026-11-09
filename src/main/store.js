@@ -19,6 +19,8 @@ const DEFAULT_SETTINGS = {
   topSource: 'auto', // auto (ладдер текущего сезона) | list
   overlayKey: 'Ctrl+Shift+D', // горячая клавиша оверлея «Пик против состава»
   pickPool: null, // свои герои для совета по пику; null — герои с 15+ победами
+  autoRecognize: true, // узнавать состав по портретам (пауза перед игрой и горячая клавиша)
+  overlayAutoHide: true, // прятать оверлей через несколько секунд после начала игры
   autoUpdateCheck: true, // проверять обновления на GitHub при запуске
   skippedVersion: null, // версия, которую попросили не предлагать
 };

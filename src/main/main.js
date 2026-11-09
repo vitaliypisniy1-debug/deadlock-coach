@@ -1,8 +1,12 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, shell, clipboard, nativeTheme, dialog, globalShortcut, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, clipboard, nativeTheme, dialog, globalShortcut, screen, desktopCapturer, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { checkConsoleLog } = require('./gameLog');
+const { checkConsoleLog, findDeadlockDir } = require('./gameLog');
+const { Recognizer } = require('./recognizer');
+const { GameWatch, consoleLogPath } = require('./gameWatch');
+let recognizer = null;
+let watch = null;
 const { Updater } = require('./updater');
 let updater = null;
 
@@ -64,7 +68,7 @@ function createOverlay() {
   const h = Math.min(640, area.height - 40);
   overlay = new BrowserWindow({
     x: saved && Number.isFinite(saved.x) ? saved.x : Math.round(area.x + (area.width - w) / 2),
-    y: saved && Number.isFinite(saved.y) ? saved.y : Math.round(area.y + 60),
+    y: saved && Number.isFinite(saved.y) ? saved.y : Math.round(area.y + area.height * 0.17), // ниже верхней панели с портретами
     width: saved && saved.width ? saved.width : w,
     height: saved && saved.height ? saved.height : h,
     minWidth: 720,
@@ -99,20 +103,75 @@ function createOverlay() {
   return overlay;
 }
 
+function showOverlay({ focus = true } = {}) {
+  const o = createOverlay();
+  const go = () => {
+    if (focus) {
+      o.show();
+      o.focus();
+    } else o.showInactive(); // не забираем фокус у игры
+    o.webContents.send('overlay:shown');
+  };
+  if (o.webContents.isLoading()) o.webContents.once('did-finish-load', go);
+  else go();
+  return o;
+}
+
+function sendToOverlay(channel, payload) {
+  const o = createOverlay();
+  const send = () => o.webContents.send(channel, payload);
+  if (o.webContents.isLoading()) o.webContents.once('did-finish-load', send);
+  else send();
+}
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Снимок экрана и распознавание. Оверлей на время снимка прячем, чтобы он не закрыл портреты.
+let recognizing = null;
+async function runRecognition({ retries = 0, focus = true, reason = 'manual' } = {}) {
+  if (recognizing) return recognizing;
+  recognizing = (async () => {
+    const o = overlay && !overlay.isDestroyed() ? overlay : null;
+    const wasVisible = !!(o && o.isVisible());
+    if (wasVisible) {
+      o.hide();
+      await wait(250);
+    }
+    let best = null;
+    for (let i = 0; i <= retries; i++) {
+      try {
+        const r = await recognizer.recognize();
+        if (!best || (r.ok && (!best.ok || r.slots.length > best.slots.length))) best = r;
+        if (r.ok && r.slots.length >= 12) break; // все 12 на месте
+      } catch (e) {
+        best = best || { ok: false, reason: `Ошибка распознавания: ${e.message}` };
+      }
+      if (i < retries) await wait(2000);
+    }
+    best.reason2 = reason;
+    sendToOverlay('overlay:recognized', best);
+    if (wasVisible || reason !== 'hotkey-silent') showOverlay({ focus });
+    return best;
+  })();
+  try {
+    return await recognizing;
+  } finally {
+    recognizing = null;
+  }
+}
+
 function toggleOverlay(force = null) {
   const o = createOverlay();
   const show = force === null ? !o.isVisible() : force;
-  if (show) {
-    const go = () => {
-      o.show();
-      o.focus();
-      o.webContents.send('overlay:shown');
-    };
-    if (o.webContents.isLoading()) o.webContents.once('did-finish-load', go);
-    else go();
-  } else {
+  if (!show) {
     o.hide();
+    return;
   }
+  const st = store.settings();
+  const fresh = recognizer && recognizer.last && Date.now() - recognizer.last.out.at < 90e3;
+  if (st.autoRecognize !== false && recognizer && !fresh) {
+    runRecognition({ reason: 'hotkey' }).catch(() => showOverlay());
+  } else showOverlay();
 }
 
 function registerOverlayKey(key) {
@@ -412,6 +471,16 @@ function registerIpc() {
     clipboard.writeImage(img);
     return true;
   });
+  // --- распознавание состава ---
+  handle('rec:run', async () => runRecognition({ reason: 'manual' }));
+  handle('rec:learn', async ({ slot, heroId }) => recognizer.learn(slot, heroId));
+  handle('rec:forget', async () => recognizer.forget());
+  handle('rec:status', async () => ({
+    watch: watch ? watch.info() : null,
+    learned: Object.keys(recognizer.learnedAll()).length,
+    last: recognizer.last ? { at: recognizer.last.out.at, ok: recognizer.last.out.ok, slots: recognizer.last.out.slots.length, unsure: recognizer.last.out.unsure, ms: recognizer.last.out.ms } : null,
+    dir: recognizer.dir,
+  }));
   // --- оверлей и совет по пику ---
   handle('overlay:toggle', async (show) => {
     toggleOverlay(typeof show === 'boolean' ? show : null);
@@ -472,6 +541,29 @@ app.whenReady().then(() => {
     createWindow();
     scheduleAuto();
     registerOverlayKey(store.settings().overlayKey);
+    recognizer = new Recognizer({ store, getAssets: () => sync.assets, electron: { desktopCapturer, screen, nativeImage }, log: (m) => logCrash('recognizer', m) });
+    watch = new GameWatch({
+      findFile: async () => {
+        const { gameDir } = await findDeadlockDir(store.settings().steamDir || null);
+        const f = consoleLogPath(gameDir);
+        return f && fs.existsSync(f) ? f : null;
+      },
+      log: (m) => logCrash('watch', m),
+    });
+    // Пауза перед игрой → снимок → оверлей с составом и советом (без кражи фокуса у игры).
+    watch.on('event', (ev) => {
+      const st = store.settings();
+      emit('game:event', ev);
+      if (ev.type === 'pregame' && st.autoRecognize !== false) {
+        setTimeout(() => runRecognition({ retries: 5, focus: false, reason: 'pregame' }).catch(() => {}), 1500);
+      }
+      if (ev.type === 'started' && st.overlayAutoHide !== false) {
+        setTimeout(() => {
+          if (overlay && !overlay.isDestroyed() && overlay.isVisible() && !overlay.isFocused()) overlay.hide();
+        }, 8000);
+      }
+    });
+    watch.start().catch(() => {});
     let repo = '';
     try {
       repo = require('../../package.json').updateRepo || '';
@@ -506,6 +598,7 @@ app.whenReady().then(() => {
 app.on('will-quit', () => {
   try {
     globalShortcut.unregisterAll();
+    if (watch) watch.stop();
   } catch {}
 });
 

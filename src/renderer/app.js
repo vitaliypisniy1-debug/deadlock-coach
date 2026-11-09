@@ -2302,6 +2302,7 @@
     try {
       OV.data = await dc.pickAdvise({});
       OV.key = await dc.overlayKey().catch(() => null);
+      OV.rec = await dc.recStatus().catch(() => null);
       OV.error = null;
     } catch (e) {
       OV.error = e.message;
@@ -2402,10 +2403,35 @@
         h('label', 'Горячая клавиша'), h('div', h('div.row', keyBox, h('button.btn', { onclick: saveKey }, 'Сохранить клавишу'), h('button.btn.primary', { onclick: () => dc.toggleOverlay(true) }, 'Открыть оверлей')),
           h('div.hint', OV.key && OV.key.key ? `Работает: ${OV.key.key}. Нажми в поле и зажми новое сочетание; Backspace — выключить.` : 'Клавиша не активна — нажми в поле и зажми сочетание, например Ctrl+Shift+D.')),
         h('label', 'Мои герои для рейтинга'), h('div', poolBlock),
-        h('label', 'Автоматически узнавать состав'), h('div',
-          h('div.hint', { style: { marginBottom: '8px' } }, 'Эксперимент. В Steam: Deadlock → Свойства → Параметры запуска → добавь -condebug. Игра начнёт писать лог консоли; проверим, видно ли там героев матча.'),
-          h('button.btn', { onclick: async () => { OV.logLoading = true; renderSettings(); try { OV.log = await dc.gameLogCheck(); } catch (e) { toast(e.message, true); } finally { OV.logLoading = false; renderSettings(); } } }, 'Проверить лог игры'),
-          logBlock)));
+        h('label', 'Узнавать состав сам'), h('div', recSettings(logBlock))));
+  }
+
+  // Распознавание состава по портретам: включение, состояние, сброс выученного.
+  function recSettings(logBlock) {
+    const st = OV.rec;
+    const w = st && st.watch;
+    const watchText = !w ? '…'
+      : w.status === 'watching' ? `Слежу за игрой${w.lastEvent ? ` · последнее событие: ${{ match: 'матч найден', pregame: 'пауза перед игрой', started: 'игра началась', ended: 'игра закончилась', left: 'вышел из матча' }[w.lastEvent.type] || w.lastEvent.type}` : ''}.`
+        : w.status === 'no-log' ? 'Лог игры не найден. В Steam: Deadlock → Свойства → Параметры запуска → добавь -condebug и запускай игру из Steam. Без этого оверлей сам не откроется, но горячая клавиша всё равно узнаёт состав.'
+          : 'Запускаю слежение…';
+    const auto = h('input', { type: 'checkbox', checked: S.settings.autoRecognize !== false || null, onchange: async (e) => {
+      const r = await dc.saveSettings({ autoRecognize: e.target.checked });
+      S.settings = r.settings;
+    } });
+    const hide = h('input', { type: 'checkbox', checked: S.settings.overlayAutoHide !== false || null, onchange: async (e) => {
+      const r = await dc.saveSettings({ overlayAutoHide: e.target.checked });
+      S.settings = r.settings;
+    } });
+    return h('div',
+      h('label.check', auto, 'узнавать героев по портретам на верхней панели'),
+      h('div.hint', { style: { margin: '6px 0 10px' } }, 'Как только в логе игры начинается пауза перед матчем, программа делает снимок экрана, узнаёт обе команды и сама показывает оверлей с советом — не забирая фокус у игры. По горячей клавише — то же самое в любой момент матча. Нужен режим «В окне без рамки».'),
+      h('label.check', hide, 'прятать оверлей через несколько секунд после начала игры'),
+      h('div.note', { style: { marginTop: '10px' } }, Icon('info'), h('div', watchText,
+        st ? h('div.dim', { style: { marginTop: '4px' } }, `Выучено портретов: ${st.learned}.${st.last ? ` Последнее распознавание: ${st.last.ok ? `${st.last.slots} портретов, не уверен в ${st.last.unsure}, ${st.last.ms} мс` : 'не получилось'}.` : ''}`) : null)),
+      h('div.row', { style: { gap: '8px', flexWrap: 'wrap' } },
+        h('button.btn', { onclick: async () => { OV.logLoading = true; renderSettings(); try { OV.log = await dc.gameLogCheck(); } catch (e) { toast(e.message, true); } finally { OV.logLoading = false; renderSettings(); } } }, 'Проверить лог игры'),
+        h('button.btn.ghost', { onclick: async () => { await dc.recForget(); OV.rec = await dc.recStatus().catch(() => null); toast('Выученные портреты забыты'); renderSettings(); } }, 'Забыть выученные портреты')),
+      logBlock);
   }
 
   // ---------- старт ----------

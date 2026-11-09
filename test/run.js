@@ -598,6 +598,56 @@ test('game build code: encode/decode round trip, ability steps, size', () => {
   assert.ok(decodeBuildCode(big.code).categories[0].items.length === 4000, 'длинный кадр тоже читается');
 });
 
+test('portraits: slots, own portrait, learned matching, log events', () => {
+  const P = require('../src/core/portraits');
+  const { parseLines } = require('../src/main/gameWatch');
+  const { bgraToRgba } = require('../src/main/recognizer');
+  // Нарисованная «верхняя панель» 1280×800: 2 союзника (янтарь) слева, 2 соперника (сапфир) справа.
+  const W = 1280, H = 800;
+  const data = Buffer.alloc(W * H * 4);
+  for (let i = 0; i < W * H; i++) { data[i * 4] = 30; data[i * 4 + 1] = 15; data[i * 4 + 2] = 12; data[i * 4 + 3] = 255; }
+  const rect = (x0, y0, x1, y1, f) => { for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const c = f(x, y); const i = (y * W + x) * 4; data[i] = c[0]; data[i + 1] = c[1]; data[i + 2] = c[2]; } };
+  const AMBER = [212, 135, 12], SAPH = [78, 118, 196];
+  const centers = [{ cx: 467, t: AMBER }, { cx: 532, t: AMBER, own: true }, { cx: 748, t: SAPH }, { cx: 813, t: SAPH }];
+  const pattern = (k) => (x, y) => [(x * (k + 3) + y * 7) % 200 + 30, (y * (k + 5)) % 180 + 40, ((x + y) * (k + 2)) % 160 + 50];
+  centers.forEach((c, k) => {
+    rect(Math.round(c.cx - 12), 72, Math.round(c.cx + 13), 89, () => c.t); // плашка душ
+    rect(Math.round(c.cx - 28), 0, Math.round(c.cx + 28), 70, pattern(k)); // портрет
+    if (c.own) rect(Math.round(c.cx + 7), 1, Math.round(c.cx + 27), 8, () => c.t); // квадратная подложка своего
+  });
+  const img = { w: W, h: H, data };
+  const slots = P.findSlots(img);
+  assert.strictEqual(slots.length, 4, 'найдены все 4 портрета');
+  assert.deepStrictEqual(slots.map((s) => s.team), ['amber', 'amber', 'sapphire', 'sapphire']);
+  assert.deepStrictEqual(slots.map((s) => P.isOwnSlot(img, s)), [false, true, false, false], 'свой портрет по квадратной подложке');
+  const feats = slots.map((s) => P.slotFeature(img, s));
+  const heroes = [10, 11, 12, 13].map((id, k) => ({ id, learned: [feats[k]] }));
+  const res = P.assignHeroes(feats, heroes);
+  assert.deepStrictEqual(res.map((r) => r.id), [10, 11, 12, 13]);
+  assert.ok(res.every(P.confident));
+  // неизвестный герой: образцов нет → не уверены
+  const res2 = P.assignHeroes(feats, [{ id: 10, learned: [feats[0]] }, { id: 99, learned: [] }]);
+  assert.ok(P.confident(res2[0]) && !res2.slice(1).some((r) => r && P.confident(r)));
+  // строки настоящего лога Deadlock
+  const st = { matchId: null, phase: null };
+  const ev = parseLines([
+    '11/09 23:23:51 OnGameStateChanged: MatchIntro (4)', // песочница — без матча
+    '11/09 23:23:51 OnGameStateChanged: GameInProgress (7)',
+    '11/09 23:25:41 Lobby 174217834820289999 for Match 134512045 created',
+    '11/09 23:25:42 [Citadel Play Controller] CCitadel_PlayController::OnMatchFormed',
+    '11/09 23:25:45 OnGameStateChanged: WaitingForPlayersToJoin (2)',
+    '11/09 23:26:06 OnGameStateChanged: WaitForMapToLoad (5)',
+    '11/09 23:26:06 OnGameStateChanged: PreGameWait (6)',
+    '11/09 23:26:36 OnGameStateChanged: GameInProgress (7)',
+    '11/09 23:58:00 Loading map "dl_hideout"',
+  ], st);
+  assert.deepStrictEqual(ev.map((e) => e.type), ['match', 'pregame', 'started', 'left']);
+  assert.ok(ev.every((e) => e.matchId === 134512045));
+  // BGRA → RGBA с отменой предумножения
+  const px = bgraToRgba(Buffer.from([10, 20, 128, 128, 1, 2, 3, 255]), { unpremultiply: true });
+  assert.deepStrictEqual([...px], [255, 40, 20, 128, 3, 2, 1, 255]);
+});
+
 test('versus: candidates and side by side', () => {
   const recs = benchM.map((m) => ({ match: m, player: m.players[0] }));
   const myM = extractMatch(fakeMatch({ id: 4242, seed: 77, start: 1, accounts: [777, ...ACC.slice(1)], skill: [0.8] }), { paths: true });

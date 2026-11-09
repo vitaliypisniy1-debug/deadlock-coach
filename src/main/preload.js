@@ -52,6 +52,10 @@ contextBridge.exposeInMainWorld('dc', {
   pickAdvise: (opts) => call('pick:advise', opts),
   pickPrepare: (force) => call('pick:prepare', force),
   gameLogCheck: () => call('game:logCheck'),
+  recRun: () => call('rec:run'),
+  recLearn: (slot, heroId) => call('rec:learn', { slot, heroId }),
+  recForget: () => call('rec:forget'),
+  recStatus: () => call('rec:status'),
   matchBuild: (matchId, accountId, slot) => call('build:get', { matchId, accountId, slot }),
   buildText: (b) => call('build:text', b),
   encodeGameBuild: (build) => call('build:encode', build),
@@ -59,7 +63,7 @@ contextBridge.exposeInMainWorld('dc', {
   buildPng: (rect, name) => call('build:png', { rect, name }),
   copyBuildImage: (rect) => call('build:copyImage', { rect }),
   on: (channel, fn) => {
-    const allowed = ['progress', 'log', 'meta:updated', 'overlay:shown', 'update:available', 'update:progress'];
+    const allowed = ['progress', 'log', 'meta:updated', 'overlay:shown', 'update:available', 'update:progress', 'overlay:recognized', 'game:event'];
     if (!allowed.includes(channel)) return () => {};
     const h = (_e, payload) => fn(payload);
     ipcRenderer.on(channel, h);

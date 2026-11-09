@@ -20,6 +20,9 @@
     progress: null,
     lastEdit: 0,
     timerStart: 0,
+    rec: null, // результат распознавания портретов
+    fixSlot: null, // портрет, который сейчас исправляем
+    recBusy: false,
   };
   const LIMIT = { enemies: 6, allies: 5 };
 
@@ -56,7 +59,36 @@
     if (S.me === id) S.me = null;
   }
 
+  // Исправление портрета: герой встаёт в роль этого слота, а программа запоминает образец.
+  async function fixSlot(index, id) {
+    const slot = S.rec && S.rec.slots[index];
+    if (!slot) return;
+    const role = slot.own ? 'me' : slot.ally ? 'allies' : 'enemies';
+    if (slot.hero && slot.confident) removeHero(slot.hero);
+    removeHero(id);
+    // этот герой был у другого портрета — тот портрет теперь под вопросом
+    for (const o of S.rec.slots) {
+      if (o !== slot && o.hero === id) {
+        o.hero = null;
+        o.confident = false;
+      }
+    }
+    if (role === 'me') S.me = id;
+    else if (S[role].length < LIMIT[role]) S[role].push(id);
+    slot.hero = id;
+    slot.confident = true;
+    slot.learned = true;
+    S.fixSlot = null;
+    changed();
+    try {
+      await dc.recLearn(index, id);
+    } catch (e) {
+      S.error = null;
+    }
+  }
+
   function assign(id, mode = S.mode) {
+    if (S.fixSlot !== null) return fixSlot(S.fixSlot, id);
     const was = where(id);
     removeHero(id);
     if (was === mode) return changed(); // повторный клик — убрать
@@ -106,9 +138,61 @@
     return h(`button.slot.${kind}`, { title: `${heroName(id)} — убрать`, onclick: () => { removeHero(id); changed(); } }, heroImg(id), h('span.slot-name', heroName(id)));
   }
 
+  function recStrip() {
+    const r = S.rec;
+    if (S.recBusy) return h('div.rec.busy', h('span.spin'), 'Узнаю героев по портретам…');
+    if (!r) return null;
+    if (!r.ok) {
+      return h('div.rec.err', h('b', 'Не получилось узнать состав. '), r.reason || '', ' ',
+        h('button.ov-btn.ghost.small', { onclick: rerun }, 'Попробовать снова'));
+    }
+    const thumb = (x) => h(`button.rthumb${x.own ? '.own' : ''}${x.ally ? '.ally' : '.enemy'}${x.confident ? '' : '.unsure'}${S.fixSlot === x.index ? '.fixing' : ''}`, {
+      title: x.confident ? `${heroName(x.hero)} — нажми, чтобы исправить` : 'Не уверен — нажми и выбери героя ниже',
+      onclick: () => { S.fixSlot = S.fixSlot === x.index ? null : x.index; renderLeft(); $('search').focus(); },
+    }, x.thumb ? h('img', { src: x.thumb, alt: '' }) : null,
+      h('span.rt-name', x.confident && x.hero ? heroName(x.hero) : '?'));
+    const mine = r.slots.filter((x) => x.ally);
+    const theirs = r.slots.filter((x) => !x.ally);
+    const unsure = r.slots.filter((x) => !x.confident).length;
+    return h('div.rec',
+      h('div.rec-head',
+        h('b', S.fixSlot !== null ? 'Выбери героя для отмеченного портрета ↓' : unsure ? `Не уверен в ${unsure} — нажми на портрет и выбери героя` : 'Состав узнан по портретам'),
+        h('span.grow'),
+        h('button.ov-btn.ghost.small', { onclick: rerun, title: 'Сделать новый снимок экрана' }, 'Узнать заново')),
+      h('div.rec-row', h('div.rec-team', mine.map(thumb)), h('span.rec-vs', 'vs'), h('div.rec-team', theirs.map(thumb))));
+  }
+
+  async function rerun() {
+    S.recBusy = true;
+    S.fixSlot = null;
+    renderLeft();
+    try {
+      await dc.recRun(); // результат придёт событием overlay:recognized
+    } catch (e) {
+      S.recBusy = false;
+      S.rec = { ok: false, reason: e.message };
+      renderLeft();
+    }
+  }
+
+  function applyRecognition(r) {
+    S.recBusy = false;
+    S.rec = r;
+    S.fixSlot = null;
+    if (r && r.ok) {
+      S.enemies = r.enemies.slice(0, LIMIT.enemies);
+      S.allies = r.allies.slice(0, LIMIT.allies);
+      S.me = r.me || null;
+      S.mode = 'enemies';
+      if (!S.timerStart && r.reason2 === 'pregame') S.timerStart = Date.now();
+    }
+    changed();
+  }
+
   function renderLeft() {
     const enemySlots = [...Array(LIMIT.enemies)].map((_, i) => slot(S.enemies[i], 'enemy', i));
     const allySlots = [...Array(LIMIT.allies)].map((_, i) => slot(S.allies[i], 'ally', i));
+    $('rec').replaceChildren(...[recStrip()].filter(Boolean));
     $('slots').replaceChildren(
       h('div.slot-group', h('div.slot-label', 'Соперники'), h('div.slot-row', enemySlots)),
       h('div.slot-group.small', h('div.slot-label', 'Союзники ', h('span', '(не обязательно)')), h('div.slot-row', allySlots)),
@@ -225,6 +309,11 @@
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      if (S.fixSlot !== null) {
+        S.fixSlot = null;
+        renderLeft();
+        return;
+      }
       dc.toggleOverlay(false);
       return;
     }
@@ -261,6 +350,7 @@
       advise();
     }
   });
+  dc.on('overlay:recognized', (r) => applyRecognition(r));
   dc.on('overlay:shown', () => {
     // новый матч: если с последней правки прошло больше 4 минут — начинаем с чистого листа
     if (S.lastEdit && Date.now() - S.lastEdit > 4 * 60e3) reset();

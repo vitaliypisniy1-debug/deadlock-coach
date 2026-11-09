@@ -214,6 +214,9 @@ function heroOutlook({ pro, mine, weightMine = 2, prior = 5, minEvidence = 3, ta
       rows.push({
         hero_id: id,
         delta: (wP * dP + wM * dM) / (wP + wM + prior),
+        // по отдельности (стянуто к нулю при малой выборке) — для совета по пику 80/20
+        dPro: gP ? (gP * dP) / (gP + prior) : null,
+        dMine: gM ? (gM * dM) / (gM + prior) : null,
         evidence,
         pro: p && p.n ? { games: p.n, wins: p.wins, losses: p.n - p.wins, wr: p.w / p.g } : null,
         mine: m && m.n ? { games: m.n, wins: m.wins, losses: m.n - m.wins, wr: m.w / m.g } : null,
@@ -227,7 +230,12 @@ function heroOutlook({ pro, mine, weightMine = 2, prior = 5, minEvidence = 3, ta
   const mateRows = combine(P.mates, M.mates);
   return {
     // все соперники кратко — для совета по пику
-    vs: Object.fromEntries(vsRows.map((r) => [r.hero_id, { delta: Math.round(r.delta * 1000) / 1000, evidence: r.evidence }])),
+    vs: Object.fromEntries(vsRows.map((r) => [r.hero_id, {
+      delta: Math.round(r.delta * 1000) / 1000,
+      evidence: r.evidence,
+      pro: r.dPro === null ? null : Math.round(r.dPro * 1000) / 1000,
+      mine: r.dMine === null ? null : Math.round(r.dMine * 1000) / 1000,
+    }])),
     proGames: pro.length,
     myGames: mine.length,
     proBase: P.base,

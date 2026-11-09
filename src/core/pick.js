@@ -2,15 +2,31 @@
 // Совет по пику в паузе перед игрой: из твоих героев выбираем лучших против
 // стартового состава соперников.
 //
+// Вес данных: 80% — игры топового уровня (мета), 20% — твои собственные игры.
+//
 // Для каждого твоего героя заранее посчитана таблица «соперник → насколько
-// чаще обычного побеждают» (heroOutlook: твои игры ×2 + игры топового уровня,
-// малые выборки стянуты к нулю). Итоговая оценка героя:
-//   сумма матчапов против соперников (каждый ограничен ±15%, чтобы один
-//   выброс не решал всё)
-// + насколько ты сам сильнее обычного на этом герое (стянуто к нулю)
-// + немного меты: винрейт героя у топов (стянут к 50%).
+// чаще обычного побеждают» отдельно по играм топового уровня и по твоим играм
+// (малые выборки стянуты к нулю). Итоговая оценка героя:
+//   сумма матчапов против соперников, каждый = 80% топы + 20% твои
+//   (нет твоих игр против этого героя — только топы; каждый ограничен ±15%)
+// + герой сам по себе: 80% — винрейт у топов, 20% — насколько ты на нём
+//   сильнее своего обычного.
 
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+
+const MY_SHARE = 0.2; // доля твоих игр в совете
+const META_SHARE = 1 - MY_SHARE;
+
+// Матчап против одного соперника: 80% топы + 20% твои.
+function mixMatchup(r) {
+  if (!r) return null;
+  const hasPro = typeof r.pro === 'number';
+  const hasMine = typeof r.mine === 'number';
+  if (hasPro && hasMine) return META_SHARE * r.pro + MY_SHARE * r.mine;
+  if (hasPro) return r.pro;
+  if (hasMine) return MY_SHARE * r.mine; // игр топов нет — твоим играм всё равно не больше 20%
+  return typeof r.delta === 'number' ? r.delta : null; // старые таблицы
+}
 
 // Твои герои для рейтинга. Правило игры: в рейтинге можно играть героями,
 // на которых выиграно 15 обычных игр. Историю по режимам не различаем, поэтому
@@ -50,13 +66,14 @@ function pickAdvice({ pool, tables, enemies = [], allies = [], current = null, m
     const t = tables && tables[hid];
     const parts = enemies.map((e) => {
       const r = t && t.vs ? t.vs[e] : null;
-      return { hero_id: e, d: r ? clamp(r.delta, -0.15, 0.15) : 0, known: !!r, evidence: r ? r.evidence : 0 };
+      const d = mixMatchup(r);
+      return { hero_id: e, d: d === null ? 0 : clamp(d, -0.15, 0.15), known: d !== null, evidence: r ? r.evidence : 0 };
     });
     const vsScore = parts.reduce((s, x) => s + x.d, 0);
     const comfort = p.games ? (p.wins - p.games * myBase) / (p.games + 10) : -0.03;
     const m = meta[hid];
     const metaAdj = m && m.games ? ((m.winrate - 0.5) * m.games) / (m.games + 30) : 0;
-    const score = vsScore + comfort + 0.5 * metaAdj;
+    const score = vsScore + META_SHARE * metaAdj + MY_SHARE * comfort;
     const sorted = parts.filter((x) => x.known && Math.abs(x.d) >= 0.01).sort((a, b) => b.d - a.d);
     rows.push({
       hero_id: hid,
@@ -86,4 +103,4 @@ function pickAdvice({ pool, tables, enemies = [], allies = [], current = null, m
   return { rows: free.slice(0, take), all: rows, verdict, enemies: enemies.length, myBase };
 }
 
-module.exports = { heroPool, pickAdvice };
+module.exports = { heroPool, pickAdvice, mixMatchup, MY_SHARE };

@@ -456,6 +456,7 @@ test('hero outlook: good/bad enemies and lane partners', () => {
   assert.strictEqual(o.mates[0].hero_id, 20, 'лучший напарник — 20');
   assert.ok(o.mates[0].laneDiff > 0, 'пара с 20 выигрывает линию');
   assert.ok(o.good[0].pro && o.good[0].mine, 'учтены и топы, и мои игры');
+  assert.ok(typeof o.vs[10].pro === 'number' && typeof o.vs[10].mine === 'number' && o.vs[10].pro > 0, 'в таблице для пика — топы и твои отдельно');
   // маленькая выборка стягивается к нулю
   const tiny = heroOutlook({ pro: pro.slice(0, 2), mine: [], minEvidence: 1 });
   assert.ok([...tiny.good, ...tiny.bad, ...tiny.mates].every((r) => Math.abs(r.delta) < 0.3));
@@ -524,18 +525,32 @@ test('pick advice: best pick vs enemies, keep/swap verdict, pool rules', () => {
   const tables = {
     1: { vs: { 10: { delta: -0.12, evidence: 20 }, 11: { delta: -0.05, evidence: 10 } } },
     2: { vs: { 10: { delta: 0.08, evidence: 15 }, 11: { delta: 0.02, evidence: 8 } } },
-    3: { vs: { 10: { delta: 0.3, evidence: 4 } } }, // выброс ограничивается ±15%
+    3: { vs: { 10: { delta: 0.3, evidence: 4 }, 11: { delta: -0.1, evidence: 6 } } }, // выброс ограничивается ±15%
   };
   const a = pickAdvice({ pool: full, tables, enemies: [10, 11], current: 1 });
   assert.strictEqual(a.rows[0].hero_id, 2, 'лучший против состава — герой 2');
   assert.ok(a.verdict && !a.verdict.keep && a.verdict.hero_id === 2 && a.verdict.from === 1);
-  assert.ok(Math.abs(a.all.find((r) => r.hero_id === 3).vsScore - 0.15) < 1e-9, 'матчап ограничен 15%');
+  assert.ok(Math.abs(a.all.find((r) => r.hero_id === 3).vsScore - 0.05) < 1e-9, 'матчап ограничен 15%');
   assert.ok(a.rows[0].pros.length >= 1 && a.all.find((r) => r.hero_id === 1).cons.length === 2);
   const keep = pickAdvice({ pool: full, tables, enemies: [10, 11], current: 2 });
   assert.ok(keep.verdict.keep, 'уже на лучшем — оставаться');
   const taken = pickAdvice({ pool: full, tables, enemies: [10, 2] });
   assert.ok(!taken.rows.some((r) => r.hero_id === 2), 'занятого героя не советуем');
   assert.ok(taken.all.find((r) => r.hero_id === 4).noTable, 'нет таблицы — помечено');
+  // 80% топы, 20% твои игры
+  const { mixMatchup, MY_SHARE } = require('../src/core/pick');
+  assert.strictEqual(MY_SHARE, 0.2);
+  assert.ok(Math.abs(mixMatchup({ pro: 0.1, mine: -0.1 }) - 0.06) < 1e-9, '0.8·0.1 + 0.2·(−0.1)');
+  assert.strictEqual(mixMatchup({ pro: 0.05, mine: null }), 0.05, 'нет твоих игр — только топы');
+  assert.ok(Math.abs(mixMatchup({ pro: null, mine: 0.1 }) - 0.02) < 1e-9, 'нет игр топов — твоим всё равно 20%');
+  assert.strictEqual(mixMatchup(null), null);
+  // топы говорят «плохо», ты сам — «хорошо»: решают топы
+  const split = {
+    1: { vs: { 10: { pro: -0.1, mine: 0.15, evidence: 30 } } },
+    2: { vs: { 10: { pro: 0.04, mine: -0.05, evidence: 30 } } },
+  };
+  const sp = pickAdvice({ pool: full, tables: split, enemies: [10] });
+  assert.strictEqual(sp.rows[0].hero_id, 2, 'мета весит больше твоих игр');
 });
 
 test('updater: versions, release parsing, check and download', async () => {

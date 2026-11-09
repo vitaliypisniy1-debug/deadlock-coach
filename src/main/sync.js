@@ -1072,7 +1072,7 @@ class Sync {
     const id = Number(accountId);
     const cached = this.store.read('picktables.json', null);
     const { pool } = await this.pickPool(id);
-    const fresh = cached && cached.accountId === id && Date.now() - cached.at < maxAgeH * 3600e3;
+    const fresh = cached && cached.accountId === id && cached.v === 2 && Date.now() - cached.at < maxAgeH * 3600e3;
     const missing = pool.filter((p) => !cached || !cached.tables || !cached.tables[p.hero_id]);
     if (!force && fresh && !missing.length) return cached;
     this._pickRunning = (async () => {
@@ -1091,7 +1091,7 @@ class Sync {
         }
       }
       this.progress('done', 1, 1, 'Советы по пикам готовы');
-      const out = { at: Date.now(), accountId: id, tables };
+      const out = { v: 2, at: Date.now(), accountId: id, tables };
       this.store.write('picktables.json', out);
       return out;
     })();

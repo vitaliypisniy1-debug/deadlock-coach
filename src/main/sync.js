@@ -22,6 +22,7 @@ const { matchTips } = require('../core/tipsMatch');
 const { skillOrder, skillConsensus, compareSkills } = require('../core/skills');
 const { heroPool, pickAdvice } = require('../core/pick');
 const { matchBuild, buildText, buildFile } = require('../core/buildExport');
+const { encodeBuildCode } = require('../core/gameCode');
 
 const DAY = 86400;
 
@@ -1015,7 +1016,23 @@ class Sync {
     const heroName = (x) => (this.assets && this.assets.heroes[x] ? this.assets.heroes[x].name : `Герой ${x}`);
     const itemName = (x) => (this.assets && this.assets.items[x] ? this.assets.items[x].name : `предмет ${x}`);
     const opts = { heroName, itemName, abilityName: itemName, playerName: b.playerName };
-    return { text: buildText(b, opts), file: buildFile(b, opts) };
+    const clock = (t) => `${Math.floor(t / 60)}:${String(Math.round(t % 60)).padStart(2, '0')}`;
+    const game = encodeBuildCode({
+      heroId: b.hero_id,
+      name: `${heroName(b.hero_id)} — ${b.playerName}`,
+      description: `Билд ${b.playerName} из матча ${b.match_id} (${b.won ? 'победа' : 'поражение'}, ${b.k}/${b.d}/${b.a}). Собрано в Deadlock Coach.`,
+      categories: b.stages.map((st) => ({
+        name: st.name,
+        items: st.items.map((it) => ({ id: it.id, note: it.fate === 'sold' && it.soldT ? `продан на ${clock(it.soldT)}` : '' })),
+      })),
+      abilities: b.skills.steps.map((s) => ({ id: s.id, level: s.level })),
+    });
+    return { text: buildText(b, opts), file: buildFile(b, opts), gameCode: game.code, gameCodeTooBig: game.tooBig };
+  }
+
+  // Код билда для вставки в игру из готовых данных (сборка топов на странице героя).
+  encodeGameBuild(build) {
+    return encodeBuildCode(build);
   }
 
   // ---------- совет по пику (оверлей) ----------

@@ -380,6 +380,7 @@ function registerIpc() {
 
   handle('build:get', async ({ matchId, accountId, slot }) => sync.matchBuild(matchId, accountId, slot ?? null));
   handle('build:text', async (b) => sync.buildExportText(b));
+  handle('build:encode', async (build) => sync.encodeGameBuild(build));
   // Сохранить файл билда (текст или JSON) через окно «Сохранить как».
   handle('build:save', async ({ name, content, kind }) => {
     const ext = kind === 'json' ? 'json' : 'txt';

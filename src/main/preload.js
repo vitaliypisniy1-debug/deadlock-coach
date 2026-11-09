@@ -54,6 +54,7 @@ contextBridge.exposeInMainWorld('dc', {
   gameLogCheck: () => call('game:logCheck'),
   matchBuild: (matchId, accountId, slot) => call('build:get', { matchId, accountId, slot }),
   buildText: (b) => call('build:text', b),
+  encodeGameBuild: (build) => call('build:encode', build),
   saveBuild: (name, content, kind) => call('build:save', { name, content, kind }),
   buildPng: (rect, name) => call('build:png', { rect, name }),
   copyBuildImage: (rect) => call('build:copyImage', { rect }),

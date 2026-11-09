@@ -1093,3 +1093,6 @@ h2 > .dot.ally { background: var(--ally); box-shadow: 0 0 10px rgba(111, 178, 25
 .up-notes li { margin: 2px 0; }
 .up-bar { height: 6px; border-radius: 4px; background: var(--line); overflow: hidden; margin: 6px 0; }
 .up-bar span { display: block; height: 100%; background: var(--accent); transition: width 0.2s; }
+.howto { margin: 0 0 12px; padding-left: 20px; font-size: 13px; color: var(--text-2); }
+.howto li { margin-bottom: 6px; }
+.howto b { color: var(--text); }

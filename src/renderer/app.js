@@ -44,13 +44,13 @@
   });
   const $ = (id) => document.getElementById(id);
   let toastTimer;
-  function toast(text, isErr = false) {
+  function toast(text, isErr = false, ms = null) {
     const t = $('toast');
     t.textContent = text;
     t.className = isErr ? 'toast err' : 'toast';
     t.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => (t.hidden = true), isErr ? 7000 : 3500);
+    toastTimer = setTimeout(() => (t.hidden = true), ms || (isErr ? 7000 : 3500));
   }
   const heroName = (id) => (S.assets.heroes[id] ? S.assets.heroes[id].name : `Герой ${id}`);
   const itemName = (id) => (S.assets.items[id] ? S.assets.items[id].name : `Предмет ${id}`);
@@ -562,12 +562,30 @@
             h('span.num', { style: { color: p.spam ? 'var(--orange-2)' : 'var(--text-2)' } }, `${p.games} ${plural(p.games, 'игра', 'игры', 'игр')} · ${Math.round((p.wins / Math.max(1, p.games)) * 100)}% побед`)),
           h(`div.bar${p.spam ? '.hot' : ''}`, { style: { marginTop: '7px' } }, h('span', { style: { width: `${(p.games / max) * 100}%` } }))))));
     }
+    const copyTopsCode = async () => {
+      try {
+        const stage = (name, list) => ({ name, items: list.map((it) => ({ id: it.id, note: `берут ${F.pct(it.pick)} топов, ≈ ${F.time(it.medianT)}` })) });
+        const cats = [stage('Начало (до 10:00)', v.build.phases.early), stage('Середина (10–20 мин)', v.build.phases.mid), stage('Поздняя игра (20+ мин)', v.build.phases.late)];
+        if (v.build.situational.length) cats.push({ ...stage('По ситуации', v.build.situational.slice(0, 10)), optional: true });
+        const sk = d.skills && d.skills.path ? d.skills.path.map((x) => ({ id: x.id, level: x.level })) : [];
+        const r = await dc.encodeGameBuild({
+          heroId: d.heroId,
+          name: `${heroName(d.heroId)} — сборка топ-${S.settings.topN}`,
+          description: `${v.label}. ${v.games} игр топов, винрейт ${F.pct(v.winrate)}. Собрано в Deadlock Coach.`,
+          categories: cats,
+          abilities: sk,
+        });
+        await dc.copy(r.code);
+        toast('Код сборки топов скопирован — вставь его в редакторе сборок в игре', false, 6000);
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
     rightParts.push(h('section.panel', { id: 'in-game' }, h('h2', 'Забрать в игру'),
-      h('div.muted', { style: { fontSize: '13px', marginBottom: '10px' } }, 'Билды хранятся на серверах Valve, поэтому программа ищет самый похожий опубликованный. В игре: магазин (B) → Browse Builds → Public → поиск по названию.'),
-      v.similar.length ? v.similar.map((b) => h('div.build-card',
-        h('div.grow', h('div.build-name', b.name), h('div.muted', { style: { fontSize: '12px' } }, `в избранном у ${F.num(b.favorites)} · ${b.itemIds.length} предметов`)),
-        h('div.score', { title: 'Совпадение с основными предметами сборки' }, F.pct(b.score)),
-        h('button.btn.small.icon', { title: 'Скопировать название', 'aria-label': `Скопировать название ${b.name}`, onclick: () => dc.copy(b.name).then(() => toast('Название скопировано — вставь его в поиск билдов в игре')) }, Icon('copy'))))
+      h('button.btn.primary', { style: { width: '100%', justifyContent: 'center', marginBottom: '10px' }, onclick: copyTopsCode, title: PASTE_HOWTO }, Icon('zap'), 'Скопировать код сборки топов'),
+      h('div.muted', { style: { fontSize: '12.5px', marginBottom: '12px' } }, PASTE_HOWTO, ' В код входят основные предметы этой сборки по стадиям, «по ситуации» и самый частый порядок прокачки топов.'),
+      h('div.muted', { style: { fontSize: '12.5px', margin: '4px 0 8px' } }, 'Или похожая опубликованная сборка — скопируй ID и вставь в поиск в «Обзоре сборок»:'),
+      v.similar.length ? v.similar.map((b) => similarCard(b, 'Совпадение с основными предметами сборки'))
         : h('div.muted', d.buildsError ? `Не удалось загрузить билды: ${d.buildsError}` : 'Похожих опубликованных билдов не нашлось.')));
     parts.push(h('div.row', { style: { alignItems: 'flex-start', gap: '18px' } }, left, h('div', { style: { flex: '1 1 360px', minWidth: '0', display: 'flex', flexDirection: 'column', gap: '18px' } }, rightParts)));
     parts.push(skillsPanel(d.skills, { title: 'Порядок прокачки у топов', who: 'топов' }));
@@ -667,6 +685,19 @@
       b.final.length ? h('div.bc-block', h('div.bc-label', 'К концу игры'), h('div.bc-final', b.final.map((it) => h('span.bc-fin', itemImg(it.id), itemName(it.id))))) : null);
   }
 
+  // Как вставить код билда в игру — одинаковая подсказка везде.
+  const PASTE_HOWTO = 'В игре выбери этого героя → B → «Обзор сборок» → «Создать сборку» → в редакторе нажми кнопку вставки из буфера обмена → сохрани. Сборка появится в «Мои сборки».';
+
+  function similarCard(x, scoreTitle) {
+    const id = x.id !== null && x.id !== undefined ? String(x.id) : null;
+    return h('div.build-card',
+      h('div.grow', h('div.build-name', x.name), h('div.muted', { style: { fontSize: '12px' } }, `${id ? `ID ${id} · ` : ''}в избранном у ${F.num(x.favorites)} · ${x.itemIds.length} предметов`)),
+      h('div.score', { title: scoreTitle }, F.pct(x.score)),
+      id
+        ? h('button.btn.small', { title: 'Скопировать ID сборки — по нему поиск в игре находит её точно', onclick: () => dc.copy(id).then(() => toast(`ID ${id} скопирован — вставь его в поиск в «Обзоре сборок»`)) }, Icon('copy'), 'ID')
+        : h('button.btn.small.icon', { title: 'Скопировать название', onclick: () => dc.copy(x.name).then(() => toast('Название скопировано')) }, Icon('copy')));
+  }
+
   function buildExportBody(b) {
     const fileName = `${heroName(b.hero_id)} ${b.playerName} ${b.match_id}`;
     const rectOf = () => {
@@ -684,17 +715,17 @@
       }
     };
     const actions = h('div.bc-actions',
+      h('button.btn.primary', { title: PASTE_HOWTO, onclick: () => withText((t) => dc.copy(t.gameCode).then(() => toast('Код билда скопирован — вставь его в редакторе сборок в игре', false, 6000))) }, Icon('zap'), 'Скопировать код для игры'),
       h('button.btn', { onclick: () => withText((t) => dc.copy(t.text).then(() => toast('Билд скопирован текстом — вставь в Discord или заметки'))) }, Icon('copy'), 'Скопировать текстом'),
       h('button.btn', { onclick: async () => { try { await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); await dc.copyBuildImage(rectOf()); toast('Картинка билда скопирована — вставь её в Discord'); } catch (e) { toast(e.message, true); } } }, 'Скопировать картинкой'),
       h('button.btn', { onclick: async () => { try { await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); const r = await dc.buildPng(rectOf(), fileName); if (r.saved) toast('Картинка сохранена'); } catch (e) { toast(e.message, true); } } }, 'Сохранить картинку'),
       h('button.btn.ghost', { onclick: () => withText(async (t) => { const r = await dc.saveBuild(fileName, t.text, 'txt'); if (r.saved) toast('Текст билда сохранён'); }) }, 'Сохранить .txt'),
       h('button.btn.ghost', { onclick: () => withText(async (t) => { const r = await dc.saveBuild(fileName, t.file, 'json'); if (r.saved) toast('Файл билда сохранён'); }) }, 'Сохранить .json'));
     const similar = h('section.panel', { style: { marginTop: '16px' } }, h('h2', 'Как забрать в игру'),
-      h('div.muted', { style: { fontSize: '13px', marginBottom: '10px' } }, 'Загрузить билд прямо в игру сторонняя программа не может — билды хранятся на серверах Valve. Есть два пути: собрать его в игровом редакторе по картинке (стадии совпадают с игровыми), или взять самый похожий опубликованный билд: магазин (B) → Browse Builds → Public → поиск по названию.'),
-      b.similar && b.similar.length ? b.similar.map((x) => h('div.build-card',
-        h('div.grow', h('div.build-name', x.name), h('div.muted', { style: { fontSize: '12px' } }, `в избранном у ${F.num(x.favorites)} · ${x.itemIds.length} предметов`)),
-        h('div.score', { title: 'Совпадение с предметами из этого матча' }, F.pct(x.score)),
-        h('button.btn.small.icon', { title: 'Скопировать название', 'aria-label': `Скопировать название ${x.name}`, onclick: () => dc.copy(x.name).then(() => toast('Название скопировано — вставь его в поиск билдов в игре')) }, Icon('copy'))))
+      h('ol.howto',
+        h('li', h('b', 'Код для игры. '), 'Нажми «Скопировать код для игры». ', PASTE_HOWTO, ' Переносятся предметы по стадиям и порядок прокачки способностей.'),
+        h('li', h('b', 'Или похожая опубликованная сборка. '), 'Скопируй её ID и вставь в поиск в «Обзоре сборок» (вкладка «От сообщества») — по ID она находится точно, по названию поиск часто промахивается.')),
+      b.similar && b.similar.length ? b.similar.map((x) => similarCard(x, 'Совпадение с предметами из этого матча'))
         : h('div.muted', b.similarError ? `Не удалось загрузить опубликованные билды: ${b.similarError}` : 'Похожих опубликованных билдов не нашлось.'));
     const noSkills = !b.skills.steps.length ? h('div.note', { style: { marginTop: '10px' } }, Icon('info'), h('div', 'В данных этого матча нет прокачки способностей — в билде только предметы.')) : null;
     return [buildCard(b), noSkills, actions, similar];

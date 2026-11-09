@@ -577,6 +577,27 @@ test('updater: versions, release parsing, check and download', async () => {
   assert.ok(!dc.configured && dc.mode === 'dev' && dc.reason);
 });
 
+test('game build code: encode/decode round trip, ability steps, size', () => {
+  const { encodeBuildCode, decodeBuildCode } = require('../src/core/gameCode');
+  const build = {
+    heroId: 6, name: 'Abrams — Игрок', description: 'Из матча 77',
+    categories: [{ name: 'Начало (до 10:00)', items: [{ id: 2789 }, { id: 4072270083, note: 'продан на 25:00' }] }, { name: 'Пусто', items: [] }, { name: 'Поздняя', items: [{ id: 1009965641 }] }],
+    abilities: [{ id: 11, level: 1 }, { id: 12, level: 1 }, { id: 11, level: 2 }, { id: 11, level: 3 }, { id: 11, level: 4 }],
+  };
+  const r = encodeBuildCode(build);
+  assert.ok(/^[A-Za-z0-9+/=]+$/.test(r.code) && !r.tooBig);
+  assert.ok(Buffer.from(r.code, 'base64').subarray(0, 4).equals(Buffer.from([0x28, 0xb5, 0x2f, 0xfd])), 'кадр Zstandard');
+  const b = decodeBuildCode(r.code);
+  assert.strictEqual(b.heroId, 6);
+  assert.strictEqual(b.name, 'Abrams — Игрок');
+  assert.deepStrictEqual(b.categories.map((c) => c.name), ['Начало (до 10:00)', 'Поздняя'], 'пустые стадии не попадают');
+  assert.deepStrictEqual(b.categories[0].items, [{ id: 2789, note: '' }, { id: 4072270083, note: 'продан на 25:00' }]);
+  assert.deepStrictEqual(b.abilities.map((x) => [x.t, x.d]), [[2, -1], [2, -1], [1, -1], [1, -2], [1, -5]], 'открытие и улучшения 1/2/5 очков');
+  const big = encodeBuildCode({ ...build, description: 'x'.repeat(1400), categories: [{ name: 'a', items: [...Array(4000)].map((_, i) => ({ id: 1000 + i })) }] });
+  assert.ok(big.tooBig, 'слишком большой билд помечается');
+  assert.ok(decodeBuildCode(big.code).categories[0].items.length === 4000, 'длинный кадр тоже читается');
+});
+
 test('versus: candidates and side by side', () => {
   const recs = benchM.map((m) => ({ match: m, player: m.players[0] }));
   const myM = extractMatch(fakeMatch({ id: 4242, seed: 77, start: 1, accounts: [777, ...ACC.slice(1)], skill: [0.8] }), { paths: true });

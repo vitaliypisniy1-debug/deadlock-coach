@@ -168,17 +168,14 @@ async function runRecognition({ retries = 0, focus = true, reason = 'manual' } =
       await wait(250);
     }
     let best = null;
-    let lastN = -1;
     for (let i = 0; i <= retries; i++) {
       try {
         lastIpc = `распознавание портретов (${reason})`;
         const r = await recognizer.recognize();
-        if (!best || (r.ok && (!best.ok || r.slots.length > best.slots.length))) best = r;
-        if (r.ok && r.slots.length >= 12) break; // все 12 на месте
-        // два раза подряд одно и то же — дальше снимать экран незачем
-        const n = r.ok ? r.slots.length : 0;
-        if (i > 0 && n === lastN) break;
-        lastN = n;
+        // лучший снимок — где уверенно узнано больше героев (портреты соперников проявляются не сразу)
+        const sure = (x) => (x && x.ok ? x.slots.length - x.unsure : -1);
+        if (!best || sure(r) > sure(best)) best = r;
+        if (r.ok && r.slots.length >= 12 && r.unsure === 0) break; // все 12 узнаны
       } catch (e) {
         best = best || { ok: false, reason: `Ошибка распознавания: ${e.message}` };
       }
@@ -640,7 +637,7 @@ app.whenReady().then(() => {
       const st = store.settings();
       emit('game:event', ev);
       if (ev.type === 'pregame' && st.autoRecognize !== false) {
-        setTimeout(() => runRecognition({ retries: 3, focus: false, reason: 'pregame' }).catch(() => {}), 1500);
+        setTimeout(() => runRecognition({ retries: 4, focus: false, reason: 'pregame' }).catch(() => {}), 1500);
       }
       if (ev.type === 'started' && st.overlayAutoHide !== false) {
         setTimeout(() => {

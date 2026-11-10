@@ -107,13 +107,42 @@ class Recognizer {
     const t0 = Date.now();
     const assets = this.getAssets();
     const [refs, shots] = await Promise.all([this.loadRefs(), this.captureScreens()]);
+    const learned = this.learnedAll();
+    const heroes = Object.values((assets && assets.heroes) || {})
+      .filter((h) => !h.disabled)
+      .map((h) => ({
+        id: h.id,
+        variants: (refs.get(h.id) || {}).variants || [],
+        learned: (learned[h.id] || []).map((a) => Float32Array.from(a)),
+      }));
+    const evaluate = (shot, sl) => {
+      const features = sl.map((x) => P.slotFeature(shot, x));
+      const picks = P.assignHeroes(features, heroes);
+      return { features, picks, sure: picks.filter((p) => P.confident(p)).length };
+    };
     let img = null;
     let slots = [];
+    let ev = null;
     for (const s of shots) {
-      const found = P.findSlots(s);
-      if (found.length >= 2) {
+      // 1) плашки душ под портретами (идёт матч); 2) фиксированные места портретов
+      //    (пауза перед матчем: плашек ещё нет) — годится, если узнали хотя бы двух героев
+      const plates = P.findSlots(s);
+      if (plates.length >= 12) {
         img = s;
-        slots = found;
+        slots = plates;
+        break;
+      }
+      const layout = P.layoutSlots(s);
+      const le = evaluate(s, layout);
+      if (le.sure >= 2) {
+        img = s;
+        slots = layout;
+        ev = le;
+        break;
+      }
+      if (plates.length >= 2) {
+        img = s;
+        slots = plates;
         break;
       }
     }
@@ -134,16 +163,8 @@ class Recognizer {
         ms: Date.now() - t0,
       };
     }
-    const learned = this.learnedAll();
-    const heroes = Object.values((assets && assets.heroes) || {})
-      .filter((h) => !h.disabled)
-      .map((h) => ({
-        id: h.id,
-        variants: (refs.get(h.id) || {}).variants || [],
-        learned: (learned[h.id] || []).map((a) => Float32Array.from(a)),
-      }));
-    const features = slots.map((s) => P.slotFeature(img, s));
-    const picks = P.assignHeroes(features, heroes);
+    if (!ev) ev = evaluate(img, slots);
+    const { features, picks } = ev;
     const own = slots.map((s) => P.isOwnSlot(img, s));
     const ownIdx = own.indexOf(true);
     const center = img.w / 2;

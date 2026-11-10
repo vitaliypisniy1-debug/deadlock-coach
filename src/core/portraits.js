@@ -103,6 +103,22 @@ function mirrorFill(slots, W, H) {
   return slots;
 }
 
+// Портреты стоят на фиксированных местах: 6 слева и 6 справа от центра экрана,
+// первый — в 0,137 высоты экрана от центра, шаг — 0,0813 высоты (измерено на скриншотах
+// 2560×1600 в матче и в паузе перед матчем). В паузе перед рейтинговой игрой плашек душ ещё нет
+// (вместо них значки линий), поэтому там места берём из этой раскладки.
+function layoutSlots(img) {
+  const H = img.h;
+  const mid = img.w / 2;
+  const out = [];
+  for (let i = 0; i < 6; i++) {
+    const d = H * (0.137 + 0.0813 * i);
+    out.push({ team: 'left', cx: mid - d, labelTop: Math.round(H * 0.09), layout: true });
+    out.push({ team: 'right', cx: mid + d, labelTop: Math.round(H * 0.09), layout: true });
+  }
+  return out.sort((a, b) => a.cx - b.cx);
+}
+
 // Прямоугольник портрета над плашкой.
 function slotBox(img, slot) {
   const H = img.h;
@@ -306,7 +322,7 @@ function assignHeroes(features, heroes) {
 // По проверке на реальных снимках: верный герой по картинке справочника ≈ 0,87
 // при отрыве ≥ 0,3; выученный образец ≈ 0,97+; «не тот» — до ~0,55 с отрывом ~0,03.
 function confident(r) {
-  return !!r && r.score >= 0.68 && r.margin >= 0.1;
+  return !!r && r.score >= 0.65 && r.margin >= 0.1; // 0,65: полупрозрачные портреты соперников в паузе дают 0,67–0,8
 }
 
-module.exports = { GW, GH, teamColor, findSlots, slotBox, isOwnSlot, slotFeature, gridFrom, ncc, refVariants, scoreHero, assignHeroes, confident };
+module.exports = { GW, GH, teamColor, findSlots, layoutSlots, slotBox, isOwnSlot, slotFeature, gridFrom, ncc, refVariants, scoreHero, assignHeroes, confident };

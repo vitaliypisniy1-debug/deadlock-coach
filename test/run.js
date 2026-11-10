@@ -721,6 +721,31 @@ test('game mode: process detection, log activity, background sync waits', async 
   assert.ok(released);
 });
 
+test('portraits: fixed layout for pregame, dim plates, mirror fill', () => {
+  const P = require('../src/core/portraits');
+  const img = { w: 2560, h: 1600, data: Buffer.alloc(2560 * 224 * 4) };
+  const L = P.layoutSlots(img);
+  assert.strictEqual(L.length, 12);
+  // места измерены на настоящих скриншотах 2560×1600
+  const want = [411, 541, 672, 802, 932, 1061, 1499, 1629, 1759, 1889, 2019, 2149];
+  L.forEach((s, i) => assert.ok(Math.abs(s.cx - want[i]) <= 3, `слот ${i}: ${s.cx}`));
+  assert.strictEqual(P.teamColor(212, 135, 12), 'amber');
+  assert.strictEqual(P.teamColor(78, 118, 196), 'sapphire');
+  assert.strictEqual(P.teamColor(106, 71, 33), 'amber', 'полупрозрачная плашка соперника');
+  assert.strictEqual(P.teamColor(169, 129, 92), 'amber');
+  assert.strictEqual(P.teamColor(120, 120, 120), null, 'серый — не команда');
+  assert.strictEqual(P.teamColor(40, 44, 38), null);
+  // плашки: 6 синих слева и только 3 янтарных справа — недостающие достраиваются зеркально
+  const paint = (cx, col) => { for (let y = 150; y < 175; y++) for (let x = cx - 24; x < cx + 24; x++) { const i = (y * 2560 + x) * 4; img.data[i] = col[0]; img.data[i + 1] = col[1]; img.data[i + 2] = col[2]; img.data[i + 3] = 255; } };
+  want.slice(0, 6).forEach((x) => paint(x, [78, 118, 196]));
+  [1499, 1759, 2149].forEach((x) => paint(x, [106, 71, 33]));
+  const F = P.findSlots(img);
+  assert.strictEqual(F.length, 12, `найдено ${F.length}`);
+  assert.strictEqual(F.filter((s) => s.guessed).length, 3);
+  assert.ok(F.slice(6).every((s) => s.team === 'amber'));
+  assert.ok(P.confident({ score: 0.67, margin: 0.12 }) && !P.confident({ score: 0.65, margin: 0.01 }) && !P.confident({ score: 0.61, margin: 0.32 }));
+});
+
 test('leaks: new match data (v2) and mistakes with moments', () => {
   const { extractMatch: ex, EXTRACT_V } = require('../src/core/extract');
   const L = require('../src/core/leaks');

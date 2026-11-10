@@ -156,7 +156,7 @@
     const unsure = r.slots.filter((x) => !x.confident).length;
     return h('div.rec',
       h('div.rec-head',
-        h('b', S.fixSlot !== null ? 'Выбери героя для отмеченного портрета ↓' : unsure ? `Не уверен в ${unsure} — нажми на портрет и выбери героя` : 'Состав узнан по портретам'),
+        h('b', S.fixSlot !== null ? 'Выбери героя для отмеченного портрета ↓' : unsure ? `Не уверен в ${unsure} — нажми на портрет и выбери героя` : S.rec.slots.length < 12 ? `Нашёл только ${S.rec.slots.length} из 12 портретов — нажми «Узнать заново»` : 'Состав узнан по портретам'),
         h('span.grow'),
         h('button.ov-btn.ghost.small', { onclick: rerun, title: 'Сделать новый снимок экрана' }, 'Узнать заново')),
       h('div.rec-row', h('div.rec-team', mine.map(thumb)), h('span.rec-vs', 'vs'), h('div.rec-team', theirs.map(thumb))));

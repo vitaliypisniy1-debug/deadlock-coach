@@ -20,7 +20,8 @@ const SOURCE_NAMES = {
   g_neutral: 'лесные крипы',
   g_player: 'убийства героев',
   g_boss: 'боссы и стражи',
-  g_treasure: 'сундуки и находки',
+  g_treasure: 'урна душ (всей команде)',
+  g_brk: 'коробки',
 };
 const PHASES = [
   { key: 'lane', name: 'Линия', from: 0, to: 10 },
@@ -266,7 +267,7 @@ function analyze({ me, myMatch, bench, assets = null, nameOf = (id) => `#${id}` 
       diff: r.me !== null && r.top !== null ? r.me - r.top : null,
     }));
     sources = { minute: m, rows };
-    const losses = rows.filter((r) => r.diff !== null && r.diff < -250).sort((a, b) => a.diff - b.diff);
+    const losses = rows.filter((r) => r.field !== 'g_treasure' && r.diff !== null && r.diff < -250).sort((a, b) => a.diff - b.diff);
     if (!allGaps.length && losses.length && (worst.nwRatio ?? 1) < 0.95) {
       const l = losses[0];
       const tips = {
@@ -274,7 +275,8 @@ function analyze({ me, myMatch, bench, assets = null, nameOf = (id) => `#${id}` 
         g_lane: 'Добивай крипов на линии и забирай сферы душ — это основной доход в начале.',
         g_player: 'Ты реже участвуешь в убийствах — держись ближе к команде на драках.',
         g_boss: 'Топы чаще забирают стражей и боссов — следи за ними.',
-        g_treasure: 'Разбивай ящики и вазы по пути — мелочь, но копится.',
+        g_treasure: 'Урна душ даёт души всей команде: неси её сам или прикрывай того, кто несёт.',
+        g_brk: 'Разбивай коробки по пути — мелочь, но копится.',
       };
       insights.push({
         level: 'warn',

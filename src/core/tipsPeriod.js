@@ -170,11 +170,11 @@ rule((p) => {
 
 rule((p) => {
   if (!enough(p)) return null;
-  const r = ratio(avg(p.mine, 'treasureEnd'), avg(p.lobbyList, 'treasureEnd'));
-  if (!ok(r) || r >= 0.5) return null;
-  return tip('p_treasure', 'p_treasure', 'Фарм', 'info', 24, 'Пропускаешь ящики по дороге',
-    `С ящиков и находок у тебя в среднем ${P(r)} от того, что берут игроки твоего уровня.`,
-    'Ящики — бесплатные души. Разбивай их по пути с базы и между линиями, это пара секунд.');
+  const r = ratio(avg(p.mine, 'brkEnd'), avg(p.lobbyList, 'brkEnd'));
+  if (!ok(r) || r >= 0.6) return null;
+  return tip('p_treasure', 'p_treasure', 'Фарм', 'info', 24, 'Пропускаешь коробки по дороге',
+    `С коробок у тебя в среднем ${P(r)} от того, что берут остальные игроки в твоих матчах.`,
+    'Коробки — бесплатные души. Разбивай их по пути с базы и между линиями, это пара секунд.');
 });
 
 rule((p) => {

@@ -180,6 +180,7 @@ function playerFeatures(p, match, assets = null) {
     firstBigT: big ? big[1] : null,
     firstBigId: big ? big[0] : null,
     firstHugeT: huge ? huge[1] : null,
+    brkEnd: last && has('g_brk') ? last.g_brk : null,
     brk9: atS('g_brk', 540),
     brk20: atS('g_brk', 1200),
     neu9: atS('g_neutral', 540),

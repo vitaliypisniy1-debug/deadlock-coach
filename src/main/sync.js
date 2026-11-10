@@ -99,6 +99,13 @@ class Sync {
     this.emit('progress', { stage, done, total, text });
   }
 
+  // Твоя история для анализа: только обычные и рейтинговые матчи. Street Brawl, боты, лобби —
+  // другие режимы с другими цифрами, в тренера, ошибки, сводку и матчапы они попадать не должны.
+  async myHistory(accountId, ttlMs = 60e3) {
+    const hist = await this.api.matchHistory(Number(accountId), ttlMs);
+    return (hist || []).filter((m) => isStandardMatch({ game_mode: m.game_mode, match_mode: m.match_mode }));
+  }
+
   // Матч сохранён старой версией (до 0.11: без коробок, статуй, урона по врагам и режима боя
   // в маршрутах) — его стоит перекачать. Один раз: если API его уже не отдаёт, больше не пробуем.
   needsUpgrade(m) {
@@ -933,7 +940,7 @@ class Sync {
   async overview(accountId, days = 7) {
     const id = Number(accountId);
     const d = Math.max(1, Math.min(30, Number(days) || 7));
-    const hist = await this.api.matchHistory(id, 2 * 60e3);
+    const hist = await this.myHistory(id, 2 * 60e3);
     const since = nowSec() - d * DAY;
     const inPeriod = hist.filter((m) => (Number(m.start_time) || 0) >= since);
     // Скачиваем подробные данные своих матчей за период (уже скачанные — из памяти).
@@ -973,7 +980,7 @@ class Sync {
 
   // ---------- сводка по герою ----------
   async myHeroes(accountId) {
-    const hist = await this.api.matchHistory(Number(accountId), 2 * 60e3);
+    const hist = await this.myHistory(accountId, 2 * 60e3);
     const by = new Map();
     for (const m of hist) {
       const h = Number(m.hero_id);
@@ -993,7 +1000,7 @@ class Sync {
   async heroSummary(accountId, heroId, { limit = 20 } = {}) {
     const id = Number(accountId);
     const hid = Number(heroId);
-    const hist = await this.api.matchHistory(id, 2 * 60e3);
+    const hist = await this.myHistory(id, 2 * 60e3);
     const rows = hist.filter((m) => Number(m.hero_id) === hid).sort((a, b) => (b.start_time || 0) - (a.start_time || 0)).slice(0, limit);
     const need = rows.filter((m) => this.needsDownload(m.match_id));
     const mine = new Set(this.store.read('mine.json', []));
@@ -1094,7 +1101,7 @@ class Sync {
     const id = Number(accountId);
     let hist = [];
     try {
-      hist = await this.api.matchHistory(id, 5 * 60e3);
+      hist = await this.myHistory(id, 5 * 60e3);
     } catch {}
     const settings = this.store.settings();
     const res = heroPool(hist, { manual: settings.pickPool });
@@ -1226,7 +1233,9 @@ class Sync {
     const itemName = (iid) => (this.assets && this.assets.items[iid] ? this.assets.items[iid].name : `Предмет ${iid}`);
     const badges = [];
     for (const x of list) if (x.match && x.me && Array.isArray(x.match.badge) && typeof x.match.badge[x.me.team] === 'number') badges.push(x.match.badge[x.me.team]);
-    const rank = rankFromBadges(badges);
+    // свой ранг — из последней рейтинговой игры (ranked_display_badge), иначе средний по матчам
+    const own = list.map((x) => x.row && Number(x.row.ranked_display_badge)).filter((b) => b > 0).pop();
+    const rank = own ? { badge: own, tier: Math.floor(own / 10), sub: own % 10, n: 1, own: true } : rankFromBadges(badges);
     const tier = rank ? rank.tier : null;
     const games = [];
     for (const x of list) {
@@ -1295,7 +1304,7 @@ class Sync {
   // Твои последние матчи с подробностями (докачивает недостающие).
   async myLoadedGames(accountId, { limit = 30, download = 25, label = 'Скачиваю твои матчи' } = {}) {
     const id = Number(accountId);
-    const hist = await this.api.matchHistory(id, 60e3);
+    const hist = await this.myHistory(id, 60e3);
     const rows = hist.slice().sort((a, b) => (Number(b.start_time) || 0) - (Number(a.start_time) || 0)).slice(0, limit);
     const need = rows.filter((m) => this.needsDownload(m.match_id)).slice(0, download);
     for (let i = 0; i < need.length; i++) {
@@ -1451,7 +1460,7 @@ class Sync {
     if (id) {
       let hist = [];
       try {
-        hist = await this.api.matchHistory(id, 2 * 60e3);
+        hist = await this.myHistory(id, 2 * 60e3);
       } catch {}
       const rows = hist.filter((m) => Number(m.hero_id) === hid).sort((a, b) => (b.start_time || 0) - (a.start_time || 0)).slice(0, 60);
       const need = rows.filter((m) => this.needsDownload(m.match_id)).slice(0, download);

@@ -469,11 +469,11 @@ rule((c) => {
 
 rule((c) => {
   const { me } = c;
-  const ref = R(c, 'treasureEnd');
-  if (!ok(me.treasureEnd, ref) || ref < 300 || me.treasureEnd >= ref * 0.4) return null;
-  return tip('treasure_low', 'treasure', 'Фарм', 'info', 26, 'Почти не разбиваешь ящики',
-    `С ящиков и находок за игру у тебя ${N(me.treasureEnd)} душ, у топов — ${N(ref)}.`,
-    'Ящики и вазы — бесплатные души по дороге. Бей их, когда идёшь между линиями или возвращаешься с базы.');
+  const ref = R(c, 'brkEnd');
+  if (!ok(me.brkEnd, ref) || ref < 600 || me.brkEnd >= ref * 0.5) return null;
+  return tip('treasure_low', 'treasure', 'Фарм', 'info', 26, 'Почти не разбиваешь коробки',
+    `С коробок за игру у тебя ${N(me.brkEnd)} душ, у топов — ${N(ref)}.`,
+    'Коробки — бесплатные души по дороге: появляются с 3:00 и восстанавливаются через 3 минуты. Бей их, когда идёшь между линиями или возвращаешься с базы.');
 });
 
 rule((c) => {

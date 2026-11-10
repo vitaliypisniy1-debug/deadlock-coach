@@ -837,7 +837,7 @@ test('leaks: new match data (v2) and mistakes with moments', () => {
   assert.ok(/19 с бега/.test(fw.moments[0].text), `время бега: ${fw.moments[0].text}`);
   assert.ok(keys.includes('map_timings'), 'тайминги карты');
   assert.ok(/у игроков Ascendant\+/.test(leaks.find((l) => l.key === 'map_timings').text));
-  assert.ok(keys.includes('sinner'), 'казино');
+  assert.ok(!keys.includes('sinner'), 'урна душ — командная, личной ошибкой не считается');
   assert.ok(keys.includes('lost_souls'), 'потерянные души');
   assert.strictEqual(leaks.find((l) => l.key === 'lost_souls').moments[0].t, 1500);
   assert.ok(keys.includes('counter_missing'), 'нет ответа на опасного героя');
@@ -894,7 +894,7 @@ test('versus: candidates and side by side', () => {
   const v = versus({ myMatch: myM, me, proMatch: recs[0].match, pro: recs[0].player });
   assert.strictEqual(v.me.phases.length, 3);
   assert.ok(v.me.curves.nw.length > 10 && v.pro.items.length > 3);
-  assert.strictEqual(v.me.sources[0].rows.length, 6);
+  assert.strictEqual(v.me.sources[0].rows.length, 7);
 });
 
 Promise.all(pending).then(() => {

@@ -2,7 +2,8 @@
 // Работа со снимками статистики: значение поля в любую секунду матча
 // (линейная интерполяция между снимками), поминутные ряды.
 
-const SOURCE_FIELDS = ['g_lane', 'g_neutral', 'g_player', 'g_boss', 'g_treasure'];
+// g_treasure — урна душ (команде), g_brk — коробки (есть в матчах, сохранённых с версии 0.11)
+const SOURCE_FIELDS = ['g_lane', 'g_neutral', 'g_player', 'g_boss', 'g_brk', 'g_treasure'];
 
 // Производные поля, которых нет в снимке напрямую.
 const DERIVED = {
@@ -26,6 +27,7 @@ function startValue(stats, field) {
 function valueAt(stats, field, t) {
   if (!stats || !stats.length) return null;
   const last = stats[stats.length - 1];
+  if (fieldOf(last, field) === undefined) return null; // поля нет в матче, сохранённом старой версией
   if (t > last.t + 5) return null;
   if (t >= last.t) return fieldOf(last, field);
   let prevT = 0;

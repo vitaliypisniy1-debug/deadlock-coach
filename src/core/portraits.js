@@ -19,10 +19,23 @@ function px(img, x, y) {
   return [img.data[i], img.data[i + 1], img.data[i + 2], img.data[i + 3]];
 }
 
-// Цвета команд на плашках душ (на скриншотах 2560×1600 янтарь ≈ (220,140,20), сапфир ≈ (80,130,210)).
-function teamColor(r, g, b) {
+// Цвета команд на плашках душ (на скриншотах 2560×1600 янтарь ≈ (212,135,12), сапфир ≈ (78,118,196)).
+// Плашки бывают полупрозрачными (соперники, которых ещё не видно, — например, в начале матча
+// с ботами): тогда цвет смешан с фоном — (106,71,33), (169,129,92), (146,110,87). Поэтому кроме
+// ярких цветов узнаём и тусклые по оттенку: янтарь — r > g > b, g посередине между r и b.
+function brightTeamColor(r, g, b) {
   if (r > 185 && g > 95 && g < 180 && b < 80 && r - b > 130) return 'amber';
   if (b > 165 && r < 140 && g > 85 && g < 175 && b - r > 60) return 'sapphire';
+  return null;
+}
+
+function teamColor(r, g, b) {
+  const bright = brightTeamColor(r, g, b);
+  if (bright) return bright;
+  const dimAmber = r >= 90 && r > g && g > b && r - b >= 50 && (r - b) / r >= 0.38 && (g - b) / (r - b) >= 0.3 && (g - b) / (r - b) <= 0.72;
+  if (dimAmber) return 'amber';
+  const dimSapphire = b >= 110 && b > g && g > r && b - r >= 45 && (b - r) / b >= 0.33 && (g - r) / (b - r) >= 0.25 && (g - r) / (b - r) <= 0.7;
+  if (dimSapphire) return 'sapphire';
   return null;
 }
 
@@ -36,7 +49,7 @@ function findSlots(img) {
   for (let y = Math.round(H * 0.08); y <= Math.round(H * 0.13); y += Math.max(1, Math.round(H / 400))) {
     let cur = null;
     const segs = [];
-    for (let x = Math.round(W * 0.15); x < Math.round(W * 0.85); x++) {
+    for (let x = Math.round(W * 0.1); x < Math.round(W * 0.9); x++) {
       const [r, g, b] = px(img, x, y);
       const t = teamColor(r, g, b);
       if (t && cur && cur.t === t && x - cur.b <= 2) cur.b = x;
@@ -61,10 +74,33 @@ function findSlots(img) {
       s.yMin = Math.min(s.yMin, f.y);
     } else slots.push({ team: f.team, cxSum: f.cx, n: 1, yMin: f.y });
   }
-  return slots
+  const out = slots
     .filter((s) => s.n >= 2)
-    .map((s) => ({ team: s.team, cx: s.cxSum / s.n, labelTop: s.yMin }))
-    .sort((a, b) => a.cx - b.cx);
+    .map((s) => ({ team: s.team, cx: s.cxSum / s.n, labelTop: s.yMin }));
+  return mirrorFill(out, W, H).sort((a, b) => a.cx - b.cx);
+}
+
+// Панель симметрична относительно центра экрана: портрет соперника стоит зеркально портрету
+// союзника. Если на одной стороне плашка не нашлась (тусклая, перекрыта фоном), а хотя бы две
+// там есть — достраиваем недостающие зеркально. Заодно выравниваем найденные неточно.
+function mirrorFill(slots, W, H) {
+  const mid = W / 2;
+  const left = slots.filter((s) => s.cx < mid);
+  const right = slots.filter((s) => s.cx >= mid);
+  const tol = H * 0.02;
+  const fill = (from, to) => {
+    if (from.length < 3 || to.length < 2 || to.length >= from.length) return to;
+    const team = to[0].team;
+    const top = Math.round(to.reduce((a, s) => a + s.labelTop, 0) / to.length);
+    return from.map((s) => {
+      const cx = 2 * mid - s.cx;
+      const hit = to.find((o) => Math.abs(o.cx - cx) < tol);
+      return hit ? { ...hit, cx } : { team, cx, labelTop: top, guessed: true };
+    });
+  };
+  if (left.length > right.length) return left.concat(fill(left, right));
+  if (right.length > left.length) return fill(right, left).concat(right);
+  return slots;
 }
 
 // Прямоугольник портрета над плашкой.
@@ -98,7 +134,7 @@ function meanColor(img, box, fx0, fy0, fx1, fy1) {
 function isOwnSlot(img, slot) {
   const box = slotBox(img, slot);
   const tl = meanColor(img, box, 0.62, 0.02, 0.98, 0.12);
-  return !!teamColor(...tl);
+  return !!brightTeamColor(...tl); // только яркий цвет: тусклые плашки соперников — не «я»
 }
 
 // Сетка GW×GH из центральной части портрета (по краям — значки «!»).

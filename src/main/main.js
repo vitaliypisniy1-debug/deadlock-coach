@@ -21,6 +21,23 @@ try {
 } catch {}
 
 // Ошибки при запуске записываем в файл и показываем, а не закрываемся молча.
+// Монитор зависаний: если главный поток не отвечал дольше 1,5 с, пишем в lag.log,
+// сколько длилось и какой запрос окна выполнялся последним. Нужен, чтобы найти причину подвисаний.
+let lastIpc = '';
+let lagTick = Date.now();
+setInterval(() => {
+  const now = Date.now();
+  const lag = now - lagTick - 500;
+  lagTick = now;
+  if (lag > 1500) {
+    try {
+      const file = path.join(app.getPath('userData'), 'lag.log');
+      if (fs.existsSync(file) && fs.statSync(file).size > 200e3) fs.unlinkSync(file);
+      fs.appendFileSync(file, `${new Date().toISOString()} завис на ${(lag / 1000).toFixed(1)} с; последний запрос: ${lastIpc || '—'}; память ${Math.round(process.memoryUsage().rss / 1e6)} МБ\n`);
+    } catch {}
+  }
+}, 500).unref();
+
 function logCrash(where, e) {
   const text = `[${new Date().toISOString()}] ${where}: ${(e && e.stack) || e}\n`;
   try {
@@ -141,11 +158,17 @@ async function runRecognition({ retries = 0, focus = true, reason = 'manual' } =
       await wait(250);
     }
     let best = null;
+    let lastN = -1;
     for (let i = 0; i <= retries; i++) {
       try {
+        lastIpc = `распознавание портретов (${reason})`;
         const r = await recognizer.recognize();
         if (!best || (r.ok && (!best.ok || r.slots.length > best.slots.length))) best = r;
         if (r.ok && r.slots.length >= 12) break; // все 12 на месте
+        // два раза подряд одно и то же — дальше снимать экран незачем
+        const n = r.ok ? r.slots.length : 0;
+        if (i > 0 && n === lastN) break;
+        lastN = n;
       } catch (e) {
         best = best || { ok: false, reason: `Ошибка распознавания: ${e.message}` };
       }
@@ -301,10 +324,13 @@ function onGameMode(active) {
 
 function handle(channel, fn) {
   ipcMain.handle(channel, async (_e, ...args) => {
+    lastIpc = `${channel} (выполняется)`;
     try {
       return { ok: true, data: await fn(...args) };
     } catch (e) {
       return { ok: false, error: e && e.message ? e.message : String(e) };
+    } finally {
+      lastIpc = `${channel} (закончен)`;
     }
   });
 }
@@ -587,7 +613,7 @@ app.whenReady().then(() => {
       const st = store.settings();
       emit('game:event', ev);
       if (ev.type === 'pregame' && st.autoRecognize !== false) {
-        setTimeout(() => runRecognition({ retries: 5, focus: false, reason: 'pregame' }).catch(() => {}), 1500);
+        setTimeout(() => runRecognition({ retries: 3, focus: false, reason: 'pregame' }).catch(() => {}), 1500);
       }
       if (ev.type === 'started' && st.overlayAutoHide !== false) {
         setTimeout(() => {

@@ -86,13 +86,19 @@ class Recognizer {
     const { desktopCapturer, screen } = this.electron;
     const displays = screen.getAllDisplays();
     const primary = screen.getPrimaryDisplay();
-    const maxW = Math.max(...displays.map((d) => Math.round(d.size.width * d.scaleFactor)));
-    const maxH = Math.max(...displays.map((d) => Math.round(d.size.height * d.scaleFactor)));
+    // Снимаем не больше 1080 строк (распознаванию хватает, а снимок вдвое-втрое легче)
+    // и сразу оставляем только верхнюю полосу с портретами — в 7 раз меньше данных.
+    const scale = (d) => Math.min(1, 1080 / Math.max(1, d.size.height * d.scaleFactor));
+    const maxW = Math.max(...displays.map((d) => Math.round(d.size.width * d.scaleFactor * scale(d))));
+    const maxH = Math.max(...displays.map((d) => Math.round(d.size.height * d.scaleFactor * scale(d))));
     const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: maxW, height: maxH } });
     const ordered = sources.slice().sort((a, b) => (String(b.display_id) === String(primary.id)) - (String(a.display_id) === String(primary.id)));
     return ordered.map((s) => {
       const size = s.thumbnail.getSize();
-      return { id: s.display_id, w: size.width, h: size.height, data: bgraToRgba(s.thumbnail.toBitmap()), image: s.thumbnail };
+      const stripH = Math.max(1, Math.round(size.height * 0.14));
+      const strip = s.thumbnail.crop({ x: 0, y: 0, width: size.width, height: stripH });
+      // h — высота всего экрана (от неё считаются размеры портретов), данные — только полоса
+      return { id: s.display_id, w: size.width, h: size.height, data: bgraToRgba(strip.toBitmap()), image: strip };
     });
   }
 
@@ -113,6 +119,13 @@ class Recognizer {
     }
     if (!img) {
       const dark = shots.length && this.isDark(shots[0]);
+      // сохраняем, что было на экране, когда не получилось, — чтобы разобраться
+      try {
+        if (shots.length) {
+          fs.mkdirSync(this.dir, { recursive: true });
+          fs.writeFileSync(path.join(this.dir, 'fail-top.png'), shots[0].image.toPNG());
+        }
+      } catch {}
       return {
         ok: false,
         reason: dark
@@ -209,9 +222,7 @@ class Recognizer {
   saveDebug(img, slots, out) {
     try {
       fs.mkdirSync(this.dir, { recursive: true });
-      const stripH = Math.round(img.h * 0.14);
-      const strip = img.image.crop({ x: 0, y: 0, width: img.w, height: stripH });
-      fs.writeFileSync(path.join(this.dir, 'last-top.png'), strip.toPNG());
+      fs.writeFileSync(path.join(this.dir, 'last-top.png'), img.image.toPNG());
       const { slots: s, ...rest } = out;
       fs.writeFileSync(path.join(this.dir, 'last.json'), JSON.stringify({ ...rest, slots: s.map(({ thumb, ...x }) => x), raw: slots }, null, 2));
     } catch (e) {

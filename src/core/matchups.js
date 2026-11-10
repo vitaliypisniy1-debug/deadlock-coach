@@ -154,6 +154,7 @@ function prepare({ myHero, enemies, laneFoe = null, topVs, mine, heroName, itemN
 function tallyHero(records) {
   const vs = new Map();
   const mates = new Map();
+  const allies = new Map();
   let w = 0;
   let g = 0;
   const get = (map, id) => {
@@ -178,6 +179,14 @@ function tallyHero(records) {
         if (my10 !== null && t !== null) r.lane.push(my10 - t);
       }
     }
+    // все союзники (не только по линии) — для связок в совете по пику
+    for (const a of match.players) {
+      if (a.team !== player.team || a === player) continue;
+      const r = get(allies, a.hero_id);
+      r.g += wt;
+      r.n += 1;
+      if (player.won) { r.w += wt; r.wins += 1; }
+    }
     if (lane === null) continue;
     const enemy10 = laneEnemies.map(nw10).filter((x) => x !== null);
     const enemyAvg = enemy10.length ? enemy10.reduce((a, b) => a + b, 0) / enemy10.length : null;
@@ -190,7 +199,7 @@ function tallyHero(records) {
       if (my10 !== null && a10 !== null && enemyAvg !== null) r.lane.push(my10 + a10 - 2 * enemyAvg);
     }
   }
-  return { g, w, base: g ? w / g : 0.5, vs, mates };
+  return { g, w, base: g ? w / g : 0.5, vs, mates, allies };
 }
 
 function heroOutlook({ pro, mine, weightMine = 2, prior = 5, minEvidence = 3, take = 5, counters = null }) {
@@ -231,6 +240,13 @@ function heroOutlook({ pro, mine, weightMine = 2, prior = 5, minEvidence = 3, ta
   return {
     // все соперники кратко — для совета по пику
     vs: Object.fromEntries(vsRows.map((r) => [r.hero_id, {
+      delta: Math.round(r.delta * 1000) / 1000,
+      evidence: r.evidence,
+      pro: r.dPro === null ? null : Math.round(r.dPro * 1000) / 1000,
+      mine: r.dMine === null ? null : Math.round(r.dMine * 1000) / 1000,
+    }])),
+    // все союзники кратко — связки для совета по пику
+    with: Object.fromEntries(combine(P.allies, M.allies).map((r) => [r.hero_id, {
       delta: Math.round(r.delta * 1000) / 1000,
       evidence: r.evidence,
       pro: r.dPro === null ? null : Math.round(r.dPro * 1000) / 1000,

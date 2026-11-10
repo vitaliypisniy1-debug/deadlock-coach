@@ -26,6 +26,11 @@
   };
   const LIMIT = { enemies: 6, allies: 5 };
 
+  const itemName = (id) => (S.assets && S.assets.items && S.assets.items[id] ? S.assets.items[id].name : `Предмет ${id}`);
+  const itemImg = (id) => {
+    const it = S.assets && S.assets.items && S.assets.items[id];
+    return it && it.img ? h('img', { src: it.img, alt: '' }) : null;
+  };
   const heroName = (id) => (S.assets && S.assets.heroes[id] ? S.assets.heroes[id].name : `Герой ${id}`);
   const heroImg = (id, cls = '') => {
     const hero = S.assets && S.assets.heroes[id];
@@ -222,6 +227,23 @@
     return h(`span.chip.${good ? 'good' : 'bad'}`, { title: `${good ? 'Удобный' : 'Неудобный'} соперник: ${pts(x.d)} к победам` }, heroImg(x.hero_id, '.xs'), pts(x.d));
   }
 
+  function mateChip(x, good) {
+    return h(`span.chip.mate.${good ? 'good' : 'bad'}`, { title: `${good ? 'Хорошая' : 'Слабая'} связка с союзником ${heroName(x.hero_id)}: ${pts(x.d)} к победам` }, 'с', heroImg(x.hero_id, '.xs'), pts(x.d));
+  }
+
+  // План на игру: что важно помнить именно в этом матче.
+  function planCard(p) {
+    const names = (list) => list.map((x) => heroName(x.hero_id)).join(' и ');
+    const rows = [];
+    if (p.hard.length) rows.push(h('div.plan-row.bad', h('b', 'Опасны'), h('span', `${names(p.hard)} — у топов ${heroName(p.hero_id)} против ${p.hard.length > 1 ? 'них' : 'него'} выигрывает реже. Попался на линии — играй от крипов, не начинай размен первым.`)));
+    if (p.easy.length) rows.push(h('div.plan-row.good', h('b', 'Дави'), h('span', `${names(p.easy)} — удобные соперники: против ${p.easy.length > 1 ? 'них' : 'него'} можно разменяться и забирать линию.`)));
+    if (p.items.length) rows.push(h('div.plan-row', h('b', 'Собери'), h('span.plan-items', p.items.map((it) => h('span.plan-item', { title: `Против ${heroName(it.vs)} берут в ${String(it.lift).replace('.', ',')} раза чаще обычного` }, itemImg(it.id), itemName(it.id), h('i', `от ${heroName(it.vs)}`))))));
+    if (p.mates.length) rows.push(h('div.plan-row.good', h('b', 'Связка'), h('span', `Играй рядом с ${names(p.mates)} — вместе вы выигрываете чаще.`)));
+    if (p.leak && p.leak.title) rows.push(h('div.plan-row.warn', h('b', 'Твоя ошибка'), h('span', `${p.leak.title} (${p.leak.count} из ${p.leak.games} игр).${p.leak.fix ? ' ' + p.leak.fix : ''}`)));
+    if (!rows.length) return h('div');
+    return h('div.plan', h('div.plan-head', `План на игру за ${heroName(p.hero_id)}`), rows);
+  }
+
   function renderRight() {
     const r = $('right');
     if (!S.auth) {
@@ -260,6 +282,7 @@
             ? v.gap > 0.005 ? `${heroName(best.hero_id)} сильнее всего на ${ochki(v.gap)} — менять не стоит.` : 'Твой герой — лучший из доступных против этого состава.'
             : v ? `Сильнее, чем ${heroName(v.from)}, на ${ochki(v.gap)} против этого состава.` : 'Сильнее всего против этого состава из твоих героев.')),
         h('div.v-score', { title: SCORE_TIP }, h('b', pts(row.score)), h('span', 'оценка'))));
+      if (a.plan) parts.push(planCard(a.plan));
     }
     const list = a.rows.map((x, i) => h(`div.pick${S.me === x.hero_id ? '.cur' : ''}`,
       h('span.pk-n', String(i + 1)),
@@ -269,6 +292,8 @@
         h('div.pk-why',
           x.pros.map((p) => chip(p, true)),
           x.cons.map((p) => chip(p, false)),
+          (x.mates || []).map((p) => mateChip(p, true)),
+          (x.matesBad || []).map((p) => mateChip(p, false)),
           h('span.pk-rec', { title: 'Твои игры на этом герое' }, x.games ? `ты ${x.wins}–${x.games - x.wins}` : 'нет твоих игр'),
           x.noTable ? h('span.pk-warn', 'считаю…') : null)),
       h(`b.pk-score${Math.abs(x.score) < 0.005 ? '' : x.score > 0 ? '.pos' : '.neg'}`, pts(x.score))));

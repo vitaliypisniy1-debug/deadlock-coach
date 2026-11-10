@@ -16,6 +16,7 @@ const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 
 const MY_SHARE = 0.2; // доля твоих игр в совете
 const META_SHARE = 1 - MY_SHARE;
+const ALLY_WEIGHT = 0.5; // связка с союзником весит вдвое меньше матчапа с соперником
 
 // Матчап против одного соперника: 80% топы + 20% твои.
 function mixMatchup(r) {
@@ -70,10 +71,17 @@ function pickAdvice({ pool, tables, enemies = [], allies = [], current = null, m
       return { hero_id: e, d: d === null ? 0 : clamp(d, -0.15, 0.15), known: d !== null, evidence: r ? r.evidence : 0 };
     });
     const vsScore = parts.reduce((s, x) => s + x.d, 0);
+    // связки с союзниками: те же 80/20, но вдвое слабее матчапа и не больше ±10% каждая
+    const mates = allies.filter((a) => Number(a) !== hid).map((a) => {
+      const r = t && t.with ? t.with[a] : null;
+      const d = mixMatchup(r);
+      return { hero_id: Number(a), d: d === null ? 0 : clamp(d, -0.1, 0.1) * ALLY_WEIGHT, known: d !== null };
+    });
+    const allyScore = mates.reduce((s, x) => s + x.d, 0);
     const comfort = p.games ? (p.wins - p.games * myBase) / (p.games + 10) : -0.03;
     const m = meta[hid];
     const metaAdj = m && m.games ? ((m.winrate - 0.5) * m.games) / (m.games + 30) : 0;
-    const score = vsScore + META_SHARE * metaAdj + MY_SHARE * comfort;
+    const score = vsScore + allyScore + META_SHARE * metaAdj + MY_SHARE * comfort;
     const sorted = parts.filter((x) => x.known && Math.abs(x.d) >= 0.01).sort((a, b) => b.d - a.d);
     rows.push({
       hero_id: hid,
@@ -85,6 +93,10 @@ function pickAdvice({ pool, tables, enemies = [], allies = [], current = null, m
       wins: p.wins,
       taken: taken.has(hid),
       known: parts.filter((x) => x.known).length,
+      allyScore,
+      parts,
+      mates: mates.filter((x) => x.known && x.d >= 0.01).sort((a, b) => b.d - a.d).slice(0, 2),
+      matesBad: mates.filter((x) => x.known && x.d <= -0.01).sort((a, b) => a.d - b.d).slice(0, 1),
       pros: sorted.filter((x) => x.d > 0).slice(0, 2),
       cons: sorted.filter((x) => x.d < 0).reverse().slice(0, 2),
       noTable: !t,
@@ -103,4 +115,26 @@ function pickAdvice({ pool, tables, enemies = [], allies = [], current = null, m
   return { rows: free.slice(0, take), all: rows, verdict, enemies: enemies.length, myBase };
 }
 
-module.exports = { heroPool, pickAdvice, mixMatchup, MY_SHARE };
+// План на игру для выбранного героя: кого опасаться, с кем проще, что собрать, с кем играть.
+// row — строка из pickAdvice; counters — { [enemyHeroId]: [{ id, lift }] }; leak — главная повторяющаяся ошибка.
+function gamePlan({ row, counters = {}, leak = null }) {
+  if (!row) return null;
+  const known = (row.parts || []).filter((x) => x.known);
+  const hard = known.filter((x) => x.d <= -0.02).sort((a, b) => a.d - b.d).slice(0, 2);
+  const easy = known.filter((x) => x.d >= 0.02).sort((a, b) => b.d - a.d).slice(0, 2);
+  // предметы-ответы: сначала против тяжёлых соперников, потом против остальных; без повторов
+  const items = [];
+  const seen = new Set();
+  const order = hard.concat(known.filter((x) => !hard.includes(x)).sort((a, b) => a.d - b.d));
+  for (const e of order) {
+    for (const it of counters[e.hero_id] || []) {
+      if (seen.has(it.id) || items.length >= 3) continue;
+      seen.add(it.id);
+      items.push({ id: it.id, lift: it.lift, vs: e.hero_id });
+      break; // по одному предмету на соперника
+    }
+  }
+  return { hero_id: row.hero_id, hard, easy, items, mates: row.mates || [], matesBad: row.matesBad || [], leak };
+}
+
+module.exports = { heroPool, pickAdvice, gamePlan, mixMatchup, MY_SHARE, ALLY_WEIGHT };

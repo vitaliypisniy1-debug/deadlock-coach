@@ -558,6 +558,22 @@ test('pick advice: best pick vs enemies, keep/swap verdict, pool rules', () => {
   const taken = pickAdvice({ pool: full, tables, enemies: [10, 2] });
   assert.ok(!taken.rows.some((r) => r.hero_id === 2), 'занятого героя не советуем');
   assert.ok(taken.all.find((r) => r.hero_id === 4).noTable, 'нет таблицы — помечено');
+  // связки с союзниками и план на игру
+  const { gamePlan } = require('../src/core/pick');
+  const tw = {
+    1: { vs: { 10: { pro: -0.08, mine: null }, 11: { pro: 0.05, mine: null } }, with: { 30: { pro: 0.08, mine: null }, 31: { pro: -0.06, mine: null } } },
+    2: { vs: { 10: { pro: -0.08, mine: null }, 11: { pro: 0.05, mine: null } }, with: {} },
+  };
+  const wa = pickAdvice({ pool: full.filter((p) => p.hero_id <= 2), tables: tw, enemies: [10, 11], allies: [30, 31, 1] });
+  const r1 = wa.all.find((r) => r.hero_id === 1);
+  assert.ok(Math.abs(r1.allyScore - 0.01) < 1e-9, 'связки: (0.08 − 0.06) × 0.5');
+  assert.strictEqual(r1.mates[0].hero_id, 30);
+  assert.strictEqual(r1.matesBad[0].hero_id, 31);
+  const plan = gamePlan({ row: r1, counters: { 10: [{ id: 500, lift: 1.9 }], 11: [{ id: 500, lift: 1.6 }, { id: 501, lift: 1.5 }] }, leak: { title: 'X', count: 3, games: 10 } });
+  assert.deepStrictEqual(plan.hard.map((x) => x.hero_id), [10]);
+  assert.deepStrictEqual(plan.easy.map((x) => x.hero_id), [11]);
+  assert.deepStrictEqual(plan.items.map((x) => [x.id, x.vs]), [[500, 10], [501, 11]], 'предметы без повторов, сначала от опасного');
+  assert.strictEqual(plan.leak.title, 'X');
   // 80% топы, 20% твои игры
   const { mixMatchup, MY_SHARE } = require('../src/core/pick');
   assert.strictEqual(MY_SHARE, 0.2);

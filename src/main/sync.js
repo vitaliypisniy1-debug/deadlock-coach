@@ -21,7 +21,7 @@ const { proCandidates, versus } = require('../core/versus');
 const { playerFeatures, refAll } = require('../core/features');
 const { matchTips } = require('../core/tipsMatch');
 const { skillOrder, skillConsensus, compareSkills } = require('../core/skills');
-const { heroPool, pickAdvice } = require('../core/pick');
+const { heroPool, pickAdvice, gamePlan } = require('../core/pick');
 const { matchBuild, buildText, buildFile } = require('../core/buildExport');
 const { encodeBuildCode } = require('../core/gameCode');
 
@@ -1108,7 +1108,7 @@ class Sync {
     const id = Number(accountId);
     const cached = this.store.read('picktables.json', null);
     const { pool } = await this.pickPool(id);
-    const fresh = cached && cached.accountId === id && cached.v === 2 && Date.now() - cached.at < maxAgeH * 3600e3;
+    const fresh = cached && cached.accountId === id && cached.v === 3 && Date.now() - cached.at < maxAgeH * 3600e3;
     const missing = pool.filter((p) => !cached || !cached.tables || !cached.tables[p.hero_id]);
     if (!force && fresh && !missing.length) return cached;
     this._pickRunning = (async () => {
@@ -1121,13 +1121,13 @@ class Sync {
         this.progress('pick', i, todo.length, `Готовлю советы по пикам: ${name} (${i + 1} из ${todo.length})`);
         try {
           const o = await this.heroOutlook(id, hid, { download: 15, quiet: true });
-          tables[hid] = { vs: o.vs, myGames: o.myGames, proGames: o.proGames };
+          tables[hid] = { vs: o.vs, with: o.with, myGames: o.myGames, proGames: o.proGames };
         } catch (e) {
           tables[hid] = { vs: {}, myGames: 0, proGames: 0, error: e.message };
         }
       }
       this.progress('done', 1, 1, 'Советы по пикам готовы');
-      const out = { v: 2, at: Date.now(), accountId: id, tables };
+      const out = { v: 3, at: Date.now(), accountId: id, tables };
       this.store.write('picktables.json', out);
       return out;
     })();
@@ -1148,7 +1148,19 @@ class Sync {
     for (const r of (m && m.heroes) || []) meta[r.hero_id] = { winrate: r.winrate, games: r.games };
     const advice = pickAdvice({ pool, tables, enemies: enemies.map(Number), allies: allies.map(Number), current, meta });
     const ready = pool.filter((p) => tables[p.hero_id]).length;
-    return { ...advice, pool: pool.map((p) => p.hero_id), allHeroes: all.map((p) => ({ hero_id: p.hero_id, games: p.games, wins: p.wins })), manual, ready, poolSize: pool.length, tablesAt: cached ? cached.at : null, preparing: !!this._pickRunning };
+    // план на игру: для текущего героя, а если он не отмечен — для лучшего пика
+    let plan = null;
+    if (enemies.length) {
+      const hid = current ? Number(current) : advice.rows[0] && advice.rows[0].hero_id;
+      const row = advice.all.find((r) => r.hero_id === hid) || null;
+      let counters = {};
+      try {
+        counters = this.counterTable();
+      } catch {}
+      plan = gamePlan({ row, counters, leak: this.store.read(`leaks-top-${id}.json`, null) });
+    }
+    for (const r of advice.all) delete r.parts;
+    return { ...advice, plan, pool: pool.map((p) => p.hero_id), allHeroes: all.map((p) => ({ hero_id: p.hero_id, games: p.games, wins: p.wins })), manual, ready, poolSize: pool.length, tablesAt: cached ? cached.at : null, preparing: !!this._pickRunning };
   }
 
   // ---------- общие помощники для тренера и матчапов ----------
@@ -1232,6 +1244,9 @@ class Sync {
         link: WIN_LINKS[key] ? { mine: winLink(key, mine), best: WIN_LINKS[key][key === 'd9' ? 0 : WIN_LINKS[key].length - 1] } : null,
       };
     });
+    // главная повторяющаяся ошибка — в план на игру в оверлее
+    const topLeak = profile.rows[0];
+    this.store.write(`leaks-top-${id}.json`, topLeak ? { title: topLeak.title, fix: (topLeak.fix || [])[0] || null, count: topLeak.count, games: profile.games, at: Date.now() } : null);
     return {
       rank,
       games: games.map(({ f, ...g }) => ({ ...g, leaks: g.leaks.map((l) => ({ key: l.key, area: l.area, level: l.level, title: l.title, text: l.text, fix: l.fix, moments: l.moments, score: l.score })) })),

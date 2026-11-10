@@ -1152,7 +1152,21 @@ class Sync {
     let plan = null;
     if (enemies.length) {
       const hid = current ? Number(current) : advice.rows[0] && advice.rows[0].hero_id;
-      const row = advice.all.find((r) => r.hero_id === hid) || null;
+      let row = advice.all.find((r) => r.hero_id === hid) || null;
+      // текущий герой не из списка для рейтинга — считаем для него таблицу на лету (без скачиваний)
+      if (!row && hid) {
+        try {
+          this._planTables = this._planTables || {};
+          if (!this._planTables[hid]) {
+            const o = await this.heroOutlook(id, hid, { download: 0, quiet: true });
+            this._planTables[hid] = { vs: o.vs, with: o.with };
+          }
+          const one = pickAdvice({ pool: [{ hero_id: hid, games: 0, wins: 0 }], tables: { [hid]: this._planTables[hid] }, enemies: enemies.map(Number), allies: allies.map(Number), meta });
+          row = one.all[0] || null;
+        } catch (e) {
+          this.emit('log', `plan: ${e.message}`);
+        }
+      }
       let counters = {};
       try {
         counters = this.counterTable();

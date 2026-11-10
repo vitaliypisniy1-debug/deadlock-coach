@@ -20,6 +20,8 @@ const { valueAt } = require('./timeline');
 const { N, T, plural } = require('./tipkit');
 
 const souls = (n) => `${N(n)} ${plural(n, 'душа', 'души', 'душ')}`;
+// винительный падеж: «потерял 1 551 душу»
+const soulsAcc = (n) => `${N(n)} ${plural(n, 'душу', 'души', 'душ')}`;
 
 // Медианы по рангу (average_badge // 10). Рейтинг, игры от 25 минут, 2 дня, 640 тыс. игроко-игр.
 // d10 — смерти до 9–10 минуты (медиана 1 на всех рангах: высокие ранги умирают рано не реже),
@@ -326,14 +328,14 @@ function gameLeaks(c) {
         level: total >= 2000 ? 'bad' : 'warn',
         score: 35 + Math.min(40, total / 60),
         title: 'Умирал с несохранёнными душами',
-        text: `${losses.length} ${plural(losses.length, 'смерть стоила', 'смерти стоили', 'смертей стоили')} тебе ${souls(total)} — их ты не успел сохранить.` +
-          (ref ? ` У топов на этом герое одна смерть в среднем стоит ${souls(ref)}.` : ''),
+        text: `${losses.length} ${plural(losses.length, 'смерть стоила', 'смерти стоили', 'смертей стоили')} тебе ${soulsAcc(total)} — их ты не успел сохранить.` +
+          (ref ? ` У топов на этом герое одна смерть в среднем стоит ${soulsAcc(ref)}.` : ''),
         fix: [
           'Свежие души сначала «несохранённые»: умрёшь — часть пропадёт. После крупного фарма не лезь сразу в рискованную драку.',
           'Накопил на предмет — вернись и купи, а потом иди драться: потраченные души потерять нельзя.',
           'Видишь, что драка проиграна, — отступай раньше: смерть с полным карманом стоит вдвое дороже.',
         ],
-        moments: losses.map((x) => ({ t: x.t, text: `умер и потерял ${souls(x.lost)}` })),
+        moments: losses.map((x) => ({ t: x.t, text: `умер и потерял ${soulsAcc(x.lost)}` })),
         cost: { souls: total },
       });
     }
@@ -444,6 +446,11 @@ function counterItems(records, { minBuys = 12, minRate = 0.1, minLift = 1.5, per
   return out;
 }
 
+function wrFactor(a, b) {
+  if (a === null || b === null) return 1;
+  return Math.max(0.6, Math.min(1.6, 1 + (b - a) * 2));
+}
+
 // Общая картина по играм: что повторяется, сколько стоит, как связано с победой.
 // games: [{ match_id, start_time, won, hero, leaks: [...] }]
 function leakProfile(games) {
@@ -478,8 +485,9 @@ function leakProfile(games) {
       share: n ? e.games.length / n : 0,
       wrWith: withL.length >= 3 ? wr(withL) : null,
       wrWithout: without.length >= 3 ? wr(without) : null,
-      // важность: как часто × насколько серьёзно
-      impact: (e.games.length / Math.max(1, n)) * (e.score / e.games.length),
+      // важность: как часто × насколько серьёзно × бьёт ли по победам именно в твоих играх
+      // (с ошибкой выигрываешь реже — важнее; не реже — менее важно; мало игр — без поправки)
+      impact: (e.games.length / Math.max(1, n)) * (e.score / e.games.length) * wrFactor(withL.length >= 3 ? wr(withL) : null, without.length >= 3 ? wr(without) : null),
       examples: e.games.slice().sort((a, b) => b.score - a.score).slice(0, 3),
     };
   });

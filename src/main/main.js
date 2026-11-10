@@ -614,7 +614,7 @@ app.whenReady().then(() => {
     store = new Store(path.join(app.getPath('userData'), 'data'), { lazy: true });
     store.ready.then(() => {
       try {
-        fs.appendFileSync(path.join(app.getPath('userData'), 'lag.log'), `${new Date().toISOString()} запуск ${app.getVersion()}: матчей на диске ${store.loadInfo.files}, прочитаны за ${(store.loadInfo.ms / 1000).toFixed(1)} с\n`);
+        fs.appendFileSync(path.join(app.getPath('userData'), 'lag.log'), `${new Date().toISOString()} запуск ${app.getVersion()}: матчей на диске ${store.loadInfo.files} (из общего файла ${store.loadInfo.fromPack}, по одному ${store.loadInfo.fromFiles}), прочитаны за ${(store.loadInfo.ms / 1000).toFixed(1)} с\n`);
       } catch {}
     });
     api = new Api({ getApiKey: () => store.settings().apiKey });

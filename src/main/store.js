@@ -35,6 +35,10 @@ class Store {
     fs.mkdirSync(this.matchDir, { recursive: true });
     this.matches = new Map();
     this.loadInfo = { files: 0, ms: 0 };
+    this.packFile = path.join(dir, 'matches.pack');
+    this.packOn = false;
+    this._packQ = Promise.resolve();
+    this._putEarly = null;
     if (lazy) this.ready = this._loadMatchesAsync();
     else {
       this._loadMatches();
@@ -42,26 +46,77 @@ class Store {
     }
   }
 
+  // Быстрый запуск: кроме отдельных файлов матчей ведём один общий файл matches.pack
+  // (по матчу на строку, новые версии дописываются в конец). Открыть один большой файл в сотни
+  // раз быстрее, чем тысячи маленьких (каждый ещё и проверяет антивирус). Отдельные файлы
+  // остаются: это запасной вариант, и по списку файлов видно, какие матчи ещё не удалены.
   async _loadMatchesAsync() {
     const t0 = Date.now();
-    let files = [];
+    const tick = () => new Promise((r) => setImmediate(r));
+    this._putEarly = new Set(); // сохранённые, пока шла загрузка, — их не затираем старыми
+    let names = [];
     try {
-      files = (await fs.promises.readdir(this.matchDir)).filter((f) => f.endsWith('.json'));
+      names = (await fs.promises.readdir(this.matchDir)).filter((f) => f.endsWith('.json'));
     } catch {}
-    const BATCH = 24; // читаем пачками параллельно, между пачками отдаём управление окну
-    for (let i = 0; i < files.length; i += BATCH) {
-      const texts = await Promise.all(files.slice(i, i + BATCH).map((f) => fs.promises.readFile(path.join(this.matchDir, f), 'utf8').catch(() => null)));
+    const onDisk = new Set(names.map((f) => Number(f.slice(0, -5))));
+    const packed = new Set();
+    let lines = 0;
+    try {
+      const text = await fs.promises.readFile(this.packFile, 'utf8');
+      let pos = 0;
+      while (pos < text.length) {
+        for (let k = 0; k < 150 && pos < text.length; k++) {
+          let end = text.indexOf('\n', pos);
+          if (end < 0) end = text.length;
+          const line = text.slice(pos, end);
+          pos = end + 1;
+          if (!line) continue;
+          lines += 1;
+          try {
+            const m = JSON.parse(line);
+            if (m && m.match_id && onDisk.has(m.match_id) && !this._putEarly.has(m.match_id)) {
+              this.matches.set(m.match_id, m); // более поздняя строка новее
+              packed.add(m.match_id);
+            }
+          } catch {} // оборванная строка — возьмём матч из отдельного файла
+        }
+        await tick();
+      }
+    } catch {}
+    const rest = names.filter((f) => !packed.has(Number(f.slice(0, -5))));
+    const BATCH = 24;
+    for (let i = 0; i < rest.length; i += BATCH) {
+      const texts = await Promise.all(rest.slice(i, i + BATCH).map((f) => fs.promises.readFile(path.join(this.matchDir, f), 'utf8').catch(() => null)));
       for (const t of texts) {
         if (!t) continue;
         try {
           const m = JSON.parse(t);
-          // матч, сохранённый уже после запуска, новее файла на диске — не затираем
           if (m && m.match_id && !this.matches.has(m.match_id)) this.matches.set(m.match_id, m);
         } catch {}
       }
+      await tick();
+    }
+    this.loadInfo = { files: names.length, fromPack: packed.size, fromFiles: rest.length, ms: Date.now() - t0 };
+    this._putEarly = null;
+    this.packOn = true;
+    // общий файл устарел (много лишних строк или матчей вне его) — пересобираем в фоне
+    if (rest.length > 0 || lines > packed.size * 1.3 + 50) this._packQ = this._packQ.then(() => this._rewritePack()).catch(() => {});
+  }
+
+  async _rewritePack() {
+    const tmp = this.packFile + '.tmp';
+    const out = fs.createWriteStream(tmp);
+    const all = [...this.matches.values()];
+    for (let i = 0; i < all.length; i += 100) {
+      const chunk = all.slice(i, i + 100).map((m) => JSON.stringify(m)).join('\n') + '\n';
+      if (!out.write(chunk)) await new Promise((r) => out.once('drain', r));
       await new Promise((r) => setImmediate(r));
     }
-    this.loadInfo = { files: files.length, ms: Date.now() - t0 };
+    await new Promise((r, rej) => {
+      out.on('error', rej);
+      out.end(r);
+    });
+    await fs.promises.rename(tmp, this.packFile);
   }
 
   _file(name) {
@@ -123,7 +178,11 @@ class Store {
 
   putMatch(m) {
     this.matches.set(m.match_id, m);
-    fs.writeFileSync(path.join(this.matchDir, `${m.match_id}.json`), JSON.stringify(m));
+    const text = JSON.stringify(m);
+    fs.writeFileSync(path.join(this.matchDir, `${m.match_id}.json`), text);
+    if (this._putEarly) this._putEarly.add(m.match_id);
+    // дописываем в общий файл (если он ведётся) — по очереди, не мешая окну
+    if (this.packOn || this._putEarly) this._packQ = this._packQ.then(() => fs.promises.appendFile(this.packFile, text + '\n')).catch(() => {});
   }
 
   allMatches() {

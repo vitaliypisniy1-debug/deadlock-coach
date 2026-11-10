@@ -168,3 +168,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .plan-item { display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px 2px 2px; border-radius: 7px; background: var(--panel-2); border: 1px solid var(--line); color: var(--text); font-size: 12px; }
 .plan-item img { width: 20px; height: 20px; border-radius: 4px; }
 .plan-item i { font-style: normal; color: var(--muted); font-size: 11px; }
+/* все 12 портретов помещаются в строку без прокрутки */
+.rec-row { gap: 6px; overflow: hidden; }
+.rec-team { flex: 1 1 0; min-width: 0; gap: 3px; }
+.rthumb { flex: 1 1 0; min-width: 0; width: auto; max-width: 50px; }
+.rthumb img { height: 42px; }
+.rt-name { font-size: 9px; }

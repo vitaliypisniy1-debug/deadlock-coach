@@ -1987,23 +1987,36 @@
   // Ошибки этой игры с моментами; момент можно посмотреть на мини-карте (повтор позиций).
   function matchLeaksPanel(A) {
     const leaks = (A.leaks || []).filter((l) => l.level !== 'good');
-    const good = (A.leaks || []).filter((l) => l.level === 'good');
+    const good = (A.highlights || []).concat((A.leaks || []).filter((l) => l.level === 'good'));
     if (!leaks.length && !good.length) {
-      return A.fresh === false ? h('div.panel', h('h2', 'Ошибки этой игры'), h('div.muted', 'Матч сохранён старой версией программы, подробных данных нет. Открой его ещё раз чуть позже — программа перекачает данные.')) : null;
+      return A.fresh === false ? h('div.panel', h('h2', 'Разбор игры по моментам'), h('div.muted', 'Матч сохранён старой версией программы, подробных данных нет. Открой его ещё раз чуть позже — программа перекачает данные.')) : null;
     }
     const hasMap = A.map && A.map.paths;
     const mini = hasMap ? MapView(A.map, { focusSlot: A.mySlot ?? null, focusName: 'Ты', heroName, heroImg: heroImgSrc, mapAsset: S.assets.map || null, compact: true }) : null;
     const pick = S.my.leakMoment || null;
     if (mini && pick) mini.setTime(pick.t);
-    const cards = leaks.map((l, li) => h(`div.mleak.${l.level}`,
+    // сначала то, что получилось, потом ошибки; нумерация карточек общая (для выбора момента на карте)
+    const all = good.concat(leaks);
+    const card = (l, li) => h(`div.mleak.${l.level}`,
       h('div.mleak-head', h('span.leak-area', l.area), h('b', l.title)),
-      h('div.mleak-text', l.text),
+      l.text ? h('div.mleak-text', l.text) : null,
       momentChips(l, mini ? (i, mo) => { S.my.leakMoment = { li, i, t: mo.t }; mini.setTime(mo.t); renderMomentSel(); } : null, pick && pick.li === li ? pick.i : null),
-      l.fix && l.fix.length ? h('div.tip', Icon('bulb'), h('span', l.fix[0])) : null));
-    const panel = h('div.panel.mleak-panel', h('div.row', h('h2', { style: { margin: 0 } }, 'Ошибки этой игры — по моментам'), h('div.grow'), h('button.btn.small', { onclick: () => setView('growth'), title: 'Какие ошибки повторяются из игры в игру' }, 'Все мои ошибки')),
-      good.length ? h('div.mleak-good', good.map((g) => h('span.pill.good', Icon('trophy'), g.title))) : null,
-      h(`div.mleak-grid${mini ? '' : '.nomap'}`, h('div.mleak-list', cards.length ? cards : h('div.muted', 'Явных ошибок в этой игре не нашёл.')),
-        mini ? h('div.mleak-map', mini, h('div.hint', pick ? `Позиции всех героев на ${F.time(pick.t)}. Ты — с белой обводкой.` : 'Нажми на время у ошибки — покажу, где были все герои в этот момент.')) : null));
+      l.level === 'good'
+        ? (l.keep ? h('div.tip.keep', Icon('trophy'), h('span', l.keep)) : null)
+        : (l.fix && l.fix.length ? h('div.tip', Icon('bulb'), h('span', l.fix[0])) : null));
+    const won = A.match && A.match.won;
+    const verdict = good.length && leaks.length
+      ? `${good.length} ${plural(good.length, 'сильный момент', 'сильных момента', 'сильных моментов')} и ${leaks.length} ${plural(leaks.length, 'ошибка', 'ошибки', 'ошибок')}. ${won ? 'Победа — но ошибки стоит разобрать, пока они не стоили игры.' : 'Поражение — но сильные стороны у тебя в этой игре были, их и держись.'}`
+      : good.length ? `Ошибок не нашёл, а сильных моментов — ${good.length}. ${won ? 'Чистая игра.' : 'Ты сыграл хорошо — такие поражения бывают.'}`
+        : `Сильных моментов не выделил, ошибок — ${leaks.length}. Разбери их по одной.`;
+    const panel = h('div.panel.mleak-panel', h('div.row', h('h2', { style: { margin: 0 } }, 'Разбор игры по моментам'), h('div.grow'), h('button.btn.small', { onclick: () => setView('growth'), title: 'Какие ошибки повторяются из игры в игру' }, 'Все мои ошибки')),
+      h('div.mleak-verdict', verdict),
+      h(`div.mleak-grid${mini ? '' : '.nomap'}`, h('div.mleak-list',
+        good.length ? h('div.mleak-sec.good', Icon('trophy'), 'Что получилось') : null,
+        good.map((l, i) => card(l, i)),
+        h('div.mleak-sec.bad', Icon('flame'), 'Что исправить'),
+        leaks.length ? leaks.map((l, i) => card(l, good.length + i)) : h('div.muted', 'Явных ошибок в этой игре не нашёл.')),
+        mini ? h('div.mleak-map', mini, h('div.hint', pick ? `Позиции всех героев на ${F.time(pick.t)}. Ты — с белой обводкой.` : 'Нажми на время у момента — покажу, где были все герои.')) : null));
     function renderMomentSel() {
       panel.querySelectorAll('.moment').forEach((b) => b.classList.remove('on'));
       const sel = S.my.leakMoment;

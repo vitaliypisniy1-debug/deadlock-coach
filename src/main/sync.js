@@ -12,7 +12,7 @@ const { NotFoundError } = require('./api');
 const { playersFromMatches, mergeCandidates, rankOf } = require('../core/discover');
 const { parseSteamInput, vanityOf, resolveVanity } = require('./steamIds');
 const { buildOverview, rankFromBadges } = require('../core/overview');
-const { gameLeaks, leakProfile, counterItems, winLink, RANK_BENCH, WIN_LINKS } = require('../core/leaks');
+const { gameLeaks, gameHighlights, leakProfile, counterItems, winLink, RANK_BENCH, WIN_LINKS } = require('../core/leaks');
 const { mapData } = require('../core/mapdata');
 const { heroReport } = require('../core/heroReport');
 const { updateCoach } = require('../core/coach');
@@ -1661,18 +1661,25 @@ class Sync {
     const result = analyze({ me, myMatch: m, bench, assets: this.assets, nameOf });
     const benchDays = bench.length ? Math.ceil((nowSec() - Math.min(...bench.map((b) => b.start_time))) / DAY) : 0;
     let leaks = [];
+    let highlights = [];
     try {
       const picks = this.store.read('picktables.json', null);
       const table = picks && picks.tables && picks.tables[me.hero_id];
       const laneVs = table && table.vs ? Object.fromEntries(Object.entries(table.vs).map(([k, v]) => [k, typeof v.pro === 'number' ? v.pro : v.delta])) : null;
       const heroName = (hid) => (this.assets && this.assets.heroes[hid] ? this.assets.heroes[hid].name : `Герой ${hid}`);
       const tierOf = Array.isArray(m.badge) && typeof m.badge[me.team] === 'number' ? Math.floor(m.badge[me.team] / 10) : null;
-      leaks = gameLeaks({ m, me, f: playerFeatures(me, m, this.assets), ref: this.topFeaturesByHero().get(me.hero_id) || null, tier: tierOf, assets: this.assets, counters: this.counterTable(), laneVs, heroName, itemName: nameOf });
+      const ctx = { m, me, f: playerFeatures(me, m, this.assets), ref: this.topFeaturesByHero().get(me.hero_id) || null, tier: tierOf, assets: this.assets, counters: this.counterTable(), laneVs, heroName, itemName: nameOf };
+      leaks = gameLeaks(ctx);
+      highlights = gameHighlights(ctx);
+      // не хвалим и не ругаем за одно и то же: если по карте есть ошибка, похвалу за карту убираем
+      const bad = new Set(leaks.filter((l) => l.level !== 'good').map((l) => l.key));
+      highlights = highlights.filter((x) => !(x.key === 'map_good' && bad.has('map_timings')) && !(x.key === 'lane_clean' && bad.has('lane_trades')));
     } catch (e) {
       this.emit('log', `leaks: ${e.message}`);
     }
     return {
       leaks,
+      highlights,
       fresh: (m.v || 1) >= EXTRACT_V,
       map: mapData(m),
       mySlot: me.slot,

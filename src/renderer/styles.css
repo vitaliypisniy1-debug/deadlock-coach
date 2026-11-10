@@ -1198,3 +1198,13 @@ body.gaming *, body.gaming *::before, body.gaming *::after {
 .counter-item b { color: var(--good); font-size: 12px; }
 .btn.danger { border-color: rgba(255, 84, 104, 0.45); color: var(--bad); }
 .btn.danger:hover:not([disabled]) { background: rgba(255, 84, 104, 0.12); }
+
+/* сильные моменты в разборе матча */
+.mleak.good { border-left-color: var(--good); }
+.mleak-verdict { margin-top: 8px; color: var(--text-2); font-size: 14px; }
+.mleak-sec { display: flex; align-items: center; gap: 6px; font: 600 11px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; margin-top: 6px; }
+.mleak-sec .ico { width: 14px; height: 14px; }
+.mleak-sec.good { color: var(--good); }
+.mleak-sec.bad { color: var(--accent); }
+.tip.keep { color: var(--text-2); }
+.tip.keep .ico { color: var(--good); }

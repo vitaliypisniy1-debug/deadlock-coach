@@ -853,6 +853,27 @@ test('leaks: new match data (v2) and mistakes with moments', () => {
   const l3 = L.gameLeaks({ m: { ...mm, paths: { step, players: pathsFar } }, me, f: fm, tier: 5 });
   assert.ok(!l3.some((l) => l.key === 'farm_while_fight'), 'не успел бы добежать — не ошибка');
 
+  // ---- сильные моменты ----
+  const gm = JSON.parse(JSON.stringify(mm));
+  const gme = gm.players[0];
+  gme.deaths = []; gme.deaths_t = []; gme.d = 0;
+  gme.stats = [{ t: 540, nw: 7000, d: 0, g_lost: 0, g_brk: 900, g_neutral: 800, k: 2, a: 0 }, { t: 1200, nw: 20000, d: 0, g_lost: 0, g_brk: 2600, g_neutral: 3200, k: 4, a: 1 }, { t: 1800, nw: 30000, d: 0, g_lost: 0, g_brk: 3000, g_neutral: 4000, k: 5, a: 2 }];
+  gme.pu = [[200, 'hp'], [260, 'hp'], [300, 'cd'], [400, 'wp'], [500, 'hp'], [580, 'cd']];
+  gm.dmg = { t: [180, 360, 540, 1800], d: { '0>6': [900, 2000, 3500, 9000], '6>0': [300, 800, 1500, 4000] } };
+  gm.players[6].deaths = [[300, 0, 0, 0, 0, 0], [1000, 100, 0, 0, 0, 0]];
+  gm.players[7].deaths = [[1006, 120, 0, 0, 0, 0]];
+  gm.players[8].deaths = [[1010, 90, 0, 0, 0, 0]];
+  for (const pl of gm.players) gm.paths.players[pl.slot] = mkPath((t) => [0, 0, 1, pl.slot === 0 && t >= 990 && t <= 1015 ? 1 : 0, pl.slot === 0 && t >= 995 && t <= 1005 ? 15 : 100]);
+  const hl = L.gameHighlights({ m: gm, me: gme, f: pf(gme, gm, null), ref: null, tier: 5, heroName: (x) => `H${x}`, itemName: (x) => `I${x}` });
+  const hk = hl.map((x) => x.key);
+  assert.ok(hk.includes('lane_won'), `размены выиграны: ${hk}`);
+  assert.strictEqual(hl.find((x) => x.key === 'lane_won').moments[0].t, 300);
+  assert.ok(hk.includes('multikill') && /Тройное/.test(hl.find((x) => x.key === 'multikill').title), 'серия из трёх убийств');
+  assert.ok(hk.includes('map_good') && hk.includes('few_deaths'));
+  assert.ok(hl.every((x) => x.level === 'good' && x.keep && !/undefined|NaN/.test(x.title + x.text)), 'у каждого — что закрепить');
+  assert.ok(hl.length <= 5);
+  assert.ok(!L.gameHighlights({ m: mm, me, f: fm, tier: 5 }).some((x) => x.key === 'lane_won' || x.key === 'lane_clean'), 'за проигранную линию не хвалим');
+
   // ---- общая картина ----
   const games = [
     { match_id: 1, won: false, hero: 1, leaks },

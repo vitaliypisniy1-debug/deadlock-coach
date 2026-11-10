@@ -395,6 +395,209 @@ function gameLeaks(c) {
   return out.sort((a, b) => b.score - a.score);
 }
 
+/**
+ * Сильные моменты игры — что получилось и что стоит повторять. Те же данные, что у gameLeaks.
+ * Каждый пункт: что сделал (с цифрами и временем), что это дало, как закрепить.
+ */
+function gameHighlights(c) {
+  const { m, me, f } = c;
+  const heroName = c.heroName || ((id) => `#${id}`);
+  const itemName = c.itemName || ((id) => `#${id}`);
+  const out = [];
+  if (!m || !me || !f) return out;
+  const endS = m.duration_s || 0;
+  const enemies = m.players.filter((p) => p.team !== me.team);
+  const bySlot = new Map(m.players.map((p) => [p.slot, p]));
+  // мои убийства: смерти соперников, где убийца — я
+  const myKills = [];
+  for (const e of enemies) for (const d of e.deaths || []) if (d[3] === me.slot) myKills.push({ t: d[0], x: d[1], y: d[2], hero: e.hero_id, slot: e.slot });
+  myKills.sort((a, b) => a.t - b.t);
+  const push = (o) => out.push({ level: 'good', fix: [], moments: [], cost: {}, ...o });
+
+  // ---------- 1. Линия ----------
+  const foes = me.lane !== null && me.lane !== undefined ? enemies.filter((p) => p.lane === me.lane) : [];
+  const foeSlots = new Set(foes.map((e) => e.slot));
+  const laneDeaths = (me.deaths || []).filter((d) => d[0] <= LANE_END).length;
+  if (foes.length && m.dmg && Array.isArray(m.dmg.t)) {
+    let idx = -1;
+    m.dmg.t.forEach((t, i) => {
+      if (t <= LANE_END) idx = i;
+    });
+    if (idx >= 0) {
+      const sum = (keys) => keys.reduce((a, k) => a + ((m.dmg.d[k] || [])[idx] || 0), 0);
+      const out9 = sum(foes.map((e) => `${me.slot}>${e.slot}`));
+      const in9 = sum(foes.map((e) => `${e.slot}>${me.slot}`));
+      const laneKills = myKills.filter((k) => k.t <= LANE_END && foeSlots.has(k.slot));
+      if (out9 >= in9 * 1.4 && out9 - in9 >= 600 && laneDeaths <= 1) {
+        push({
+          key: 'lane_won', area: 'Линия', score: 60 + laneKills.length * 8,
+          title: 'Выиграл размены на линии',
+          text: `К ${T(m.dmg.t[idx])} ты нанёс противникам по линии ${N(out9)} урона, а получил ${N(in9)} — в ${(out9 / Math.max(1, in9)).toFixed(1).replace('.', ',')} раза меньше.` +
+            (laneKills.length ? ` И забрал ${laneKills.length} ${plural(laneKills.length, 'убийство', 'убийства', 'убийств')}.` : '') +
+            (laneDeaths === 0 ? ' Сам ни разу не умер.' : ''),
+          keep: 'Так и разменивайся: бей, когда враг добивает крипа или потратил способность, и отходи раньше, чем он ответит.',
+          moments: laneKills.map((k) => ({ t: k.t, x: k.x, y: k.y, text: `убил ${heroName(k.hero)}` })),
+        });
+      }
+    }
+  }
+  if (laneDeaths === 0 && endS >= LANE_END && !out.some((x) => x.key === 'lane_won')) {
+    push({
+      key: 'lane_clean', area: 'Линия', score: 34,
+      title: 'Ни одной смерти до 10:00',
+      text: 'Ты прошёл линию без смертей. У игроков твоего уровня это 54% побед против 47% при двух смертях.',
+      keep: 'Держи это правило: на линии лучше недобрать крипа, чем отдать смерть.',
+    });
+  }
+
+  // ---------- 2. Карта: лес, коробки, бафы на уровне топов ----------
+  const done = [];
+  for (const [k, label] of [['neu9', 'лес к 9:00'], ['brk9', 'коробки к 9:00'], ['pu10', 'постоянных бафов к 10:00'], ['brk20', 'коробки к 20:00'], ['pu20', 'постоянных бафов к 20:00']]) {
+    const v = f[k];
+    if (v === null || v === undefined) continue;
+    const b = benchFor(k, c.ref, c.tier);
+    if (b.target && v >= b.target) done.push({ k, label, v, target: b.target, fromTops: b.fromTops });
+  }
+  if (done.length >= 2) {
+    const who = done.some((x) => x.fromTops) ? 'у топов на этом герое' : 'у игроков Ascendant+';
+    push({
+      key: 'map_good', area: 'Тайминги', score: 40 + done.length * 6,
+      title: 'Забирал карту на уровне топов',
+      text: done.map((x) => (x.k.startsWith('pu') ? `${x.label} — ${x.v} (${who} ${x.target})` : `${x.label} — ${souls(Math.round(x.v))} (${who} ${N(x.target)})`)).map((t, i) => (i === 0 ? t[0].toUpperCase() + t.slice(1) : t)).join('; ') + '.',
+      keep: 'Это бесплатные души и бафы — продолжай собирать их между волнами, как в этой игре.',
+    });
+  }
+
+  // ---------- 3. Драки: был там, где команда выиграла ----------
+  if (m.paths && m.paths.players && m.paths.players[me.slot]) {
+    const won = [];
+    for (const fight of findFights(m)) {
+      if (fight.t0 < LANE_END || fight.x === null || fight.deaths.length < 3) continue;
+      const allyD = fight.deaths.filter((d) => d.team === me.team).length;
+      const enemyD = fight.deaths.length - allyD;
+      if (enemyD <= allyD) continue;
+      const pts = pathPoints(m, me.slot, fight.t0 - 10, fight.t1);
+      if (!pts || !pts.length) continue;
+      const near = pts.some((q) => q.p[2] && (q.p[3] & 1) && dist([q.p[0], q.p[1]], [fight.x, fight.y]) <= 3500);
+      if (!near) continue;
+      const kills = myKills.filter((k) => k.t >= fight.t0 - 2 && k.t <= fight.t1 + 2).length;
+      const died = fight.deaths.some((d) => d.slot === me.slot);
+      won.push({ t: fight.t0, x: fight.x, y: fight.y, allyD, enemyD, kills, died });
+    }
+    if (won.length >= 2) {
+      const kills = won.reduce((a, x) => a + x.kills, 0);
+      push({
+        key: 'fights_won', area: 'Драки', score: 45 + won.length * 6 + kills * 3,
+        title: 'Был в драках, которые команда выиграла',
+        text: `После 10:00 ты участвовал в ${won.length} ${plural(won.length, 'выигранной драке', 'выигранных драках', 'выигранных драках')}` +
+          (kills ? ` и сам забрал в них ${kills} ${plural(kills, 'убийство', 'убийства', 'убийств')}.` : '.') +
+          (won.every((x) => !x.died) ? ' И ни в одной не умер.' : ''),
+        keep: 'Командные драки решают игру после линии. Продолжай приходить на них вовремя.',
+        moments: won.slice(0, 5).map((x) => ({ t: x.t, x: x.x, y: x.y, text: `драка ${x.enemyD}:${x.allyD} в нашу пользу${x.kills ? `, твоих убийств: ${x.kills}` : ''}` })),
+      });
+    }
+  }
+
+  // ---------- 4. Серии убийств ----------
+  const streaks = [];
+  let cur = [];
+  for (const k of myKills) {
+    if (cur.length && k.t - cur[cur.length - 1].t > 15) {
+      if (cur.length >= 2) streaks.push(cur);
+      cur = [];
+    }
+    cur.push(k);
+  }
+  if (cur.length >= 2) streaks.push(cur);
+  if (streaks.length) {
+    const best = streaks.slice().sort((a, b) => b.length - a.length)[0];
+    const word = (n) => (n >= 4 ? 'Четыре убийства подряд' : n === 3 ? 'Тройное убийство' : 'Двойное убийство');
+    push({
+      key: 'multikill', area: 'Драки', score: 38 + best.length * 10,
+      title: streaks.length > 1 ? `${word(best.length)} и ещё ${streaks.length - 1} ${plural(streaks.length - 1, 'серия', 'серии', 'серий')}` : word(best.length),
+      text: `На ${T(best[0].t)} ты за ${Math.max(1, best[best.length - 1].t - best[0].t)} с убил ${best.map((k) => heroName(k.hero)).join(', ')}.`,
+      keep: 'Посмотри этот момент на карте: где ты стоял и откуда зашёл — такую позицию стоит искать снова.',
+      moments: streaks.slice(0, 4).map((st) => ({ t: st[0].t, x: st[0].x, y: st[0].y, text: `${st.length} ${plural(st.length, 'убийство', 'убийства', 'убийств')}: ${st.map((k) => heroName(k.hero)).join(', ')}` })),
+    });
+  }
+
+  // ---------- 5. Убийство на последних процентах здоровья ----------
+  if (m.paths && m.paths.players && m.paths.players[me.slot]) {
+    const clutch = [];
+    for (const k of myKills) {
+      const pts = pathPoints(m, me.slot, k.t - 5, k.t + 10);
+      if (!pts || pts.length < 2) continue;
+      const hp = pts.filter((q) => q.t <= k.t).map((q) => q.p[4]).filter((v) => v !== null && v !== undefined);
+      const low = hp.length ? Math.min(...hp) : null;
+      const survived = pts.filter((q) => q.t > k.t).every((q) => q.p[2]);
+      if (low !== null && low > 0 && low <= 20 && survived) clutch.push({ ...k, low });
+    }
+    if (clutch.length) {
+      push({
+        key: 'clutch', area: 'Драки', score: 36 + clutch.length * 6,
+        title: clutch.length > 1 ? `${clutch.length} убийства на последних процентах здоровья` : 'Убийство на последних процентах здоровья',
+        text: `${clutch.map((k) => `на ${T(k.t)} убил ${heroName(k.hero)} с ${k.low}% здоровья`).join('; ')} — и выжил.`.replace(/^./, (ch) => ch.toUpperCase()),
+        keep: 'Хладнокровно доиграл размен. Но помни: с таким здоровьем чаще стоит отойти — в этот раз расчёт оправдался.',
+        moments: clutch.slice(0, 4).map((k) => ({ t: k.t, x: k.x, y: k.y, text: `убил ${heroName(k.hero)} с ${k.low}% здоровья` })),
+      });
+    }
+  }
+
+  // ---------- 6. Выживание и души ----------
+  const longGame = endS >= 1500;
+  const refD = c.ref && c.ref.d && c.ref.d.n >= 4 ? c.ref.d.med : null;
+  if (longGame && me.d <= Math.min(3, refD !== null ? refD : 3)) {
+    push({
+      key: 'few_deaths', area: 'Выживание', score: 42,
+      title: me.d === 0 ? 'Ни одной смерти за игру' : `Всего ${me.d} ${plural(me.d, 'смерть', 'смерти', 'смертей')} за игру`,
+      text: `Игра шла ${Math.round(endS / 60)} минут, а ты умер ${me.d === 0 ? 'ноль раз' : `${me.d} ${plural(me.d, 'раз', 'раза', 'раз')}`}${refD !== null ? ` — у топов на этом герое обычно ${String(Math.round(refD * 10) / 10).replace('.', ',')}` : ''}.`,
+      keep: 'Меньше смертей — больше времени на карте и души при тебе. Это твоя сильная сторона в этой игре.',
+    });
+  }
+  const st = me.stats || [];
+  const lostTotal = st.length && st[st.length - 1].g_lost !== undefined ? st[st.length - 1].g_lost : null;
+  if (lostTotal !== null && me.d >= 4 && lostTotal <= me.d * 60) {
+    push({
+      key: 'souls_safe', area: 'Выживание', score: 30,
+      title: 'Умирал «пустым» — души были сохранены',
+      text: `За ${me.d} ${plural(me.d, 'смерть', 'смерти', 'смертей')} ты потерял всего ${souls(lostTotal)}: перед драками души были потрачены или сохранены.`,
+      keep: 'Правильная привычка: сначала магазин, потом драка.',
+    });
+  }
+
+  // ---------- 7. Собрал ответ на самого опасного героя ----------
+  if (c.counters && m.dmg && m.dmg.d && endS >= 1200) {
+    const last = m.dmg.t.length - 1;
+    const taken = enemies.map((e) => ({ e, v: (m.dmg.d[`${e.slot}>${me.slot}`] || [])[last] || 0 })).sort((a, b) => b.v - a.v);
+    const total = taken.reduce((a, x) => a + x.v, 0);
+    const top = taken[0];
+    if (top && total && top.v / total >= 0.25) {
+      const mine = new Set((me.items || []).map(([id]) => id));
+      const hit = (c.counters[top.e.hero_id] || []).find((x) => mine.has(x.id));
+      if (hit) {
+        push({
+          key: 'counter_ok', area: 'Предметы', score: 40,
+          title: `Собрал ответ на ${heroName(top.e.hero_id)}`,
+          text: `${heroName(top.e.hero_id)} нанёс ${Math.round((top.v / total) * 100)}% всего урона по тебе, и у тебя был ${itemName(hit.id)} — топы берут его против этого героя в ${hit.lift.toFixed(1).replace('.', ',')} раза чаще обычного.`,
+          keep: 'Ты подстроил сборку под соперника — так делают сильные игроки.',
+        });
+      }
+    }
+  }
+
+  // ---------- 8. Паверспайк использован ----------
+  if (f.spikeFights !== null && f.spikeFights !== undefined && f.spikeFights >= 0.99 && f.firstBigT) {
+    push({
+      key: 'spike_used', area: 'Паверспайки', score: 28,
+      title: 'Каждый большой предмет сразу шёл в дело',
+      text: 'После каждой покупки предмета за 3000+ ты в течение 3 минут участвовал в убийстве.',
+      keep: 'Купил — используй, пока враг не докупился. Ты так и делал.',
+    });
+  }
+
+  return out.sort((a, b) => b.score - a.score).slice(0, 5);
+}
+
 // Что топы чаще берут против каждого героя. records: [{ match, player }] — игры топового уровня.
 // lift = доля игр с предметом, когда герой у соперников / доля без него.
 function counterItems(records, { minBuys = 12, minRate = 0.1, minLift = 1.5, perHero = 4, isItem = () => true } = {}) {
@@ -488,4 +691,4 @@ function winLink(key, value) {
   return { wr: cur[1], best: list[list.length - 1] };
 }
 
-module.exports = { souls, gameLeaks, leakProfile, counterItems, findFights, lossPerDeath, unspentAt, winLink, benchFor, RANK_BENCH, WIN_LINKS, FIGHT_FAR, FIGHT_REACH, SPEED };
+module.exports = { souls, gameLeaks, gameHighlights, leakProfile, counterItems, findFights, lossPerDeath, unspentAt, winLink, benchFor, RANK_BENCH, WIN_LINKS, FIGHT_FAR, FIGHT_REACH, SPEED };

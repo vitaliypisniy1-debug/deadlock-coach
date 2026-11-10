@@ -1683,7 +1683,7 @@ function assignHeroes(features, heroes) {
 // По проверке на реальных снимках: верный герой по картинке справочника ≈ 0,87
 // при отрыве ≥ 0,3; выученный образец ≈ 0,97+; «не тот» — до ~0,55 с отрывом ~0,03.
 function confident(r) {
-  return !!r && r.score >= 0.68 && r.margin >= 0.1;
+  return !!r && r.score >= 0.65 && r.margin >= 0.1; // 0,65: полупрозрачные портреты соперников в паузе дают 0,67–0,8
 }
 
 module.exports = { GW, GH, teamColor, findSlots, layoutSlots, slotBox, isOwnSlot, slotFeature, gridFrom, ncc, refVariants, scoreHero, assignHeroes, confident };

@@ -52,7 +52,8 @@ module.exports = { sortNum, quantileSorted, quantile, median, mean, wilson, clam
 // Работа со снимками статистики: значение поля в любую секунду матча
 // (линейная интерполяция между снимками), поминутные ряды.
 
-const SOURCE_FIELDS = ['g_lane', 'g_neutral', 'g_player', 'g_boss', 'g_treasure'];
+// g_treasure — урна душ (команде), g_brk — коробки (есть в матчах, сохранённых с версии 0.11)
+const SOURCE_FIELDS = ['g_lane', 'g_neutral', 'g_player', 'g_boss', 'g_brk', 'g_treasure'];
 
 // Производные поля, которых нет в снимке напрямую.
 const DERIVED = {
@@ -76,6 +77,7 @@ function startValue(stats, field) {
 function valueAt(stats, field, t) {
   if (!stats || !stats.length) return null;
   const last = stats[stats.length - 1];
+  if (fieldOf(last, field) === undefined) return null; // поля нет в матче, сохранённом старой версией
   if (t > last.t + 5) return null;
   if (t >= last.t) return fieldOf(last, field);
   let prevT = 0;
@@ -812,6 +814,7 @@ function playerFeatures(p, match, assets = null) {
     firstBigT: big ? big[1] : null,
     firstBigId: big ? big[0] : null,
     firstHugeT: huge ? huge[1] : null,
+    brkEnd: last && has('g_brk') ? last.g_brk : null,
     brk9: atS('g_brk', 540),
     brk20: atS('g_brk', 1200),
     neu9: atS('g_neutral', 540),
@@ -867,7 +870,7 @@ module.exports = { playerFeatures, refOf, refAll, deathTimes, teamSumAt };
 // Опирается на данные, которые есть в матче с версии 0.11 (см. extract.js):
 //   - маршруты героев по 5 секунд: позиция, жив ли, с кем бился (1 герои, 2 крипы линии, 4 лес), здоровье;
 //   - урон между игроками по времени (раз в 3 минуты);
-//   - души по источникам: коробки, лес, казино (Sinner's Sacrifice), потери при смерти;
+//   - души по источникам: коробки, лес, потери при смерти (урна душ — командная, в ошибки не идёт);
 //   - время получения постоянных бафов (контейнеры с бафами — бывшие золотые статуи — и джекпот Sinner's).
 //
 // Тайминги карты (патч 30.10.2026, deadlockhandbook.com и senseos.gg; проверено по данным матчей):
@@ -882,6 +885,8 @@ const { valueAt } = require('./timeline');
 const { N, T, plural } = require('./tipkit');
 
 const souls = (n) => `${N(n)} ${plural(n, 'душа', 'души', 'душ')}`;
+// винительный падеж: «потерял 1 551 душу»
+const soulsAcc = (n) => `${N(n)} ${plural(n, 'душу', 'души', 'душ')}`;
 
 // Медианы по рангу (average_badge // 10). Рейтинг, игры от 25 минут, 2 дня, 640 тыс. игроко-игр.
 // d10 — смерти до 9–10 минуты (медиана 1 на всех рангах: высокие ранги умирают рано не реже),
@@ -1158,23 +1163,8 @@ function gameLeaks(c) {
       facts: timing,
     });
   }
-  if (f.tre20 === 0 && endS >= 1500) {
-    out.push({
-      key: 'sinner',
-      area: 'Тайминги',
-      level: 'warn',
-      score: 22,
-      title: 'Не брал казино (Sinner’s Sacrifice)',
-      text: 'С 8:00 до 20:00 ты ни разу не забрал Sinner’s Sacrifice. Он появляется на 8:00 и снова через 5 минут после того, как его сломали; даёт около 340 душ, а если поймать джекпот тяжёлым ударом — ещё 4 постоянных бафа.',
-      fix: [
-        'На 8:00 загляни к ближайшему Sinner’s Sacrifice: бить можно только ближним боем, лучше тяжёлым ударом.',
-        'До джекпота каждый удар стоит тебе 80 здоровья — не подходи к нему полуживым.',
-        'Когда загорятся все огни — добей тяжёлым ударом: это 4 постоянных бафа вместо одного.',
-      ],
-      moments: [],
-      cost: { souls: 340 },
-    });
-  }
+  // gold_treasure — это урна душ: её души получает вся команда разом (проверено на матчах:
+  // шесть игроков получают одинаковую сумму в одну минуту). Личной ошибкой «не взял» не считаем.
 
   // ---------- 4. Души, потерянные при смерти ----------
   const losses = lossPerDeath(me).filter((x) => x.lost >= 600);
@@ -1188,14 +1178,14 @@ function gameLeaks(c) {
         level: total >= 2000 ? 'bad' : 'warn',
         score: 35 + Math.min(40, total / 60),
         title: 'Умирал с несохранёнными душами',
-        text: `${losses.length} ${plural(losses.length, 'смерть стоила', 'смерти стоили', 'смертей стоили')} тебе ${souls(total)} — их ты не успел сохранить.` +
-          (ref ? ` У топов на этом герое одна смерть в среднем стоит ${souls(ref)}.` : ''),
+        text: `${losses.length} ${plural(losses.length, 'смерть стоила', 'смерти стоили', 'смертей стоили')} тебе ${soulsAcc(total)} — их ты не успел сохранить.` +
+          (ref ? ` У топов на этом герое одна смерть в среднем стоит ${soulsAcc(ref)}.` : ''),
         fix: [
           'Свежие души сначала «несохранённые»: умрёшь — часть пропадёт. После крупного фарма не лезь сразу в рискованную драку.',
           'Накопил на предмет — вернись и купи, а потом иди драться: потраченные души потерять нельзя.',
           'Видишь, что драка проиграна, — отступай раньше: смерть с полным карманом стоит вдвое дороже.',
         ],
-        moments: losses.map((x) => ({ t: x.t, text: `умер и потерял ${souls(x.lost)}` })),
+        moments: losses.map((x) => ({ t: x.t, text: `умер и потерял ${soulsAcc(x.lost)}` })),
         cost: { souls: total },
       });
     }
@@ -1270,6 +1260,209 @@ function gameLeaks(c) {
   return out.sort((a, b) => b.score - a.score);
 }
 
+/**
+ * Сильные моменты игры — что получилось и что стоит повторять. Те же данные, что у gameLeaks.
+ * Каждый пункт: что сделал (с цифрами и временем), что это дало, как закрепить.
+ */
+function gameHighlights(c) {
+  const { m, me, f } = c;
+  const heroName = c.heroName || ((id) => `#${id}`);
+  const itemName = c.itemName || ((id) => `#${id}`);
+  const out = [];
+  if (!m || !me || !f) return out;
+  const endS = m.duration_s || 0;
+  const enemies = m.players.filter((p) => p.team !== me.team);
+  const bySlot = new Map(m.players.map((p) => [p.slot, p]));
+  // мои убийства: смерти соперников, где убийца — я
+  const myKills = [];
+  for (const e of enemies) for (const d of e.deaths || []) if (d[3] === me.slot) myKills.push({ t: d[0], x: d[1], y: d[2], hero: e.hero_id, slot: e.slot });
+  myKills.sort((a, b) => a.t - b.t);
+  const push = (o) => out.push({ level: 'good', fix: [], moments: [], cost: {}, ...o });
+
+  // ---------- 1. Линия ----------
+  const foes = me.lane !== null && me.lane !== undefined ? enemies.filter((p) => p.lane === me.lane) : [];
+  const foeSlots = new Set(foes.map((e) => e.slot));
+  const laneDeaths = (me.deaths || []).filter((d) => d[0] <= LANE_END).length;
+  if (foes.length && m.dmg && Array.isArray(m.dmg.t)) {
+    let idx = -1;
+    m.dmg.t.forEach((t, i) => {
+      if (t <= LANE_END) idx = i;
+    });
+    if (idx >= 0) {
+      const sum = (keys) => keys.reduce((a, k) => a + ((m.dmg.d[k] || [])[idx] || 0), 0);
+      const out9 = sum(foes.map((e) => `${me.slot}>${e.slot}`));
+      const in9 = sum(foes.map((e) => `${e.slot}>${me.slot}`));
+      const laneKills = myKills.filter((k) => k.t <= LANE_END && foeSlots.has(k.slot));
+      if (out9 >= in9 * 1.4 && out9 - in9 >= 600 && laneDeaths <= 1) {
+        push({
+          key: 'lane_won', area: 'Линия', score: 60 + laneKills.length * 8,
+          title: 'Выиграл размены на линии',
+          text: `К ${T(m.dmg.t[idx])} ты нанёс противникам по линии ${N(out9)} урона, а получил ${N(in9)} — в ${(out9 / Math.max(1, in9)).toFixed(1).replace('.', ',')} раза меньше.` +
+            (laneKills.length ? ` И забрал ${laneKills.length} ${plural(laneKills.length, 'убийство', 'убийства', 'убийств')}.` : '') +
+            (laneDeaths === 0 ? ' Сам ни разу не умер.' : ''),
+          keep: 'Так и разменивайся: бей, когда враг добивает крипа или потратил способность, и отходи раньше, чем он ответит.',
+          moments: laneKills.map((k) => ({ t: k.t, x: k.x, y: k.y, text: `убил ${heroName(k.hero)}` })),
+        });
+      }
+    }
+  }
+  if (laneDeaths === 0 && endS >= LANE_END && !out.some((x) => x.key === 'lane_won')) {
+    push({
+      key: 'lane_clean', area: 'Линия', score: 34,
+      title: 'Ни одной смерти до 10:00',
+      text: 'Ты прошёл линию без смертей. У игроков твоего уровня это 54% побед против 47% при двух смертях.',
+      keep: 'Держи это правило: на линии лучше недобрать крипа, чем отдать смерть.',
+    });
+  }
+
+  // ---------- 2. Карта: лес, коробки, бафы на уровне топов ----------
+  const done = [];
+  for (const [k, label] of [['neu9', 'лес к 9:00'], ['brk9', 'коробки к 9:00'], ['pu10', 'постоянных бафов к 10:00'], ['brk20', 'коробки к 20:00'], ['pu20', 'постоянных бафов к 20:00']]) {
+    const v = f[k];
+    if (v === null || v === undefined) continue;
+    const b = benchFor(k, c.ref, c.tier);
+    if (b.target && v >= b.target) done.push({ k, label, v, target: b.target, fromTops: b.fromTops });
+  }
+  if (done.length >= 2) {
+    const who = done.some((x) => x.fromTops) ? 'у топов на этом герое' : 'у игроков Ascendant+';
+    push({
+      key: 'map_good', area: 'Тайминги', score: 40 + done.length * 6,
+      title: 'Забирал карту на уровне топов',
+      text: done.map((x) => (x.k.startsWith('pu') ? `${x.label} — ${x.v} (${who} ${x.target})` : `${x.label} — ${souls(Math.round(x.v))} (${who} ${N(x.target)})`)).map((t, i) => (i === 0 ? t[0].toUpperCase() + t.slice(1) : t)).join('; ') + '.',
+      keep: 'Это бесплатные души и бафы — продолжай собирать их между волнами, как в этой игре.',
+    });
+  }
+
+  // ---------- 3. Драки: был там, где команда выиграла ----------
+  if (m.paths && m.paths.players && m.paths.players[me.slot]) {
+    const won = [];
+    for (const fight of findFights(m)) {
+      if (fight.t0 < LANE_END || fight.x === null || fight.deaths.length < 3) continue;
+      const allyD = fight.deaths.filter((d) => d.team === me.team).length;
+      const enemyD = fight.deaths.length - allyD;
+      if (enemyD <= allyD) continue;
+      const pts = pathPoints(m, me.slot, fight.t0 - 10, fight.t1);
+      if (!pts || !pts.length) continue;
+      const near = pts.some((q) => q.p[2] && (q.p[3] & 1) && dist([q.p[0], q.p[1]], [fight.x, fight.y]) <= 3500);
+      if (!near) continue;
+      const kills = myKills.filter((k) => k.t >= fight.t0 - 2 && k.t <= fight.t1 + 2).length;
+      const died = fight.deaths.some((d) => d.slot === me.slot);
+      won.push({ t: fight.t0, x: fight.x, y: fight.y, allyD, enemyD, kills, died });
+    }
+    if (won.length >= 2) {
+      const kills = won.reduce((a, x) => a + x.kills, 0);
+      push({
+        key: 'fights_won', area: 'Драки', score: 45 + won.length * 6 + kills * 3,
+        title: 'Был в драках, которые команда выиграла',
+        text: `После 10:00 ты участвовал в ${won.length} ${plural(won.length, 'выигранной драке', 'выигранных драках', 'выигранных драках')}` +
+          (kills ? ` и сам забрал в них ${kills} ${plural(kills, 'убийство', 'убийства', 'убийств')}.` : '.') +
+          (won.every((x) => !x.died) ? ' И ни в одной не умер.' : ''),
+        keep: 'Командные драки решают игру после линии. Продолжай приходить на них вовремя.',
+        moments: won.slice(0, 5).map((x) => ({ t: x.t, x: x.x, y: x.y, text: `драка ${x.enemyD}:${x.allyD} в нашу пользу${x.kills ? `, твоих убийств: ${x.kills}` : ''}` })),
+      });
+    }
+  }
+
+  // ---------- 4. Серии убийств ----------
+  const streaks = [];
+  let cur = [];
+  for (const k of myKills) {
+    if (cur.length && k.t - cur[cur.length - 1].t > 15) {
+      if (cur.length >= 2) streaks.push(cur);
+      cur = [];
+    }
+    cur.push(k);
+  }
+  if (cur.length >= 2) streaks.push(cur);
+  if (streaks.length) {
+    const best = streaks.slice().sort((a, b) => b.length - a.length)[0];
+    const word = (n) => (n >= 4 ? 'Четыре убийства подряд' : n === 3 ? 'Тройное убийство' : 'Двойное убийство');
+    push({
+      key: 'multikill', area: 'Драки', score: 38 + best.length * 10,
+      title: streaks.length > 1 ? `${word(best.length)} и ещё ${streaks.length - 1} ${plural(streaks.length - 1, 'серия', 'серии', 'серий')}` : word(best.length),
+      text: `На ${T(best[0].t)} ты за ${Math.max(1, best[best.length - 1].t - best[0].t)} с убил ${best.map((k) => heroName(k.hero)).join(', ')}.`,
+      keep: 'Посмотри этот момент на карте: где ты стоял и откуда зашёл — такую позицию стоит искать снова.',
+      moments: streaks.slice(0, 4).map((st) => ({ t: st[0].t, x: st[0].x, y: st[0].y, text: `${st.length} ${plural(st.length, 'убийство', 'убийства', 'убийств')}: ${st.map((k) => heroName(k.hero)).join(', ')}` })),
+    });
+  }
+
+  // ---------- 5. Убийство на последних процентах здоровья ----------
+  if (m.paths && m.paths.players && m.paths.players[me.slot]) {
+    const clutch = [];
+    for (const k of myKills) {
+      const pts = pathPoints(m, me.slot, k.t - 5, k.t + 10);
+      if (!pts || pts.length < 2) continue;
+      const hp = pts.filter((q) => q.t <= k.t).map((q) => q.p[4]).filter((v) => v !== null && v !== undefined);
+      const low = hp.length ? Math.min(...hp) : null;
+      const survived = pts.filter((q) => q.t > k.t).every((q) => q.p[2]);
+      if (low !== null && low > 0 && low <= 20 && survived) clutch.push({ ...k, low });
+    }
+    if (clutch.length) {
+      push({
+        key: 'clutch', area: 'Драки', score: 36 + clutch.length * 6,
+        title: clutch.length > 1 ? `${clutch.length} убийства на последних процентах здоровья` : 'Убийство на последних процентах здоровья',
+        text: `${clutch.map((k) => `на ${T(k.t)} убил ${heroName(k.hero)} с ${k.low}% здоровья`).join('; ')} — и выжил.`.replace(/^./, (ch) => ch.toUpperCase()),
+        keep: 'Хладнокровно доиграл размен. Но помни: с таким здоровьем чаще стоит отойти — в этот раз расчёт оправдался.',
+        moments: clutch.slice(0, 4).map((k) => ({ t: k.t, x: k.x, y: k.y, text: `убил ${heroName(k.hero)} с ${k.low}% здоровья` })),
+      });
+    }
+  }
+
+  // ---------- 6. Выживание и души ----------
+  const longGame = endS >= 1500;
+  const refD = c.ref && c.ref.d && c.ref.d.n >= 4 ? c.ref.d.med : null;
+  if (longGame && me.d <= Math.min(3, refD !== null ? refD : 3)) {
+    push({
+      key: 'few_deaths', area: 'Выживание', score: 42,
+      title: me.d === 0 ? 'Ни одной смерти за игру' : `Всего ${me.d} ${plural(me.d, 'смерть', 'смерти', 'смертей')} за игру`,
+      text: `Игра шла ${Math.round(endS / 60)} минут, а ты умер ${me.d === 0 ? 'ноль раз' : `${me.d} ${plural(me.d, 'раз', 'раза', 'раз')}`}${refD !== null ? ` — у топов на этом герое обычно ${String(Math.round(refD * 10) / 10).replace('.', ',')}` : ''}.`,
+      keep: 'Меньше смертей — больше времени на карте и души при тебе. Это твоя сильная сторона в этой игре.',
+    });
+  }
+  const st = me.stats || [];
+  const lostTotal = st.length && st[st.length - 1].g_lost !== undefined ? st[st.length - 1].g_lost : null;
+  if (lostTotal !== null && me.d >= 4 && lostTotal <= me.d * 60) {
+    push({
+      key: 'souls_safe', area: 'Выживание', score: 30,
+      title: 'Умирал «пустым» — души были сохранены',
+      text: `За ${me.d} ${plural(me.d, 'смерть', 'смерти', 'смертей')} ты потерял всего ${souls(lostTotal)}: перед драками души были потрачены или сохранены.`,
+      keep: 'Правильная привычка: сначала магазин, потом драка.',
+    });
+  }
+
+  // ---------- 7. Собрал ответ на самого опасного героя ----------
+  if (c.counters && m.dmg && m.dmg.d && endS >= 1200) {
+    const last = m.dmg.t.length - 1;
+    const taken = enemies.map((e) => ({ e, v: (m.dmg.d[`${e.slot}>${me.slot}`] || [])[last] || 0 })).sort((a, b) => b.v - a.v);
+    const total = taken.reduce((a, x) => a + x.v, 0);
+    const top = taken[0];
+    if (top && total && top.v / total >= 0.25) {
+      const mine = new Set((me.items || []).map(([id]) => id));
+      const hit = (c.counters[top.e.hero_id] || []).find((x) => mine.has(x.id));
+      if (hit) {
+        push({
+          key: 'counter_ok', area: 'Предметы', score: 40,
+          title: `Собрал ответ на ${heroName(top.e.hero_id)}`,
+          text: `${heroName(top.e.hero_id)} нанёс ${Math.round((top.v / total) * 100)}% всего урона по тебе, и у тебя был ${itemName(hit.id)} — топы берут его против этого героя в ${hit.lift.toFixed(1).replace('.', ',')} раза чаще обычного.`,
+          keep: 'Ты подстроил сборку под соперника — так делают сильные игроки.',
+        });
+      }
+    }
+  }
+
+  // ---------- 8. Паверспайк использован ----------
+  if (f.spikeFights !== null && f.spikeFights !== undefined && f.spikeFights >= 0.99 && f.firstBigT) {
+    push({
+      key: 'spike_used', area: 'Паверспайки', score: 28,
+      title: 'Каждый большой предмет сразу шёл в дело',
+      text: 'После каждой покупки предмета за 3000+ ты в течение 3 минут участвовал в убийстве.',
+      keep: 'Купил — используй, пока враг не докупился. Ты так и делал.',
+    });
+  }
+
+  return out.sort((a, b) => b.score - a.score).slice(0, 5);
+}
+
 // Что топы чаще берут против каждого героя. records: [{ match, player }] — игры топового уровня.
 // lift = доля игр с предметом, когда герой у соперников / доля без него.
 function counterItems(records, { minBuys = 12, minRate = 0.1, minLift = 1.5, perHero = 4, isItem = () => true } = {}) {
@@ -1306,6 +1499,11 @@ function counterItems(records, { minBuys = 12, minRate = 0.1, minLift = 1.5, per
   return out;
 }
 
+function wrFactor(a, b) {
+  if (a === null || b === null) return 1;
+  return Math.max(0.6, Math.min(1.6, 1 + (b - a) * 2));
+}
+
 // Общая картина по играм: что повторяется, сколько стоит, как связано с победой.
 // games: [{ match_id, start_time, won, hero, leaks: [...] }]
 function leakProfile(games) {
@@ -1340,8 +1538,9 @@ function leakProfile(games) {
       share: n ? e.games.length / n : 0,
       wrWith: withL.length >= 3 ? wr(withL) : null,
       wrWithout: without.length >= 3 ? wr(without) : null,
-      // важность: как часто × насколько серьёзно
-      impact: (e.games.length / Math.max(1, n)) * (e.score / e.games.length),
+      // важность: как часто × насколько серьёзно × бьёт ли по победам именно в твоих играх
+      // (с ошибкой выигрываешь реже — важнее; не реже — менее важно; мало игр — без поправки)
+      impact: (e.games.length / Math.max(1, n)) * (e.score / e.games.length) * wrFactor(withL.length >= 3 ? wr(withL) : null, without.length >= 3 ? wr(without) : null),
       examples: e.games.slice().sort((a, b) => b.score - a.score).slice(0, 3),
     };
   });
@@ -1357,7 +1556,7 @@ function winLink(key, value) {
   return { wr: cur[1], best: list[list.length - 1] };
 }
 
-module.exports = { souls, gameLeaks, leakProfile, counterItems, findFights, lossPerDeath, unspentAt, winLink, benchFor, RANK_BENCH, WIN_LINKS, FIGHT_FAR, FIGHT_REACH, SPEED };
+module.exports = { souls, gameLeaks, gameHighlights, leakProfile, counterItems, findFights, lossPerDeath, unspentAt, winLink, benchFor, RANK_BENCH, WIN_LINKS, FIGHT_FAR, FIGHT_REACH, SPEED };
 
 }};M["portraits"]={mod:{exports:{}},fn:function(module,exports){const require=req;'use strict';
 // Распознавание героев по портретам на верхней панели Deadlock.

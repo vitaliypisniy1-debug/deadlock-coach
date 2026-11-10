@@ -371,7 +371,7 @@ test('sold vs upgraded items', () => {
 });
 
 console.log('coach / matchups / versus:');
-const { updateCoach, checkGame } = require('../src/core/coach');
+const { updateCoach, checkGame, CATALOG, pickGoals } = require('../src/core/coach');
 const { myMatchups, heroVs, prepare, heroOutlook } = require('../src/core/matchups');
 const { proCandidates, versus } = require('../src/core/versus');
 function coachGames(skill, n, t0, seedBase = 500) {
@@ -389,8 +389,12 @@ test('coach: plan from weaknesses, checks, closing goals', () => {
   const lobby = refAll(weak.flatMap((g) => g.match.players.slice(1).map((p) => playerFeatures(p, g.match))));
   const r1 = updateCoach(null, { games: weak, topHero, lobby, extra: {}, now: t0 + 12 * 3000 + 100 });
   assert.ok(r1.view.plan, 'план создан');
-  assert.ok(r1.view.goals.length >= 2 && r1.view.goals.length <= 3, `целей ${r1.view.goals.length}`);
-  assert.strictEqual(new Set(r1.view.goals.map((g) => g.area)).size, r1.view.goals.length, 'разные разделы');
+  assert.ok(r1.view.goals.length >= 3 && r1.view.goals.length <= 4, `целей ${r1.view.goals.length}`);
+  const fams = r1.view.goals.map((g) => (CATALOG.find((c) => c.key === g.key) || {}).family);
+  assert.strictEqual(new Set(fams).size, fams.length, 'нет двух целей про одно и то же');
+  const perArea = {};
+  for (const g of r1.view.goals) perArea[g.area] = (perArea[g.area] || 0) + 1;
+  assert.ok(Object.values(perArea).every((n) => n <= 2), 'не больше двух целей в разделе');
   for (const g of r1.view.goals) assert.ok(!/undefined|NaN/.test(g.title), g.title);
   // затем игрок играет сильно — цели должны закрываться
   const strong = coachGames(1.5, 8, t0 + 12 * 3000 + 600, 800);
@@ -405,6 +409,23 @@ test('coach: plan from weaknesses, checks, closing goals', () => {
   assert.strictEqual(r0.view.plan, null);
   assert.ok(r0.view.need > 0);
   console.log('    цели:', r1.view.goals.map((g) => g.title).join(' | '));
+  // старый план из 2 целей добирается до 3–4
+  const oldState = JSON.parse(JSON.stringify(r1.state));
+  oldState.plan.goals = oldState.plan.goals.slice(0, 2).map(({ family, kind, ...g }) => g);
+  const r3 = updateCoach(oldState, { games: weak, topHero, lobby, extra: {}, now: t0 + 12 * 3000 + 200 });
+  assert.ok(r3.view.goals.filter((g) => g.status === 'active').length >= 3, 'план добран');
+  // выбор: по одному на раздел, потом второй в раздел, одна семья — одна цель
+  const pk = pickGoals([
+    { key: 'd10', family: 'deaths', area: 'Выживание', gap: 1 },
+    { key: 'd', family: 'deaths', area: 'Выживание', gap: 0.9 },
+    { key: 'firstBigT', family: 'spike1', area: 'Паверспайки', gap: 0.8 },
+    { key: 'spikeFights', family: 'spikeUse', area: 'Паверспайки', gap: 0.7 },
+    { key: 'firstHugeT', family: 'spike2', area: 'Паверспайки', gap: 0.6 },
+    { key: 'lh10', family: 'laneFarm', area: 'Фарм', gap: 0.5 },
+  ]);
+  assert.deepStrictEqual(pk.map((g) => g.key), ['d10', 'firstBigT', 'lh10', 'spikeFights']);
+  // признаки паверспайков считаются
+  assert.ok(weak.some((g) => g.f.spikeFights !== undefined) && 'spikeDmg' in weak[0].f);
 });
 test('matchups: my record, tops vs heroes, counters, prepare', () => {
   const games = coachGames(0.9, 10, 1_900_000_000).map((g) => ({ match: g.match, me: g.me }));

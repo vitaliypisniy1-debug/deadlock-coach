@@ -1,5 +1,5 @@
 'use strict';
-// Личный тренер: превращает главные проблемы в 2–3 цели на неделю,
+// Личный тренер: превращает главные проблемы в 3–4 цели на неделю,
 // проверяет каждую игру, показывает прогресс и закрывает выполненные цели.
 //
 // Цель: { key, title, short, cmp: 'ge'|'le', target, byHero: {heroId: target}, unit, area, tip }
@@ -14,115 +14,149 @@ const WEEK = 7 * DAY;
 const round = (v, step) => Math.round(v / step) * step;
 
 // Каталог целей. ref — значение топов (или лобби), me — твоя медиана.
-// make() возвращает цель или null, если по этой метрике у тебя всё хорошо.
+// make() возвращает { target, gap } или null, если по этой метрике у тебя всё хорошо.
+// stretch() — запасная цель «дотянуться до уровня топов», когда явных проблем мало:
+// берётся, только если ты хоть немного ниже топов.
+// family — цели про одно и то же (крипы и души на линии) вместе не ставим.
+const T_UP = (step) => (me, ref) => (me === null || ref === null || me >= ref ? null : { target: step ? Math.ceil(ref / step) * step : Math.ceil(ref), gap: ((ref - me) / Math.max(1e-9, Math.abs(ref))) * 0.5 });
+const T_DOWN = (step) => (me, ref) => (me === null || ref === null || me <= ref ? null : { target: step ? Math.floor(ref / step) * step : Math.floor(ref), gap: ((me - ref) / Math.max(1, Math.abs(ref))) * 0.5 });
+
 const CATALOG = [
   {
-    key: 'd10', fmt: (v) => D1(v), area: 'Выживание', cmp: 'le', heroSpecific: false,
+    key: 'd10', family: 'deaths', fmt: (v) => D1(v), area: 'Выживание', cmp: 'le', heroSpecific: false,
     metric: (g) => g.f && g.f.d10,
-    make: (me, ref) => {
-      if (me === null || me < 0.75) return null;
-      const target = Math.max(0, Math.floor(me) - 1);
-      return { target, gap: me - (ref ?? 0.6), title: target === 0 ? 'Не умирать до 10:00' : `Не больше ${target} ${plural(target, 'смерти', 'смертей', 'смертей')} до 10:00`, short: 'смерти до 10:00', fmt: (v) => D1(v), tip: 'На линии не начинай размен первым, а когда противник с соседней линии пропал с карты — отходи к своей башне.' };
-    },
+    title: (t) => (t === 0 ? 'Не умирать до 10:00' : `Не больше ${t} ${plural(t, 'смерти', 'смертей', 'смертей')} до 10:00`),
+    short: 'смерти до 10:00',
+    tip: 'На линии не начинай размен первым, а когда противник с соседней линии пропал с карты — отходи к своей башне.',
+    make: (me, ref) => (me === null || me < 0.75 ? null : { target: Math.max(0, Math.floor(me) - 1), gap: me - (ref ?? 0.6) }),
   },
   {
-    key: 'd', fmt: (v) => D1(v), area: 'Выживание', cmp: 'le', heroSpecific: false,
+    key: 'd', family: 'deaths', fmt: (v) => D1(v), area: 'Выживание', cmp: 'le', heroSpecific: false,
     metric: (g) => g.f && g.f.d,
-    make: (me, ref) => {
-      if (me === null || ref === null || me <= ref + 0.8) return null;
-      const target = Math.max(Math.round(ref), Math.floor(me - Math.max(1, (me - ref) / 2)));
-      return { target, gap: (me - ref) / Math.max(1, ref), title: `Не больше ${target} ${plural(target, 'смерти', 'смертей', 'смертей')} за игру`, short: 'смерти за игру', fmt: (v) => D1(v), tip: 'Перед каждым заходом в драку смотри на карту: где враги, которых не видно? Отступай при половине здоровья.' };
-    },
+    title: (t) => `Не больше ${t} ${plural(t, 'смерти', 'смертей', 'смертей')} за игру`,
+    short: 'смерти за игру',
+    tip: 'Перед каждым заходом в драку смотри на карту: где враги, которых не видно? Отступай при половине здоровья.',
+    make: (me, ref) => (me === null || ref === null || me <= ref + 0.8 ? null : { target: Math.max(Math.round(ref), Math.floor(me - Math.max(1, (me - ref) / 2))), gap: (me - ref) / Math.max(1, ref) }),
+    stretch: (me, ref) => (me === null || ref === null || me <= ref + 0.3 ? null : { target: Math.max(Math.round(ref), Math.ceil(me) - 1), gap: ((me - ref) / Math.max(1, ref)) * 0.5 }),
   },
   {
-    key: 'nw10', fmt: N, area: 'Фарм', cmp: 'ge', heroSpecific: true, step: 100,
+    key: 'nw10', family: 'laneFarm', fmt: N, area: 'Фарм', cmp: 'ge', heroSpecific: true, step: 100,
     metric: (g) => g.f && g.f.nw10,
-    make: (me, ref) => {
-      if (me === null || ref === null || me >= ref * 0.93) return null;
-      const target = round(me + (ref - me) * 0.6, 100);
-      return { target, gap: (ref - me) / ref, title: `К 10:00 — от ${N(target)} душ`, short: 'души к 10:00', fmt: N, tip: 'Добивай каждого крипа последним выстрелом и сразу забирай сферу души. В лес — только когда волна запушена.' };
-    },
+    title: (t) => `К 10:00 — от ${N(t)} душ`,
+    short: 'души к 10:00',
+    tip: 'Добивай каждого крипа последним выстрелом и сразу забирай сферу души. В лес — только когда волна запушена.',
+    make: (me, ref) => (me === null || ref === null || me >= ref * 0.93 ? null : { target: round(me + (ref - me) * 0.6, 100), gap: (ref - me) / ref }),
+    stretch: T_UP(100),
   },
   {
-    key: 'lh10', fmt: N, area: 'Фарм', cmp: 'ge', heroSpecific: true, step: 1,
+    key: 'lh10', family: 'laneFarm', fmt: N, area: 'Фарм', cmp: 'ge', heroSpecific: true, step: 1,
     metric: (g) => g.f && g.f.lh10,
-    make: (me, ref) => {
-      if (me === null || ref === null || ref < 15 || me >= ref * 0.9) return null;
-      const target = Math.round(me + (ref - me) * 0.6);
-      return { target, gap: (ref - me) / ref, title: `Добивать от ${target} крипов к 10:00`, short: 'крипы к 10:00', fmt: N, tip: 'Стой ближе к волне и бей крипа, когда у него мало здоровья. Полных крипов не трогай.' };
-    },
+    title: (t) => `Добивать от ${t} крипов к 10:00`,
+    short: 'крипы к 10:00',
+    tip: 'Стой ближе к волне и бей крипа, когда у него мало здоровья. Полных крипов не трогай.',
+    make: (me, ref) => (me === null || ref === null || ref < 15 || me >= ref * 0.9 ? null : { target: Math.round(me + (ref - me) * 0.6), gap: (ref - me) / ref }),
   },
   {
-    key: 'soulsMid', fmt: N, area: 'Фарм', cmp: 'ge', heroSpecific: true, step: 25,
+    key: 'soulsMid', family: 'midFarm', fmt: N, area: 'Фарм', cmp: 'ge', heroSpecific: true, step: 25,
     metric: (g) => g.f && g.f.soulsMid,
-    make: (me, ref) => {
-      if (me === null || ref === null || me >= ref * 0.9) return null;
-      const target = round(me + (ref - me) * 0.6, 25);
-      return { target, gap: (ref - me) / ref, title: `С 10 до 20 минуты — от ${N(target)} душ в минуту`, short: 'души/мин в середине', fmt: N, tip: 'Между драками чередуй: волна → лагерь в лесу → волна. Стоять и ждать нельзя.' };
-    },
+    title: (t) => `С 10 до 20 минуты — от ${N(t)} душ в минуту`,
+    short: 'души/мин в середине',
+    tip: 'Между драками чередуй: волна → лагерь в лесу → волна. Стоять и ждать нельзя.',
+    make: (me, ref) => (me === null || ref === null || me >= ref * 0.9 ? null : { target: round(me + (ref - me) * 0.6, 25), gap: (ref - me) / ref }),
+    stretch: T_UP(25),
   },
   {
-    key: 'firstBigT', fmt: T, area: 'Предметы', cmp: 'le', heroSpecific: true, step: 30,
+    key: 'firstBigT', family: 'spike1', fmt: T, area: 'Паверспайки', cmp: 'le', heroSpecific: true, step: 30,
     metric: (g) => g.f && g.f.firstBigT,
-    make: (me, ref) => {
-      if (me === null || ref === null || me <= ref + 90) return null;
-      const target = round(me - (me - ref) * 0.6, 30);
-      return { target, gap: (me - ref) / ref, title: `Первый предмет за 3000+ — до ${T(target)}`, short: 'первый дорогой предмет', fmt: T, tip: 'Решай заранее, какой предмет главный, и копи на него, не покупая мелочь по дороге.' };
-    },
+    title: (t) => `Первый паверспайк (предмет за 3000+) — до ${T(t)}`,
+    short: 'первый паверспайк',
+    tip: 'Решай заранее, какой предмет главный, и копи на него, не покупая мелочь по дороге.',
+    make: (me, ref) => (me === null || ref === null || me <= ref + 90 ? null : { target: round(me - (me - ref) * 0.6, 30), gap: (me - ref) / ref }),
+    stretch: (me, ref) => (me === null || ref === null || me <= ref + 20 ? null : { target: Math.floor(ref / 30) * 30, gap: ((me - ref) / ref) * 0.5 }),
   },
   {
-    key: 'kp', fmt: P, area: 'Драки', cmp: 'ge', heroSpecific: false,
+    key: 'firstHugeT', family: 'spike2', fmt: T, area: 'Паверспайки', cmp: 'le', heroSpecific: true, step: 30,
+    metric: (g) => g.f && g.f.firstHugeT,
+    title: (t) => `Большой паверспайк (предмет за 6000+) — до ${T(t)}`,
+    short: 'большой паверспайк',
+    tip: 'Предмет за 6000 — главный рывок середины игры. Между драками фарми лес и волны и копи на него, не распыляясь на мелочь.',
+    make: (me, ref) => (me === null || ref === null || me <= ref + 120 ? null : { target: round(me - (me - ref) * 0.6, 30), gap: (me - ref) / ref }),
+    stretch: (me, ref) => (me === null || ref === null || me <= ref + 30 ? null : { target: Math.floor(ref / 30) * 30, gap: ((me - ref) / ref) * 0.5 }),
+  },
+  {
+    key: 'spikeFights', family: 'spikeUse', fmt: P, area: 'Паверспайки', cmp: 'ge', heroSpecific: false,
+    metric: (g) => g.f && g.f.spikeFights,
+    title: (t) => `Использовать паверспайк: драка в течение 3 минут после большого предмета — в ${P(t)} случаев`,
+    short: 'драка после паверспайка',
+    tip: 'Купил большой предмет — это твой момент силы. В ближайшие 3 минуты ищи драку или дави на линии, пока враг не докупился.',
+    make: (me, ref) => (me === null || ref === null || me >= ref - 0.1 ? null : { target: Math.round((me + (ref - me) * 0.7) * 20) / 20, gap: ((ref - me) / Math.max(0.2, ref)) * 0.9 }),
+    stretch: (me, ref) => (me === null || ref === null || me >= ref - 0.02 ? null : { target: Math.round(ref * 20) / 20, gap: ((ref - me) / Math.max(0.2, ref)) * 0.5 }),
+  },
+  {
+    key: 'spikeDmg', family: 'spikeDmg', fmt: N, area: 'Паверспайки', cmp: 'ge', heroSpecific: true, step: 25,
+    metric: (g) => g.f && g.f.spikeDmg,
+    title: (t) => `Урон по героям после первого паверспайка — от ${N(t)} в минуту`,
+    short: 'урон после паверспайка',
+    tip: 'Первые 3 минуты после большого предмета — лучшее время для размена. Стреляй по героям, а не по крипам.',
+    make: (me, ref) => (me === null || ref === null || me >= ref * 0.8 ? null : { target: round(me + (ref - me) * 0.6, 25), gap: ((ref - me) / ref) * 0.9 }),
+    stretch: T_UP(25),
+  },
+  {
+    key: 'kp', family: 'kp', fmt: P, area: 'Драки', cmp: 'ge', heroSpecific: false,
     metric: (g) => g.f && g.f.kp,
-    make: (me, ref) => {
-      if (me === null || ref === null || me >= ref - 0.05) return null;
-      const target = Math.round((me + (ref - me) * 0.7) * 20) / 20;
-      return { target, gap: (ref - me) / ref, title: `Участвовать в ${P(target)} убийств команды`, short: 'участие в убийствах', fmt: P, tip: 'Каждые несколько секунд смотри на карту и иди на ближайшую драку — помощь даёт почти столько же душ, сколько убийство.' };
-    },
+    title: (t) => `Участвовать в ${P(t)} убийств команды`,
+    short: 'участие в убийствах',
+    tip: 'Каждые несколько секунд смотри на карту и иди на ближайшую драку — помощь даёт почти столько же душ, сколько убийство.',
+    make: (me, ref) => (me === null || ref === null || me >= ref - 0.05 ? null : { target: Math.round((me + (ref - me) * 0.7) * 20) / 20, gap: (ref - me) / ref }),
+    stretch: (me, ref) => (me === null || ref === null || me >= ref - 0.01 ? null : { target: Math.round(ref * 20) / 20, gap: ((ref - me) / ref) * 0.5 }),
   },
   {
-    key: 'dmgMin', fmt: N, area: 'Драки', cmp: 'ge', heroSpecific: true, step: 25,
+    key: 'dmgMin', family: 'dmg', fmt: N, area: 'Драки', cmp: 'ge', heroSpecific: true, step: 25,
     metric: (g) => g.f && g.f.dmgMin,
-    make: (me, ref) => {
-      if (me === null || ref === null || me >= ref * 0.88) return null;
-      const target = round(me + (ref - me) * 0.6, 25);
-      return { target, gap: (ref - me) / ref, title: `Урон по героям — от ${N(target)} в минуту`, short: 'урон по героям/мин', fmt: N, tip: 'Когда враг рядом — стреляй по нему, а не по крипам. После покупки ключевого предмета ищи драку.' };
-    },
+    title: (t) => `Урон по героям — от ${N(t)} в минуту`,
+    short: 'урон по героям/мин',
+    tip: 'Когда враг рядом — стреляй по нему, а не по крипам. После покупки ключевого предмета ищи драку.',
+    make: (me, ref) => (me === null || ref === null || me >= ref * 0.88 ? null : { target: round(me + (ref - me) * 0.6, 25), gap: (ref - me) / ref }),
+    stretch: T_UP(25),
   },
   {
-    key: 'dn10', fmt: N, area: 'Линия', cmp: 'ge', heroSpecific: false,
+    key: 'dn10', family: 'denies', fmt: N, area: 'Линия', cmp: 'ge', heroSpecific: false,
     metric: (g) => g.f && g.f.dn10,
-    make: (me, ref) => {
-      if (me === null || ref === null || ref < 3 || me >= ref * 0.7) return null;
-      const target = Math.max(2, Math.round(me + (ref - me) * 0.6));
-      return { target, gap: (ref - me) / ref * 0.7, title: `Отбирать от ${target} сфер к 10:00`, short: 'отобранные сферы', fmt: N, tip: 'Когда враг добивает твоего крипа — стреляй по вылетевшей сфере раньше него.' };
-    },
+    title: (t) => `Отбирать от ${t} сфер к 10:00`,
+    short: 'отобранные сферы',
+    tip: 'Когда враг добивает твоего крипа — стреляй по вылетевшей сфере раньше него.',
+    make: (me, ref) => (me === null || ref === null || ref < 3 || me >= ref * 0.7 ? null : { target: Math.max(2, Math.round(me + (ref - me) * 0.6)), gap: ((ref - me) / ref) * 0.7 }),
+    stretch: (me, ref) => (me === null || ref === null || ref < 2 || me >= ref - 0.5 ? null : { target: Math.max(2, Math.round(ref)), gap: ((ref - me) / ref) * 0.35 }),
   },
   {
-    key: 'bdmgMin', fmt: N, area: 'Объекты', cmp: 'ge', heroSpecific: false, step: 10,
+    key: 'bdmgMin', family: 'objectives', fmt: N, area: 'Объекты', cmp: 'ge', heroSpecific: false, step: 10,
     metric: (g) => g.f && g.f.bdmgMin,
-    make: (me, ref) => {
-      if (me === null || ref === null || ref < 30 || me >= ref * 0.7) return null;
-      const target = round(me + (ref - me) * 0.6, 10);
-      return { target, gap: (ref - me) / ref * 0.8, title: `Урон по объектам — от ${N(target)} в минуту`, short: 'урон по объектам', fmt: N, tip: 'После выигранной драки сразу всей командой на стража или ходока.' };
-    },
+    title: (t) => `Урон по объектам — от ${N(t)} в минуту`,
+    short: 'урон по объектам',
+    tip: 'После выигранной драки сразу всей командой на стража или ходока.',
+    make: (me, ref) => (me === null || ref === null || ref < 30 || me >= ref * 0.7 ? null : { target: round(me + (ref - me) * 0.6, 10), gap: ((ref - me) / ref) * 0.8 }),
+    stretch: (me, ref) => (me === null || ref === null || ref < 30 || me >= ref * 0.95 ? null : { target: Math.ceil(ref / 10) * 10, gap: ((ref - me) / ref) * 0.4 }),
   },
   {
-    key: 'session', fmt: (v) => `${v}-я`, area: 'Режим', cmp: 'le', heroSpecific: false, habit: true,
+    key: 'session', family: 'session', fmt: (v) => `${v}-я`, area: 'Режим', cmp: 'le', heroSpecific: false, habit: true,
     metric: (g) => g.pos,
-    make: (me, ref, extra) => {
-      if (!extra || !extra.fatigue) return null;
-      return { target: 3, gap: 0.25, title: 'Перерыв после 3 игр подряд', short: 'номер игры в сессии', fmt: (v) => `${v}-я`, tip: 'После третьей игры подряд встань хотя бы на 15 минут: усталость незаметно съедает реакцию и решения.' };
-    },
+    title: () => 'Перерыв после 3 игр подряд',
+    short: 'номер игры в сессии',
+    tip: 'После третьей игры подряд встань хотя бы на 15 минут: усталость незаметно съедает реакцию и решения.',
+    make: (me, ref, extra) => (!extra || !extra.fatigue ? null : { target: 3, gap: 0.25 }),
   },
   {
-    key: 'tilt', fmt: (v) => `${Math.round(v)} мин`, area: 'Настрой', cmp: 'ge', heroSpecific: false, habit: true,
+    key: 'tilt', family: 'tilt', fmt: (v) => `${Math.round(v)} мин`, area: 'Настрой', cmp: 'ge', heroSpecific: false, habit: true,
     metric: (g) => (g.afterLoss ? g.gapMin : null),
-    make: (me, ref, extra) => {
-      if (!extra || !extra.tilt) return null;
-      return { target: 10, gap: 0.22, title: 'После поражения — пауза хотя бы 10 минут', short: 'пауза после поражения', fmt: (v) => `${Math.round(v)} мин`, tip: 'Не жми «Найти игру» сразу после обидного поражения. Пара минут разбора в «Моих матчах» — и следующая игра пойдёт лучше.' };
-    },
+    title: () => 'После поражения — пауза хотя бы 10 минут',
+    short: 'пауза после поражения',
+    tip: 'Не жми «Найти игру» сразу после обидного поражения. Пара минут разбора в «Моих матчах» — и следующая игра пойдёт лучше.',
+    make: (me, ref, extra) => (!extra || !extra.tilt ? null : { target: 10, gap: 0.22 }),
   },
 ];
+
+const GOALS_MAX = 4; // сколько целей одновременно
+const GOALS_MIN = 3; // меньше — добираем целями «до уровня топов»
 
 const passOf = (cmp, value, target) => (value === null || value === undefined || !Number.isFinite(value) ? null : cmp === 'ge' ? value >= target : value <= target);
 
@@ -165,24 +199,33 @@ function heroTargets(cat, games, topHero) {
   return out;
 }
 
-// Кандидаты в цели, по убыванию важности.
-function candidates({ games, topHero, lobby, extra, exclude = new Set() }) {
+// Кандидаты в цели, по убыванию важности. stretch — только «дотянуться до топов».
+function candidates({ games, topHero, lobby, extra, exclude = new Set(), stretch = false }) {
   const out = [];
   for (const cat of CATALOG) {
     if (exclude.has(cat.key)) continue;
     const { me, ref } = stats(cat.key, games, topHero, lobby);
-    const g = cat.make(me, ref, extra);
+    let g = stretch ? null : cat.make(me, ref, extra);
+    let kind = 'fix';
+    if (!g && stretch && cat.stretch) {
+      g = cat.stretch(me, ref, extra);
+      kind = 'stretch';
+    }
     if (!g) continue;
+    let byHero = heroTargets(cat, games, topHero);
+    if (kind === 'stretch' && byHero) byHero = stretchHeroTargets(cat, games, topHero);
     out.push({
       key: cat.key,
+      family: cat.family,
       area: cat.area,
       cmp: cat.cmp,
       habit: !!cat.habit,
-      title: g.title,
-      short: g.short,
-      tip: g.tip,
+      kind,
+      title: cat.title(g.target),
+      short: cat.short,
+      tip: cat.tip,
       target: g.target,
-      byHero: heroTargets(cat, games, topHero),
+      byHero,
       baseline: me,
       ref,
       gap: g.gap,
@@ -191,20 +234,52 @@ function candidates({ games, topHero, lobby, extra, exclude = new Set() }) {
   return out.sort((a, b) => b.gap - a.gap);
 }
 
-function pickGoals(cands, n = 3) {
+// Для запасной цели по героям — уровень топов на этом герое (но не легче твоего обычного).
+function stretchHeroTargets(cat, games, topHero) {
+  const out = {};
+  for (const h of new Set(games.map((g) => g.hero))) {
+    const r = topHero && topHero.get(h);
+    const vals = games.filter((g) => g.hero === h).map((g) => g.f && g.f[cat.key]).filter((v) => v !== null && v !== undefined && Number.isFinite(v));
+    if (!r || !r[cat.key] || r[cat.key].n < 4 || vals.length < 2) continue;
+    const me = median(vals);
+    const ref = r[cat.key].med;
+    const t = cat.step ? (cat.cmp === 'ge' ? Math.ceil(ref / cat.step) * cat.step : Math.floor(ref / cat.step) * cat.step) : Math.round(ref);
+    out[h] = cat.cmp === 'ge' ? Math.max(t, cat.step ? round(me, cat.step) : Math.round(me)) : Math.min(t, me);
+  }
+  return out;
+}
+
+// Выбор целей: сначала по одной на раздел, потом добираем вторую в раздел.
+// Никогда две цели про одно и то же (family) и не больше одной привычки.
+function pickGoals(cands, n = GOALS_MAX, taken = []) {
   const res = [];
-  const areas = new Set();
-  // не больше одной привычки и не больше одной цели на раздел
-  let habit = false;
-  for (const c of cands) {
-    if (res.length >= n) break;
-    if (areas.has(c.area)) continue;
-    if (c.habit && habit) continue;
-    if (c.habit) habit = true;
-    areas.add(c.area);
-    res.push(c);
+  const fam = new Set(taken.map((g) => g.family || g.key));
+  const perArea = new Map();
+  for (const g of taken) perArea.set(g.area, (perArea.get(g.area) || 0) + 1);
+  let habit = taken.some((g) => g.habit);
+  for (const maxPerArea of [1, 2]) {
+    for (const c of cands) {
+      if (res.length >= n) break;
+      if (res.includes(c) || fam.has(c.family || c.key)) continue;
+      if ((perArea.get(c.area) || 0) >= maxPerArea) continue;
+      if (c.habit && habit) continue;
+      if (c.habit) habit = true;
+      fam.add(c.family || c.key);
+      perArea.set(c.area, (perArea.get(c.area) || 0) + 1);
+      res.push(c);
+    }
   }
   return res;
+}
+
+// Полный набор: главные проблемы, а если их меньше GOALS_MIN — цели «до уровня топов».
+function chooseGoals(data, games, exclude, taken = [], n = GOALS_MAX) {
+  const base = { games, topHero: data.topHero, lobby: data.lobby, extra: data.extra, exclude };
+  const main = pickGoals(candidates(base), n, taken);
+  const have = taken.length + main.length;
+  if (have >= GOALS_MIN || main.length >= n) return main;
+  const more = pickGoals(candidates({ ...base, stretch: true }), Math.min(n - main.length, GOALS_MIN - have), taken.concat(main));
+  return main.concat(more);
 }
 
 function fmtOf(key) {
@@ -241,9 +316,13 @@ function updateCoach(state, data, { forceNew = false } = {}) {
   const makePlan = (reason) => {
     const recent = loaded.slice(-25);
     const recentlyDone = new Set((st.archive || []).filter((g) => g.status === 'done' && now - (g.doneAt || 0) < 14 * DAY).map((g) => g.key));
-    const goals = pickGoals(candidates({ games: recent, topHero: data.topHero, lobby: data.lobby, extra: data.extra, exclude: recentlyDone }));
+    const goals = chooseGoals(data, recent, recentlyDone);
     st.plan = { createdAt: now, reason, goals: goals.map((g) => ({ ...g, status: 'active', startedAt: now })) };
-    logEvent({ t: now, kind: 'plan', title: 'Новый план на неделю', text: goals.length ? goals.map((g) => g.title).join(' · ') : 'Явных проблем не нашлось — продолжай в том же духе, а я слежу за каждой игрой.' });
+    const text = goals.length ? goals.map((g) => g.title).join(' · ') : 'Явных проблем не нашлось — продолжай в том же духе, а я слежу за каждой игрой.';
+    // «Новый план» с теми же целями — не повторяем сообщение, а обновляем время старого
+    const prev = (st.log || []).slice().reverse().find((e) => e.kind === 'plan' && e.title === 'Новый план на неделю');
+    if (prev && prev.text === text && now - prev.t < DAY) prev.t = now;
+    else logEvent({ t: now, kind: 'plan', title: 'Новый план на неделю', text });
   };
 
   if (!st.plan || forceNew || now - st.plan.createdAt > WEEK) {
@@ -272,14 +351,20 @@ function updateCoach(state, data, { forceNew = false } = {}) {
         goal.status = 'done';
         goal.doneAt = now;
         logEvent({ t: now, kind: 'done', title: 'Цель выполнена', text: `«${goal.title}» — ${last.filter((r) => r.pass).length} из 5 последних игр. Беру следующую.` });
-        const active = new Set(plan.goals.map((g) => g.key));
-        const next = pickGoals(candidates({ games: loaded.slice(-25), topHero: data.topHero, lobby: data.lobby, extra: data.extra, exclude: active }).filter((c) => !plan.goals.some((g) => g.status === 'active' && g.area === c.area)), 1)[0];
-        if (next) {
-          plan.goals.push({ ...next, status: 'active', startedAt: now });
-          logEvent({ t: now, kind: 'plan', title: 'Новая цель', text: next.title });
-        }
         changed = true;
       }
+    }
+  }
+
+  // Целей меньше, чем нужно (одна закрыта или план старой версии) — добираем.
+  const activeNow = plan.goals.filter((g) => g.status === 'active');
+  if (activeNow.length < GOALS_MAX) {
+    const used = new Set(plan.goals.map((g) => g.key));
+    const taken = activeNow.map((g) => ({ ...g, family: g.family || (CATALOG.find((c) => c.key === g.key) || {}).family }));
+    const extra = chooseGoals(data, loaded.slice(-25), used, taken, GOALS_MAX - activeNow.length);
+    for (const next of extra) {
+      plan.goals.push({ ...next, status: 'active', startedAt: now });
+      logEvent({ t: now, kind: 'plan', title: 'Новая цель', text: next.title });
     }
   }
 
@@ -369,4 +454,4 @@ function updateCoach(state, data, { forceNew = false } = {}) {
   };
 }
 
-module.exports = { updateCoach, checkGame, candidates, pickGoals, CATALOG };
+module.exports = { updateCoach, checkGame, candidates, pickGoals, chooseGoals, CATALOG, GOALS_MAX, GOALS_MIN };

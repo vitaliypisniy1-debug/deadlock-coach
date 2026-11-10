@@ -75,6 +75,26 @@ function playerFeatures(p, match, assets = null) {
     }
   }
 
+  // Паверспайки: после покупки большого предмета (3000+) — была ли драка за 3 минуты
+  // (выросли убийства + помощи) и насколько вырос урон по героям.
+  const endS = match.duration_s || endMin * 60;
+  const spikeBuys = bought.filter(([id, t]) => (cost(id) || 0) >= 3000 && t + 180 <= endS);
+  let spikeN = 0;
+  let spikeFought = 0;
+  for (const [, t] of spikeBuys) {
+    const k0 = valueAt(st, 'ka', t);
+    const k1 = valueAt(st, 'ka', t + 180);
+    if (k0 === null || k1 === null) continue;
+    spikeN += 1;
+    if (k1 > k0) spikeFought += 1;
+  }
+  let spikeDmg = null; // урон по героям в минуту за 3 минуты после первого большого предмета
+  if (big && big[1] + 180 <= endS) {
+    const d0 = valueAt(st, 'pdmg', big[1]);
+    const d1 = valueAt(st, 'pdmg', big[1] + 180);
+    if (d0 !== null && d1 !== null) spikeDmg = (d1 - d0) / 3;
+  }
+
   // Противники по линии (если API отдал назначенную линию)
   const laneFoes = p.lane !== null && p.lane !== undefined ? enemies.filter((x) => x.lane === p.lane) : [];
   const laneFoeNw10 = laneFoes.length ? median(laneFoes.map((x) => at(x.stats, 'nw', 10)).filter((v) => v !== null)) : null;
@@ -154,6 +174,8 @@ function playerFeatures(p, match, assets = null) {
     firstBigT: big ? big[1] : null,
     firstBigId: big ? big[0] : null,
     firstHugeT: huge ? huge[1] : null,
+    spikeFights: spikeN ? spikeFought / spikeN : null,
+    spikeDmg,
     itemsSold: itemFates(p.items, assets).filter((f) => f.fate === 'sold').length,
     cheapLate: bought.filter(([id, t]) => t >= 1200 && (cost(id) || 9999) <= 800).length,
     slots20: slotsBy(20),

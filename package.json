@@ -1,7 +1,7 @@
 {
   "name": "deadlock-coach",
   "productName": "Deadlock Coach",
-  "version": "0.10.3",
+  "version": "0.10.4",
   "description": "Deadlock Coach — личный тренер и мета топ-50/100 текущего сезона на данных deadlock-api.com",
   "main": "src/main/main.js",
   "private": true,

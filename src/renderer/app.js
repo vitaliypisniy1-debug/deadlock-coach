@@ -1045,10 +1045,10 @@
     const rate = g.rate;
     return h(`div.goal.${g.status}`,
       h('div.goal-head',
-        h('span.goal-area', g.area),
+        h('span.goal-area', g.area, g.kind === 'stretch' ? h('span.goal-kind', { title: 'Явной проблемы тут нет, но ты чуть ниже топов на своих героях — цель дотянуться до их уровня.' }, ' · до уровня топов') : null),
         h('span.goal-state', g.status === 'done' ? Icon('trophy') : null, goalStatus[g.status] || g.status)),
       h('div.goal-title', g.title),
-      heroTargets.length > 1 ? h('div.goal-heroes', heroTargets.slice(0, 4).map(([hid, t]) => h('span.chip', heroIcon(Number(hid), '.sm'), String(g.key === 'firstBigT' ? F.time(t) : g.key === 'kp' ? F.pct(t) : F.num(t))))) : null,
+      heroTargets.length > 1 ? h('div.goal-heroes', heroTargets.slice(0, 4).map(([hid, t]) => h('span.chip', heroIcon(Number(hid), '.sm'), String(g.key === 'firstBigT' || g.key === 'firstHugeT' ? F.time(t) : g.key === 'kp' || g.key === 'spikeFights' ? F.pct(t) : F.num(t))))) : null,
       h('div.goal-stats',
         h('div', h('b.num', g.games ? `${g.passed}/${g.games}` : '—'), h('span', 'игр с выполнением')),
         h('div', h('b.num', g.streak ? `${g.streak}` : '0'), h('span', 'подряд')),

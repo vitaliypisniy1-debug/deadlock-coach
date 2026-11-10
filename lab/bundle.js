@@ -1569,7 +1569,14 @@ module.exports = { souls, gameLeaks, gameHighlights, leakProfile, counterItems, 
 // 2) slotFeature: вырезаем портрет над плашкой, берём центр (по краям значки «!»)
 //    и сжимаем в маленькую сетку цветов.
 // 3) Сравнение с образцами: картинки героев из справочника (с прозрачностью,
-//    подбираем масштаб и сдвиг) и портреты, которые пользователь подтвердил сам.
+//    подбираем масштаб и сдвиг), встроенные образцы (герои, чей портрет в игре
+//    не совпадает с картинкой справочника) и портреты, которые пользователь подтвердил сам.
+//    Фон за портретом всё время разный (цвет команды, карта сквозь полупрозрачную
+//    плашку), поэтому сравниваем двумя способами и складываем:
+//    — цвет только в овале лица (углы с фоном не считаем);
+//    — контуры (перепады яркости) — форма головы и деталей от фона почти не зависит.
+//    Каждую оценку переводим в «насколько этот герой выделяется среди всех» (z-оценка),
+//    так две шкалы складываются честно, а уверенность — это отрыв от второго места.
 
 const GW = 24; // сетка признаков
 const GH = 30;
@@ -1756,6 +1763,51 @@ function slotFeature(img, slot) {
   return gridFrom(img, slotBox(img, slot));
 }
 
+// Контуры: перепады яркости по горизонтали и вертикали в каждой клетке сетки.
+function gradGrid(g) {
+  const L = new Float32Array(GW * GH);
+  for (let i = 0; i < GW * GH; i++) L[i] = 0.3 * g[i * 3] + 0.59 * g[i * 3 + 1] + 0.11 * g[i * 3 + 2];
+  const out = new Float32Array(GW * GH * 3);
+  for (let y = 0; y < GH; y++) {
+    for (let x = 0; x < GW; x++) {
+      const i = y * GW + x;
+      const xl = Math.max(0, x - 1);
+      const xr = Math.min(GW - 1, x + 1);
+      const yu = Math.max(0, y - 1);
+      const yd = Math.min(GH - 1, y + 1);
+      out[i * 3] = L[y * GW + xr] - L[y * GW + xl];
+      out[i * 3 + 1] = L[yd * GW + x] - L[yu * GW + x];
+    }
+  }
+  return out;
+}
+
+// Овал лица: цвет сравниваем только внутри него (по углам — фон).
+const FACE = (() => {
+  const m = new Uint8Array(GW * GH);
+  for (let y = 0; y < GH; y++) {
+    for (let x = 0; x < GW; x++) {
+      const u = ((x + 0.5) / GW - 0.5) / 0.5;
+      const v = ((y + 0.5) / GH - 0.52) / 0.42;
+      m[y * GW + x] = u * u + v * v <= 1 ? 1 : 0;
+    }
+  }
+  return m;
+})();
+
+function andMask(a, b) {
+  if (!a) return b;
+  const m = new Uint8Array(b.length);
+  for (let i = 0; i < b.length; i++) m[i] = a[i] && b[i] ? 1 : 0;
+  return m;
+}
+
+// Образец для сравнения из готовой сетки (выученный или встроенный портрет).
+function sampleVariant(grid) {
+  const g = grid instanceof Float32Array ? grid : Float32Array.from(grid);
+  return { grid: g, mask: null, face: FACE, gr: gradGrid(g) };
+}
+
 // Нормированная корреляция двух сеток (по маске, если она есть). 1 — одинаковые.
 function ncc(a, b, mask = null) {
   let n = 0;
@@ -1841,51 +1893,99 @@ function refVariants(ref, { scales = [0.85, 1, 1.15, 1.3], shifts = [-0.08, 0, 0
             }
           }
         }
-        out.push({ grid, mask });
+        out.push({ grid, mask, face: andMask(mask, FACE), gr: gradGrid(grid) });
       }
     }
   }
   return out;
 }
 
-// Сравнение признаков слота с героем: лучший из вариантов образцов справочника и выученных образцов.
-function scoreHero(feature, hero) {
-  let best = -1;
-  for (const v of hero.variants || []) best = Math.max(best, ncc(feature, v.grid, v.mask));
-  for (const l of hero.learned || []) best = Math.max(best, ncc(feature, l) + 0.05); // свои образцы чуть важнее
-  return best;
+// Признаки слота для сравнения: сетка цветов и контуры.
+function slotFeatures(img, slot) {
+  const g = slotFeature(img, slot);
+  return { g, gr: gradGrid(g) };
+}
+
+function ensureVariant(v) {
+  if (!v.gr) v.gr = gradGrid(v.grid);
+  if (!v.face) v.face = andMask(v.mask, FACE);
+  return v;
+}
+
+// Сырые оценки героя: лучший образец по цвету (в овале) и лучший по контурам.
+function rawScores(f, hero) {
+  let c = -1;
+  let e = -1;
+  // выученные портреты (сетки) — превращаем в образцы один раз
+  if (hero.learned && hero.learned.length && (!hero._learnedV || hero._learnedV.src !== hero.learned)) {
+    hero._learnedV = hero.learned.map(sampleVariant);
+    hero._learnedV.src = hero.learned;
+  }
+  const all = (hero.variants || []).concat(hero.samples || [], (hero.learned && hero._learnedV) || []);
+  for (const v0 of all) {
+    const v = ensureVariant(v0);
+    c = Math.max(c, ncc(f.g, v.grid, v.face));
+    e = Math.max(e, ncc(f.gr, v.gr, v.mask));
+  }
+  return { c, e };
+}
+
+function zs(arr) {
+  const m = arr.reduce((a, x) => a + x, 0) / arr.length;
+  const sd = Math.sqrt(arr.reduce((a, x) => a + (x - m) ** 2, 0) / arr.length) || 1;
+  return arr.map((x) => (x - m) / sd);
+}
+
+// Оценки всех героев для одного слота: среднее z-оценок по цвету и по контурам.
+function slotScores(f, heroes) {
+  const raw = heroes.map((h) => rawScores(f, h));
+  const zc = zs(raw.map((r) => r.c));
+  const ze = zs(raw.map((r) => r.e));
+  return heroes.map((_, i) => (zc[i] + ze[i]) / 2);
+}
+
+// Совместимость: оценка одного героя (z-оценка среди всех не нужна — для отладки).
+function scoreHero(f, hero) {
+  const ff = f.g ? f : { g: f, gr: gradGrid(f) };
+  const r = rawScores(ff, hero);
+  return (r.c + r.e) / 2;
 }
 
 // Распределяем героев по слотам: каждый герой — не больше одного раза (жадно по уверенности).
-function assignHeroes(features, heroes) {
+// scores — для каждого слота массив оценок в порядке heroes (можно усреднить по нескольким кадрам).
+function assignFromScores(scores, heroes) {
   const cand = [];
-  features.forEach((f, si) => {
-    for (const h of heroes) cand.push({ si, id: h.id, s: scoreHero(f, h) });
-  });
-  const bySlot = features.map((_, si) => cand.filter((c) => c.si === si).sort((a, b) => b.s - a.s));
+  scores.forEach((arr, si) => arr.forEach((s, hi) => cand.push({ si, id: heroes[hi].id, s })));
+  const bySlot = scores.map((_, si) => cand.filter((c) => c.si === si).sort((a, b) => b.s - a.s));
   cand.sort((a, b) => b.s - a.s);
   const usedS = new Set();
   const usedH = new Set();
-  const res = features.map(() => null);
+  const res = scores.map(() => null);
   for (const c of cand) {
     if (usedS.has(c.si) || usedH.has(c.id)) continue;
     usedS.add(c.si);
     usedH.add(c.id);
     const top = bySlot[c.si];
     const second = top.find((x) => x.id !== c.id);
-    res[c.si] = { id: c.id, score: c.s, margin: second ? c.s - second.s : 1, top3: top.slice(0, 3).map((x) => ({ id: x.id, s: Math.round(x.s * 1000) / 1000 })) };
+    res[c.si] = { id: c.id, score: c.s, margin: second ? c.s - second.s : 9, top3: top.slice(0, 3).map((x) => ({ id: x.id, s: Math.round(x.s * 100) / 100 })) };
   }
   return res;
 }
 
-// Уверенность: насколько похоже вообще и насколько выше второго варианта.
-// По проверке на реальных снимках: верный герой по картинке справочника ≈ 0,87
-// при отрыве ≥ 0,3; выученный образец ≈ 0,97+; «не тот» — до ~0,55 с отрывом ~0,03.
-function confident(r) {
-  return !!r && r.score >= 0.65 && r.margin >= 0.1; // 0,65: полупрозрачные портреты соперников в паузе дают 0,67–0,8
+// features — признаки слотов (slotFeatures) или старые сетки.
+function assignHeroes(features, heroes) {
+  const fs = features.map((f) => (f && f.g ? f : { g: f, gr: gradGrid(f) }));
+  return assignFromScores(fs.map((f) => slotScores(f, heroes)), heroes);
 }
 
-module.exports = { GW, GH, teamColor, findSlots, layoutSlots, slotBox, isOwnSlot, slotFeature, gridFrom, ncc, refVariants, scoreHero, assignHeroes, confident };
+// Уверенность: насколько герой выделяется среди всех (z) и отрыв от второго места.
+// Проверка на 24 портретах (пауза перед игрой и матч с полупрозрачными соперниками):
+// верные — z 2,0–5,4 с отрывом 0,86–4,3; герои, которых нет в образцах, — отрыв до 0,6.
+function confident(r) {
+  return !!r && r.score >= 1.8 && r.margin >= 0.75;
+}
+
+module.exports = { GW, GH, teamColor, findSlots, layoutSlots, slotBox, isOwnSlot, slotFeature, slotFeatures, gridFrom, gradGrid, ncc, refVariants, sampleVariant, scoreHero, slotScores, assignFromScores, assignHeroes, confident };
 
 }};M["pick"]={mod:{exports:{}},fn:function(module,exports){const require=req;'use strict';
 // Совет по пику в паузе перед игрой: из твоих героев выбираем лучших против
@@ -1893,23 +1993,30 @@ module.exports = { GW, GH, teamColor, findSlots, layoutSlots, slotBox, isOwnSlot
 //
 // Оценка героя — это ожидаемый шанс победы:
 //   50%
-// + сила героя в патче (винрейт в матчах топового уровня, все игры deadlock-api)
-// + каждый соперник: насколько этот герой против него выигрывает чаще/реже ожидаемого
-//   (если соперник на твоей линии — берём цифры именно «на одной линии»)
-// + каждый союзник: связка (для напарника по линии — связка на одной линии)
+// + сила героя в патче (винрейт в матчах топового уровня за 2 недели, все игры deadlock-api) — 80%
+// + твоя форма на этом герое (насколько ты на нём выигрываешь чаще своего обычного) — 20%
+// + каждый соперник и союзник: поправка за конкретную пару сверх силы самих героев
 // + состав: команде без танка или с перебором стрелков выигрывать тяжелее
-// Вес данных: 80% — мета (все игры топового уровня), 20% — твои собственные игры.
+//
+// Проверено на ~2,5 млн пар за 2 недели (Фантом+): если учесть силу самих героев, конкретный
+// матчап меняет шанс победы всего на ±0,5% (разброс), связка с союзником — ещё меньше,
+// а «на одной линии» — практически не меняет. Поэтому пары стянуты к нулю очень сильно
+// (по их реальному разбросу), а линия считается отдельно — по душам на 9-й минуте.
 
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 
 const MY_SHARE = 0.2; // доля твоих игр в совете
 const META_SHARE = 1 - MY_SHARE;
-const PAIR_PRIOR = 150; // малые выборки пар стягиваем к нулю
+// Сколько «нулевых» игр добавляем к паре: 0,25 / (реальный разброс эффекта пары)².
+// Разброс измерен на данных: соперник ≈ 0,45%, напарник по линии ≈ 0,5%, союзник вообще ≈ 0.
+const PAIR_PRIOR = { vs: 12000, lane: 12000, with: 20000, duo: 9000 };
 const BASE_PRIOR = 300;
-const VS_CAP = 0.08; // один соперник — не больше ±8% к шансу
-const ALLY_CAP = 0.05;
+const COMFORT_PRIOR = 30; // твоя форма на герое: 30 «обычных» игр
+const VS_CAP = 0.03; // один соперник — не больше ±3% к шансу
+const ALLY_CAP = 0.02;
 const WEAK_WR = 0.48; // ниже — «слабый в патче»
 const STALE_DAYS = 30;
+const LANE_SOULS = 250; // заметная разница душ на линии к 9-й минуте
 
 // ---------- роли ----------
 // Из справочника героев: brawler — танк, без типа или с меткой Support — поддержка,
@@ -1947,7 +2054,8 @@ function compAdj(allyRoles, role) {
 
 // ---------- мета из deadlock-api ----------
 // Сжимаем ответы /v1/analytics в таблицы { герой: { другой: [побед, игр] } }.
-function buildPickMeta({ stats = [], counters = [], laneCounters = [], synergy = [], laneSynergy = [], badge = null, since = null } = {}) {
+// laneSouls — строки { h, e, n, d }: на сколько душ герой h опережает соперника e на той же линии к 9-й минуте.
+function buildPickMeta({ stats = [], counters = [], laneCounters = [], synergy = [], laneSynergy = [], laneSouls = [], badge = null, since = null } = {}) {
   const base = {};
   for (const r of stats) {
     const n = Number(r.matches) || 0;
@@ -1974,7 +2082,20 @@ function buildPickMeta({ stats = [], counters = [], laneCounters = [], synergy =
     return out;
   };
   const games = Object.values(base).reduce((s, x) => s + x[1], 0) / 12;
-  return { v: 1, badge, since, games: Math.round(games), base, vs: pairs(counters), lane: pairs(laneCounters), with: duo(synergy), duo: duo(laneSynergy) };
+  const souls = {};
+  for (const r of laneSouls || []) {
+    const n = Number(r.n) || 0;
+    if (n < 30 || !r.h || !r.e) continue;
+    (souls[r.h] = souls[r.h] || {})[r.e] = [Math.round(Number(r.d) || 0), n];
+  }
+  return { v: 1, badge, since, games: Math.round(games), base, vs: pairs(counters), lane: pairs(laneCounters), with: duo(synergy), duo: duo(laneSynergy), souls };
+}
+
+// Души на линии против соперника к 9-й минуте (стянуто к нулю при малой выборке).
+function laneSouls(pm, h, e) {
+  const r = pm && pm.souls && pm.souls[h] && pm.souls[h][e];
+  if (!r) return null;
+  return { d: Math.round((r[0] * r[1]) / (r[1] + 60)), n: r[1] };
 }
 
 function baseWr(pm, id) {
@@ -1993,7 +2114,7 @@ function pairDelta(pm, table, a, b, sign) {
   const bb = baseWr(pm, b);
   if (ba === null || bb === null) return null;
   const exp = ba + sign * (bb - 0.5);
-  return { d: (r[0] - r[1] * exp) / (r[1] + PAIR_PRIOR), n: r[1] };
+  return { d: (r[0] - r[1] * exp) / (r[1] + (PAIR_PRIOR[table] || 12000)), n: r[1] };
 }
 
 // Матчап против одного соперника: 80% мета + 20% твои игры.
@@ -2042,7 +2163,7 @@ function heroPool(historyRows, { minWins = 15, manual = null, now = Date.now() /
     // старые записи без режима: считаем победы всех игр
     const hasModes = all.some((x) => x.ranked > 0) || (historyRows || []).some((r) => r.match_mode !== undefined);
     const eligible = all.filter((x) => (hasModes ? x.stdWins : x.wins) >= minWins || x.ranked > 0);
-    const active = eligible.filter((x) => x.recent > 0);
+    const active = eligible.filter((x) => x.recent >= 3);
     pool = active.length >= 3 ? active : eligible;
     inactive = eligible.filter((x) => !pool.includes(x));
     if (!pool.length) pool = all.filter((x) => x.games >= 5).slice(0, 8);
@@ -2072,22 +2193,23 @@ function pickAdvice({ pool, tables = {}, pm = null, enemies = [], allies = [], l
     const strength = metaWr === null ? 0 : metaWr - 0.5;
     const g = p.recent >= 5 ? p.recent : p.games || 0;
     const w = p.recent >= 5 ? p.recentWins : p.wins || 0;
-    const comfort = g ? (w - g * myBase) / (g + 10) : -0.03;
+    const comfort = g ? (w - g * myBase) / (g + COMFORT_PRIOR) : -0.01;
     const baseScore = META_SHARE * strength + MY_SHARE * comfort;
     // соперники
+    // Твоих игр против одного соперника слишком мало, чтобы отличить эффект от случайности,
+    // поэтому пары считаем по мете; твои 20% — это форма на герое (выше).
     const parts = enemies.map((e) => {
       const onLane = laneEnemies.includes(e);
-      const m = (onLane && pairDelta(pm, 'lane', hid, e, -1)) || pairDelta(pm, 'vs', hid, e, -1);
-      const mine = t && t.vs && t.vs[e] ? t.vs[e].mine : null;
-      const old = t && t.vs ? t.vs[e] : null;
-      const d = m ? mixMatchup({ pro: m.d, mine }) : mixMatchup(old);
-      const lane = pairDelta(pm, 'lane', hid, e, -1);
+      const m = pairDelta(pm, onLane ? 'lane' : 'vs', hid, e, -1) || pairDelta(pm, 'vs', hid, e, -1);
+      const old = !pm && t && t.vs ? t.vs[e] : null; // нет меты — старые таблицы по скачанным матчам
+      const d = m ? m.d : mixMatchup(old);
+      const ls = laneSouls(pm, hid, e);
       return {
         hero_id: e,
         d: d === null ? 0 : clamp(d, -VS_CAP, VS_CAP),
         known: d !== null,
         lane: onLane,
-        laneD: lane ? clamp(lane.d, -VS_CAP, VS_CAP) : null,
+        souls: ls ? ls.d : null,
         evidence: m ? m.n : old ? old.evidence : 0,
       };
     });
@@ -2096,8 +2218,7 @@ function pickAdvice({ pool, tables = {}, pm = null, enemies = [], allies = [], l
     const mates = allies.filter((a) => a !== hid).map((a) => {
       const isPartner = a === partner;
       const m = (isPartner && pairDelta(pm, 'duo', hid, a, 1)) || pairDelta(pm, 'with', hid, a, 1);
-      const mine = t && t.with && t.with[a] ? t.with[a].mine : null;
-      const d = m ? mixMatchup({ pro: m.d, mine }) : t && t.with ? mixMatchup(t.with[a]) : null;
+      const d = m ? m.d : !pm && t && t.with ? mixMatchup(t.with[a]) : null;
       return { hero_id: a, d: d === null ? 0 : clamp(d, -ALLY_CAP, ALLY_CAP), known: d !== null, partner: isPartner };
     });
     const allyScore = mates.reduce((s, x) => s + x.d, 0);
@@ -2105,7 +2226,7 @@ function pickAdvice({ pool, tables = {}, pm = null, enemies = [], allies = [], l
     const comp = compAdj(allyRoles, role);
     const score = baseScore + vsScore + allyScore + comp.d;
     const chance = clamp(0.5 + score, 0.2, 0.8);
-    const sorted = parts.filter((x) => x.known && Math.abs(x.d) >= 0.01).sort((a, b) => b.d - a.d);
+    const sorted = parts.filter((x) => x.known && Math.abs(x.d) >= 0.002).sort((a, b) => b.d - a.d);
     rows.push({
       hero_id: hid,
       score,
@@ -2126,8 +2247,9 @@ function pickAdvice({ pool, tables = {}, pm = null, enemies = [], allies = [], l
       taken: taken.has(hid),
       known: parts.filter((x) => x.known).length,
       parts,
-      mates: mates.filter((x) => x.known && x.d >= 0.01).sort((a, b) => b.d - a.d).slice(0, 2),
-      matesBad: mates.filter((x) => x.known && x.d <= -0.01).sort((a, b) => a.d - b.d).slice(0, 1),
+      mates: mates.filter((x) => x.known && x.d >= 0.002).sort((a, b) => b.d - a.d).slice(0, 2),
+      matesBad: mates.filter((x) => x.known && x.d <= -0.002).sort((a, b) => a.d - b.d).slice(0, 1),
+      lanes: parts.filter((x) => x.lane && x.souls !== null).map((x) => ({ hero_id: x.hero_id, souls: x.souls })),
       pros: sorted.filter((x) => x.d > 0).slice(0, 2),
       cons: sorted.filter((x) => x.d < 0).reverse().slice(0, 2),
       noTable: !t && !pm,
@@ -2140,7 +2262,7 @@ function pickAdvice({ pool, tables = {}, pm = null, enemies = [], allies = [], l
   const cur = current ? rows.find((r) => r.hero_id === Number(current)) : null;
   if (best && cur) {
     const gap = best.score - cur.score;
-    if (best.hero_id === cur.hero_id || gap < 0.02) verdict = { keep: true, hero_id: cur.hero_id, gap: Math.max(0, gap) };
+    if (best.hero_id === cur.hero_id || gap < 0.01) verdict = { keep: true, hero_id: cur.hero_id, gap: Math.max(0, gap) };
     else verdict = { keep: false, hero_id: best.hero_id, from: cur.hero_id, gap };
   }
   const comp = teamComp(allyRoles);
@@ -2152,17 +2274,18 @@ function pickAdvice({ pool, tables = {}, pm = null, enemies = [], allies = [], l
 function gamePlan({ row, counters = {}, leak = null, laneEnemies = [] }) {
   if (!row) return null;
   const known = (row.parts || []).filter((x) => x.known);
-  const hard = known.filter((x) => x.d <= -0.02).sort((a, b) => a.d - b.d).slice(0, 2);
-  const easy = known.filter((x) => x.d >= 0.02).sort((a, b) => b.d - a.d).slice(0, 2);
-  // линия: если соперники по линии отмечены — про них; иначе — «если попадётся на линии»
-  const withLane = (row.parts || []).filter((x) => x.laneD !== null);
+  const hard = known.filter((x) => x.d <= -0.003).sort((a, b) => a.d - b.d).slice(0, 2);
+  const easy = known.filter((x) => x.d >= 0.003).sort((a, b) => b.d - a.d).slice(0, 2);
+  // линия — по душам к 9-й минуте: отмечены соперники по линии — про них; иначе «если попадётся»
+  const withLane = (row.parts || []).filter((x) => x.souls !== null && x.souls !== undefined);
   const laneSet = new Set(laneEnemies.map(Number));
+  const pick = (x) => ({ hero_id: x.hero_id, souls: x.souls });
   const lane = laneSet.size
-    ? { known: true, list: withLane.filter((x) => laneSet.has(x.hero_id)).map((x) => ({ hero_id: x.hero_id, d: x.laneD })) }
+    ? { known: true, list: withLane.filter((x) => laneSet.has(x.hero_id)).map(pick) }
     : {
         known: false,
-        hard: withLane.filter((x) => x.laneD <= -0.025).sort((a, b) => a.laneD - b.laneD).slice(0, 2).map((x) => ({ hero_id: x.hero_id, d: x.laneD })),
-        easy: withLane.filter((x) => x.laneD >= 0.025).sort((a, b) => b.laneD - a.laneD).slice(0, 2).map((x) => ({ hero_id: x.hero_id, d: x.laneD })),
+        hard: withLane.filter((x) => x.souls <= -LANE_SOULS).sort((a, b) => a.souls - b.souls).slice(0, 2).map(pick),
+        easy: withLane.filter((x) => x.souls >= LANE_SOULS).sort((a, b) => b.souls - a.souls).slice(0, 2).map(pick),
       };
   // предметы-ответы: сначала против тяжёлых соперников, потом против остальных; без повторов
   const items = [];
@@ -2179,6 +2302,6 @@ function gamePlan({ row, counters = {}, leak = null, laneEnemies = [] }) {
   return { hero_id: row.hero_id, hard, easy, lane, items, mates: row.mates || [], matesBad: row.matesBad || [], leak };
 }
 
-module.exports = { heroPool, pickAdvice, gamePlan, mixMatchup, buildPickMeta, pairDelta, baseWr, heroRole, teamComp, compAdj, ROLE_NAMES, MY_SHARE };
+module.exports = { heroPool, pickAdvice, gamePlan, mixMatchup, buildPickMeta, pairDelta, baseWr, laneSouls, heroRole, teamComp, compAdj, ROLE_NAMES, MY_SHARE, LANE_SOULS };
 
 }};window.DC={};for(const m of ["stats","timeline","tipkit","meta","extract","features","leaks","portraits","pick"])window.DC[m]=req(m);return Object.keys(window.DC);})()

@@ -444,13 +444,15 @@ function goldSource(s, id) {
     const e = list.find((x) => x && x.source === id);
     return e ? num(e.gold) + num(e.gold_orbs) : 0;
   }
-  if (id === 12) return num(s.gold_source_breakable_gold);
-  if (id === 8) return num(s.gold_source_team_bonus_gold);
-  return 0;
+  // плоские поля (как в SQL-таблице deadlock-api); нет и их — данных нет (undefined, а не 0)
+  if (id === 12 && typeof s.gold_source_breakable_gold === 'number') return s.gold_source_breakable_gold;
+  if (id === 8 && typeof s.gold_source_team_bonus_gold === 'number') return s.gold_source_team_bonus_gold;
+  return undefined;
 }
 
 // Постоянные бафы со статуй: [время, тип] по возрастанию времени.
 function powerUps(p) {
+  if (!Array.isArray(p.power_up_buffs)) return null; // нет данных — не «ноль статуй»
   const out = [];
   for (const b of p.power_up_buffs || []) {
     if (!b || !b.is_permanent) continue;
@@ -874,19 +876,22 @@ module.exports = { playerFeatures, refOf, refAll, deathTimes, teamSumAt };
 const { valueAt } = require('./timeline');
 const { N, T, plural } = require('./tipkit');
 
+const souls = (n) => `${N(n)} ${plural(n, 'душа', 'души', 'душ')}`;
+
 // Медианы по рангу (average_badge // 10). Рейтинг, игры от 25 минут, 2 дня, 640 тыс. игроко-игр.
+// d10 — смерти до 9–10 минуты (медиана 1 на всех рангах: высокие ранги умирают рано не реже),
 // brk — души с коробок, neu — души с леса, pu — статуи (постоянные бафы), nw — души всего.
 const RANK_BENCH = {
-  1: { brk9: 161, brk20: 886, neu9: 144, neu20: 1239, pu10: 1, pu20: 6, nw9: 5671, nw20: 16825 },
-  2: { brk9: 232, brk20: 1145, neu9: 232, neu20: 1556, pu10: 1, pu20: 7, nw9: 5805, nw20: 17079 },
-  3: { brk9: 301, brk20: 1412, neu9: 282, neu20: 1976, pu10: 2, pu20: 9, nw9: 5927, nw20: 17498 },
-  4: { brk9: 382, brk20: 1701, neu9: 349, neu20: 2355, pu10: 3, pu20: 11, nw9: 6083, nw20: 18039 },
-  5: { brk9: 459, brk20: 1921, neu9: 409, neu20: 2619, pu10: 3, pu20: 13, nw9: 6225, nw20: 18471 },
-  6: { brk9: 515, brk20: 2057, neu9: 443, neu20: 2773, pu10: 4, pu20: 14, nw9: 6324, nw20: 18739 },
-  7: { brk9: 546, brk20: 2114, neu9: 471, neu20: 2878, pu10: 4, pu20: 14, nw9: 6401, nw20: 18923 },
-  8: { brk9: 579, brk20: 2158, neu9: 496, neu20: 2960, pu10: 5, pu20: 15, nw9: 6499, nw20: 19136 },
-  9: { brk9: 617, brk20: 2211, neu9: 537, neu20: 3050, pu10: 5, pu20: 15, nw9: 6635, nw20: 19365 },
-  10: { brk9: 669, brk20: 2225, neu9: 585, neu20: 3068, pu10: 6, pu20: 16, nw9: 6831, nw20: 19580 },
+  1: { d10: 1, brk9: 161, brk20: 886, neu9: 144, neu20: 1239, pu10: 1, pu20: 6, nw9: 5671, nw20: 16825 },
+  2: { d10: 1, brk9: 232, brk20: 1145, neu9: 232, neu20: 1556, pu10: 1, pu20: 7, nw9: 5805, nw20: 17079 },
+  3: { d10: 1, brk9: 301, brk20: 1412, neu9: 282, neu20: 1976, pu10: 2, pu20: 9, nw9: 5927, nw20: 17498 },
+  4: { d10: 1, brk9: 382, brk20: 1701, neu9: 349, neu20: 2355, pu10: 3, pu20: 11, nw9: 6083, nw20: 18039 },
+  5: { d10: 1, brk9: 459, brk20: 1921, neu9: 409, neu20: 2619, pu10: 3, pu20: 13, nw9: 6225, nw20: 18471 },
+  6: { d10: 1, brk9: 515, brk20: 2057, neu9: 443, neu20: 2773, pu10: 4, pu20: 14, nw9: 6324, nw20: 18739 },
+  7: { d10: 1, brk9: 546, brk20: 2114, neu9: 471, neu20: 2878, pu10: 4, pu20: 14, nw9: 6401, nw20: 18923 },
+  8: { d10: 1, brk9: 579, brk20: 2158, neu9: 496, neu20: 2960, pu10: 5, pu20: 15, nw9: 6499, nw20: 19136 },
+  9: { d10: 1, brk9: 617, brk20: 2211, neu9: 537, neu20: 3050, pu10: 5, pu20: 15, nw9: 6635, nw20: 19365 },
+  10: { d10: 1, brk9: 669, brk20: 2225, neu9: 585, neu20: 3068, pu10: 6, pu20: 16, nw9: 6831, nw20: 19580 },
 };
 const TOP_TIER = 10;
 
@@ -1123,17 +1128,18 @@ function gameLeaks(c) {
     if (b.target && f.pu20 <= b.target - 6) timing.push({ k: 'pu20', what: 'статуй к 20:00', me: f.pu20, ...b, souls: 0, statues: b.target - f.pu20 });
   }
   if (timing.length) {
-    const souls = timing.reduce((s, x) => s + x.souls, 0);
+    const lostSouls = timing.reduce((s, x) => s + x.souls, 0);
     const statues = Math.max(0, ...timing.map((x) => x.statues || 0));
-    const fmt = (x) => (x.k.startsWith('pu') ? `${x.me} из ${x.target}` : `${N(x.me)} из ${N(x.target)} душ`);
+    const who = timing.some((x) => x.fromTops) ? 'у топов на этом герое' : 'у игроков Ascendant+';
+    const fmt = (x) => (x.k.startsWith('pu') ? `${x.what} — ${x.me}, ${who} — ${x.target}` : `${x.what} — ${souls(x.me)}, ${who} — ${N(x.target)}`);
     out.push({
       key: 'map_timings',
       area: 'Тайминги',
-      level: souls >= 900 || statues >= 4 ? 'bad' : 'warn',
-      score: 40 + Math.min(40, souls / 40) + statues * 4,
+      level: lostSouls >= 900 || statues >= 4 ? 'bad' : 'warn',
+      score: 40 + Math.min(40, lostSouls / 40) + statues * 4,
       title: 'Не забираешь то, что лежит на карте',
-      text: timing.map((x) => `${x.what}: ${fmt(x)}`).join('; ') + `. Ориентир — ${timing.some((x) => x.fromTops) ? 'топы на этом герое' : 'игроки высокого ранга'}.` +
-        (souls ? ` Это ${N(souls)} душ, которые просто остались на карте.` : '') +
+      text: timing.map((x) => fmt(x)).map((t, i) => (i === 0 ? t[0].toUpperCase() + t.slice(1) : t)).join('; ') + '.' +
+        (lostSouls ? ` Это ${souls(lostSouls)}, которые просто остались на карте.` : '') +
         (statues ? ` И ${statues} ${plural(statues, 'постоянный баф', 'постоянных бафа', 'постоянных бафов')} со статуй — это здоровье, урон и скорость стрельбы до конца игры.` : ''),
       fix: [
         'Когда волна ушла к врагу и до следующей есть время — ломай коробки и статуи рядом с линией, а не стой у башни.',
@@ -1141,7 +1147,7 @@ function gameLeaks(c) {
         'Идёшь с базы или на другую линию — веди маршрут через коробки и статуи по пути.',
       ],
       moments: [],
-      cost: { souls, statues },
+      cost: { souls: lostSouls, statues },
       facts: timing,
     });
   }
@@ -1152,7 +1158,7 @@ function gameLeaks(c) {
       level: 'warn',
       score: 22,
       title: 'Не брал казино (Sinner’s Sacrifice)',
-      text: 'За первые 20 минут ты ни разу не забрал Sinner’s Sacrifice. Он появляется на 10:00 и потом каждые 5 минут, даёт около 330 душ и золотую урну с постоянным бафом.',
+      text: 'За первые 20 минут ты ни разу не забрал Sinner’s Sacrifice. Он появляется на 10:00 и снова через 5 минут после того, как его разбили; даёт около 330 душ и золотую урну с постоянным бафом.',
       fix: ['На 10:00, 15:00 и 20:00 смотри, не стоит ли машина рядом с тобой: бить можно только ближним боем, это занимает несколько секунд.'],
       moments: [],
       cost: { souls: 330 },
@@ -1171,14 +1177,14 @@ function gameLeaks(c) {
         level: total >= 2000 ? 'bad' : 'warn',
         score: 35 + Math.min(40, total / 60),
         title: 'Умирал с несохранёнными душами',
-        text: `${losses.length} ${plural(losses.length, 'смерть стоила', 'смерти стоили', 'смертей стоили')} тебе ${N(total)} душ — их ты не успел сохранить.` +
-          (ref ? ` У топов на этом герое одна смерть в среднем стоит ${N(ref)} душ.` : ''),
+        text: `${losses.length} ${plural(losses.length, 'смерть стоила', 'смерти стоили', 'смертей стоили')} тебе ${souls(total)} — их ты не успел сохранить.` +
+          (ref ? ` У топов на этом герое одна смерть в среднем стоит ${souls(ref)}.` : ''),
         fix: [
           'Свежие души сначала «несохранённые»: умрёшь — часть пропадёт. После крупного фарма не лезь сразу в рискованную драку.',
           'Накопил на предмет — вернись и купи, а потом иди драться: потраченные души потерять нельзя.',
           'Видишь, что драка проиграна, — отступай раньше: смерть с полным карманом стоит вдвое дороже.',
         ],
-        moments: losses.map((x) => ({ t: x.t, text: `умер и потерял ${N(x.lost)} душ` })),
+        moments: losses.map((x) => ({ t: x.t, text: `умер и потерял ${souls(x.lost)}` })),
         cost: { souls: total },
       });
     }
@@ -1196,9 +1202,9 @@ function gameLeaks(c) {
       level: rich.length >= 2 ? 'bad' : 'warn',
       score: 30 + rich.length * 10,
       title: 'Умирал с душами на целый предмет',
-      text: `${rich.length} ${plural(rich.length, 'раз', 'раза', 'раз')} ты погиб, имея в кармане ${N(Math.max(...rich.map((d) => d.free)))}+ непотраченных душ — это готовый предмет, который не участвовал в драке.`,
+      text: `${rich.length} ${plural(rich.length, 'раз', 'раза', 'раз')} ты погиб, имея в кармане до ${souls(Math.max(...rich.map((d) => d.free)))} — это готовый предмет, который не участвовал в драке.`,
       fix: ['Перед дракой или объектом проверь души: хватает на предмет — купи (магазин у линии ближе, чем кажется).'],
-      moments: rich.map((d) => ({ t: d.t, x: d.x, y: d.y, text: `умер с ${N(d.free)} душ в кармане` })),
+      moments: rich.map((d) => ({ t: d.t, x: d.x, y: d.y, text: `умер с ${souls(d.free)} в кармане` })),
       cost: { souls: 0 },
     });
   }
@@ -1331,6 +1337,6 @@ function winLink(key, value) {
   return { wr: cur[1], best: list[list.length - 1] };
 }
 
-module.exports = { gameLeaks, leakProfile, counterItems, findFights, lossPerDeath, unspentAt, winLink, benchFor, RANK_BENCH, WIN_LINKS, FIGHT_FAR, FIGHT_REACH, SPEED };
+module.exports = { souls, gameLeaks, leakProfile, counterItems, findFights, lossPerDeath, unspentAt, winLink, benchFor, RANK_BENCH, WIN_LINKS, FIGHT_FAR, FIGHT_REACH, SPEED };
 
 }};window.DC={};for(const m of ["stats","timeline","tipkit","meta","extract","features","leaks"])window.DC[m]=req(m);return Object.keys(window.DC);})()

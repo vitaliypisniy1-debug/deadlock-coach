@@ -399,6 +399,9 @@ module.exports = { isStandardMatch, collectRecords, heroTable, heroBuild, player
 // Полные метаданные весят сотни КБ; нам нужна только малая часть, поэтому
 // храним выжимку (~10–20 КБ на матч) — так база на сотни матчей остаётся лёгкой.
 
+// Версия выжимки: 2 — коробки, командный бонус, статуи, урон по врагам, режим боя в маршрутах.
+const EXTRACT_V = 2;
+
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 
 // Короткие имена полей для снимков статистики (накопительные значения "на момент t").
@@ -600,7 +603,7 @@ function extractMatch(raw, { paths = false } = {}) {
     .filter((b) => b && typeof b.destroyed_time_s === 'number')
     .map((b) => [teamNum(b.team_killed), teamNum(b.team_claimed), b.destroyed_time_s]);
   return {
-    v: 2,
+    v: EXTRACT_V,
     match_id: Number(mi.match_id),
     start_time: num(mi.start_time),
     duration_s: num(mi.duration_s),
@@ -623,7 +626,7 @@ function teamNum(v) {
   return m ? Number(m[1]) : null;
 }
 
-module.exports = { extractMatch, compactStat, extractPaths, extractDamage, goldSource, powerUps };
+module.exports = { EXTRACT_V, extractMatch, compactStat, extractPaths, extractDamage, goldSource, powerUps };
 
 }};M["features"]={mod:{exports:{}},fn:function(module,exports){const require=req;'use strict';
 // Признаки игрока в матче: всё, по чему библиотека советов понимает ситуацию.
@@ -898,6 +901,7 @@ const WIN_LINKS = {
 
 const SPEED = 320; // средняя скорость героя, единиц карты в секунду (медиана по маршрутам)
 const FIGHT_FAR = 3000; // дальше этого — не участвовал в драке (≈10 секунд бега)
+const FIGHT_REACH = 9000; // дальше этого — не успел бы добежать (≈28 секунд)
 const LANE_END = 600; // до 10:00 — стадия линий
 
 const clampTier = (t) => (t ? Math.max(1, Math.min(TOP_TIER, t)) : null);
@@ -1060,7 +1064,8 @@ function gameLeaks(c) {
       if (fight.t0 < LANE_END || fight.x === null) continue;
       const allyDeaths = fight.deaths.filter((d) => d.team === me.team).length;
       const enemyDeaths = fight.deaths.length - allyDeaths;
-      if (allyDeaths < 1 || fight.deaths.some((d) => d.slot === me.slot)) continue;
+      // только настоящие драки, которые команда проиграла
+      if (fight.deaths.length < 2 || allyDeaths <= enemyDeaths || fight.deaths.some((d) => d.slot === me.slot)) continue;
       const pts = pathPoints(m, me.slot, fight.t0 - 15, fight.t1);
       if (!pts || !pts.length) continue;
       if (pts.some((q) => !q.p[2])) continue; // был мёртв — не в счёт
@@ -1068,23 +1073,23 @@ function gameLeaks(c) {
       if (mask & 1) continue; // дрался с героями — значит, участвовал
       const start = pts[0].p;
       const far = dist([start[0], start[1]], [fight.x, fight.y]);
-      if (far < FIGHT_FAR) continue;
+      if (far < FIGHT_FAR || far > FIGHT_REACH) continue;
       const farming = mask & 6;
       if (!farming) continue;
       missed.push({ t: fight.t0, x: fight.x, y: fight.y, allyDeaths, enemyDeaths, far, jungle: !!(mask & 4), sec: Math.round(far / SPEED) });
     }
-    const lostOnes = missed.filter((x) => x.allyDeaths > x.enemyDeaths);
+    const lostOnes = missed;
     const allyDeathsTotal = missed.reduce((s, x) => s + x.allyDeaths, 0);
-    if (lostOnes.length >= 2 || allyDeathsTotal >= 3) {
+    if (lostOnes.length >= 2) {
       const jungle = missed.filter((x) => x.jungle).length;
       out.push({
         key: 'farm_while_fight',
         area: 'Драки',
-        level: lostOnes.length >= 2 ? 'bad' : 'warn',
+        level: lostOnes.length >= 3 ? 'bad' : 'warn',
         score: 55 + lostOnes.length * 10 + allyDeathsTotal * 2,
         title: jungle >= missed.length / 2 ? 'Бил лес, пока команда дралась' : 'Фармил, пока команда дралась',
-        text: `${missed.length} ${plural(missed.length, 'раз', 'раза', 'раз')} после 10:00 команда дралась без тебя, а ты в это время фармил ${jungle ? 'лес' : 'крипов'}. ` +
-          `В этих драках погибло ${allyDeathsTotal} ${plural(allyDeathsTotal, 'союзник', 'союзника', 'союзников')}, ${lostOnes.length} ${plural(lostOnes.length, 'драка проиграна', 'драки проиграны', 'драк проиграно')}.`,
+        text: `${missed.length} ${plural(missed.length, 'раз', 'раза', 'раз')} после 10:00 команда проиграла драку без тебя, а ты в это время фармил ${jungle ? 'лес' : 'крипов'} в 10–28 секундах бега от неё. ` +
+          `В этих драках погибло ${allyDeathsTotal} ${plural(allyDeathsTotal, 'союзник', 'союзника', 'союзников')}.`,
         fix: [
           'Каждые 5–10 секунд смотри на миникарту: союзники собираются вместе — иди к ним, лагерь подождёт.',
           'Фарми лес на своей половине карты рядом с командой, а не на другом конце.',
@@ -1100,22 +1105,22 @@ function gameLeaks(c) {
   const timing = [];
   if (f.neu9 !== null && f.neu9 !== undefined && endS >= 600) {
     const b = benchFor('neu9', c.ref, c.tier);
-    if (b.target && f.neu9 < b.target * 0.6 && b.target - f.neu9 >= 250) timing.push({ k: 'neu9', what: 'лес к 9:00', me: f.neu9, ...b, souls: b.target - f.neu9 });
+    if (b.target && f.neu9 < b.target * 0.5 && b.target - f.neu9 >= 300) timing.push({ k: 'neu9', what: 'лес к 9:00', me: f.neu9, ...b, souls: b.target - f.neu9 });
   }
   if (f.brk20 !== null && f.brk20 !== undefined) {
     const b = benchFor('brk20', c.ref, c.tier);
-    if (b.target && f.brk20 < b.target * 0.7 && b.target - f.brk20 >= 400) timing.push({ k: 'brk20', what: 'коробки к 20:00', me: f.brk20, ...b, souls: b.target - f.brk20 });
+    if (b.target && f.brk20 < b.target * 0.65 && b.target - f.brk20 >= 600) timing.push({ k: 'brk20', what: 'коробки к 20:00', me: f.brk20, ...b, souls: b.target - f.brk20 });
   } else if (f.brk9 !== null && f.brk9 !== undefined && endS >= 600) {
     const b = benchFor('brk9', c.ref, c.tier);
-    if (b.target && f.brk9 < b.target * 0.6 && b.target - f.brk9 >= 200) timing.push({ k: 'brk9', what: 'коробки к 9:00', me: f.brk9, ...b, souls: b.target - f.brk9 });
+    if (b.target && f.brk9 < b.target * 0.5 && b.target - f.brk9 >= 250) timing.push({ k: 'brk9', what: 'коробки к 9:00', me: f.brk9, ...b, souls: b.target - f.brk9 });
   }
   if (f.pu10 !== null && f.pu10 !== undefined) {
     const b = benchFor('pu10', c.ref, c.tier);
-    if (b.target && f.pu10 <= b.target - 3) timing.push({ k: 'pu10', what: 'статуй к 10:00', me: f.pu10, ...b, souls: 0, statues: b.target - f.pu10 });
+    if (b.target && f.pu10 <= b.target - 4) timing.push({ k: 'pu10', what: 'статуй к 10:00', me: f.pu10, ...b, souls: 0, statues: b.target - f.pu10 });
   }
   if (f.pu20 !== null && f.pu20 !== undefined) {
     const b = benchFor('pu20', c.ref, c.tier);
-    if (b.target && f.pu20 <= b.target - 5) timing.push({ k: 'pu20', what: 'статуй к 20:00', me: f.pu20, ...b, souls: 0, statues: b.target - f.pu20 });
+    if (b.target && f.pu20 <= b.target - 6) timing.push({ k: 'pu20', what: 'статуй к 20:00', me: f.pu20, ...b, souls: 0, statues: b.target - f.pu20 });
   }
   if (timing.length) {
     const souls = timing.reduce((s, x) => s + x.souls, 0);
@@ -1326,6 +1331,6 @@ function winLink(key, value) {
   return { wr: cur[1], best: list[list.length - 1] };
 }
 
-module.exports = { gameLeaks, leakProfile, counterItems, findFights, lossPerDeath, unspentAt, winLink, benchFor, RANK_BENCH, WIN_LINKS, FIGHT_FAR, SPEED };
+module.exports = { gameLeaks, leakProfile, counterItems, findFights, lossPerDeath, unspentAt, winLink, benchFor, RANK_BENCH, WIN_LINKS, FIGHT_FAR, FIGHT_REACH, SPEED };
 
 }};window.DC={};for(const m of ["stats","timeline","tipkit","meta","extract","features","leaks"])window.DC[m]=req(m);return Object.keys(window.DC);})()

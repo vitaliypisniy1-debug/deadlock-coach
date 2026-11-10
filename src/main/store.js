@@ -8,7 +8,7 @@ const path = require('path');
 const DEFAULT_SETTINGS = {
   region: 'Europe',
   topN: 50,
-  days: 3,
+  days: 7, // за сколько дней берём матчи топов
   onlyRanked: false,
   apiKey: '',
   benchmarkSource: 'top', // 'top' — только игроки топ-50, 'lobby' — все игроки в их матчах
@@ -145,13 +145,17 @@ class Store {
   }
 
   settings() {
-    return { ...DEFAULT_SETTINGS, ...this.read('settings.json', {}) };
+    const saved = this.read('settings.json', {});
+    // с версии 0.13 период по умолчанию — неделя; старые «3 дня по умолчанию» переводим один раз
+    if (saved.days === 3 && !saved.daysChosen) saved.days = 7;
+    return { ...DEFAULT_SETTINGS, ...saved };
   }
 
   saveSettings(patch) {
     const next = { ...this.settings(), ...patch };
     next.topN = Math.max(5, Math.min(200, Number(next.topN) || 50));
-    next.days = Math.max(1, Math.min(14, Number(next.days) || 3));
+    next.days = Math.max(1, Math.min(14, Number(next.days) || 7));
+    if (patch && 'days' in patch) next.daysChosen = true;
     next.keepDays = Math.max(next.days, Math.min(60, Number(next.keepDays) || 14));
     this.write('settings.json', next);
     return next;
@@ -190,6 +194,21 @@ class Store {
   }
 
   // Удаляет старые матчи топов, но никогда — твои собственные.
+  // Удалить матчи по условию (файлы — в фоне пачками, общий файл пересобирается).
+  async removeMatches(pred) {
+    const ids = [];
+    for (const [id, m] of this.matches) if (pred(m)) ids.push(id);
+    for (const id of ids) this.matches.delete(id);
+    for (let i = 0; i < ids.length; i += 50) {
+      await Promise.all(ids.slice(i, i + 50).map((id) => fs.promises.unlink(path.join(this.matchDir, `${id}.json`)).catch(() => {})));
+    }
+    if (this.packOn) {
+      this._packQ = this._packQ.then(() => this._rewritePack()).catch(() => {});
+      await this._packQ;
+    }
+    return ids.length;
+  }
+
   prune(keepSinceTs, protectedIds = new Set()) {
     let removed = 0;
     for (const [id, m] of this.matches) {

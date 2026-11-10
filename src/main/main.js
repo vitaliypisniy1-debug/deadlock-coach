@@ -423,6 +423,11 @@ function registerIpc() {
   });
 
   handle('top:list', async () => store.read('top.json', null));
+  handle('top:reset', async () => {
+    const r = await sync.resetTopMatches();
+    emit('meta:updated', r.meta);
+    return r;
+  });
 
   handle('status:get', async () => store.read('status.json', null));
 

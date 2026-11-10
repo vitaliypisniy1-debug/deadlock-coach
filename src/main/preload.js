@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('dc', {
   logout: () => call('auth:logout'),
   saveSettings: (patch) => call('settings:save', patch),
   refreshTop: () => call('top:refresh'),
+  resetTop: () => call('top:reset'),
   topList: () => call('top:list'),
   status: () => call('status:get'),
   overrideAccount: (name, accountId) => call('top:override', { name, accountId }),

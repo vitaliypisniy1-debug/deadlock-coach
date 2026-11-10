@@ -3,7 +3,7 @@
 (function () {
   const h = F.h;
   const S = {
-    settings: { region: 'Europe', topN: 50, days: 3, winsOnly: false, benchmarkSource: 'top', autoRefreshHours: 3, keepDays: 14 },
+    settings: { region: 'Europe', topN: 50, days: 7, winsOnly: false, benchmarkSource: 'top', autoRefreshHours: 3, keepDays: 14 },
     auth: null,
     meta: null,
     status: null,
@@ -950,22 +950,35 @@
       if (t.how === 'guess' || t.how === 'search') return h('span.flag', { title: 'Аккаунт определён по нику — может быть не тот' }, 'аккаунт угадан');
       return null;
     };
+    // место — только настоящее место в ладдере региона; ранг — из последней рейтинговой игры игрока
+    const inLadder = (t) => !!t && (t.ladder !== undefined ? t.ladder : ['exact', 'guess', 'search', 'manual'].includes(t.how)) && t.rank;
+    const badgeText = (b) => (b ? `${rankName(Math.floor(b / 10))} ${b % 10}` : '—');
+    const rows = m.players.slice().sort((a, b) => {
+      const ta = info.get(a.name);
+      const tb = info.get(b.name);
+      const la = inLadder(ta) ? ta.rank : 1e6;
+      const lb = inLadder(tb) ? tb.rank : 1e6;
+      return la - lb || ((tb && tb.badge) || 0) - ((ta && ta.badge) || 0);
+    });
+    const dropped = S.top.players.filter((p) => p.excluded);
     const table = h('table.table.players',
-      h('thead', h('tr', h('th.r', 'Место'), h('th', 'Игрок'), h('th.r', 'Игр'), h('th.r', 'Винрейт'), h('th', 'На ком играет'))),
-      h('tbody', m.players.map((p) => {
+      h('thead', h('tr', h('th.r', { title: 'Место в ладдере региона' }, 'Ладдер'), h('th', 'Игрок'), h('th', { title: 'Ранг по последней рейтинговой игре' }, 'Ранг'), h('th.r', 'Игр'), h('th.r', 'Винрейт'), h('th', 'На ком играет'))),
+      h('tbody', rows.map((p) => {
         const t = info.get(p.name);
         const recent = t && t.recent;
         const fav = t && t.favorite;
         return h(`tr.click${S.selectedPlayer === p.accountId ? '.selected' : ''}`, { onclick: () => openPlayer(p.accountId) },
-          h('td.r.num.muted', p.rank || ''),
+          h('td.r.num', inLadder(t) ? `№${t.rank}` : h('span.dim', { title: t && t.favorite ? 'Избранный игрок' : 'Не в ладдере: добран из свежих матчей по рангу' }, t && t.how === 'favorite' ? 'избр.' : 'вне')),
           h('td', h('div.pname', fav ? h('span.fav-dot', { title: 'В избранном' }) : null, h('b', p.name)),
             h('div.psub', t && t.team ? h('span', t.team) : null, recent && recent.spam ? h('span.spam', `спамит ${heroName(recent.spam.hero_id)}`) : null, warn(t))),
+          h('td.num', t && t.badge ? badgeText(t.badge) : h('span.dim', '—')),
           h('td.r.num', p.games || '—'),
           h('td.r.num', p.games ? F.pct(p.wins / p.games) : '—'),
           h('td', recentChips(recent)));
       })));
+    const droppedNote = dropped.length ? h('div.hint.pad', `Отсеяно ${dropped.length} ${plural(dropped.length, 'игрок', 'игрока', 'игроков')} не из ладдера с рангом ниже Phantom (или без рейтинговых игр): ${dropped.slice(0, 6).map((p) => `${p.name}${p.badge ? ` — ${badgeText(p.badge)}` : ''}`).join(', ')}${dropped.length > 6 ? '…' : ''}. Их матчи в мету не идут.`) : null;
     return h('div', favoritesBlock(), h('div.meta-split', h('div.panel.flush', h('div.table-scroll', table),
-      h('div.hint.pad', '«Спамит» — один герой занимает половину или больше последних 20 игр. Нажми на игрока, чтобы увидеть его матчи.')),
+      h('div.hint.pad', '«Ладдер» — место в таблице лидеров региона; «вне» — игрока там пока нет, он добран из свежих матчей и проверен по рангу (не ниже Phantom). «Спамит» — один герой занимает половину или больше последних 20 игр.'), droppedNote),
     h('div.sticky', playerDetailPanel())));
   }
 
@@ -2324,7 +2337,7 @@
     f.topSource = h('select.select',
       h('option', { value: 'auto', selected: s.topSource !== 'list' || null }, 'Ладдер текущего сезона'),
       h('option', { value: 'list', selected: s.topSource === 'list' || null }, 'Только мой список игроков'));
-    f.days = h('input.input', { type: 'number', min: 1, max: 14, value: s.days });
+    f.days = h('select.select', [1, 2, 3, 5, 7, 10, 14].map((n) => h('option', { value: n, selected: Number(s.days) === n || null }, `${n} ${plural(n, 'день', 'дня', 'дней')}`)));
     f.onlyRanked = h('input', { type: 'checkbox', checked: s.onlyRanked || null });
     f.benchmarkSource = h('select.select', h('option', { value: 'top', selected: s.benchmarkSource === 'top' }, 'Только игроки из топа'), h('option', { value: 'lobby', selected: s.benchmarkSource === 'lobby' }, 'Все игроки в матчах топов (больше данных)'));
     f.winsOnly = h('input', { type: 'checkbox', checked: s.winsOnly || null });
@@ -2365,7 +2378,7 @@
         field('Регион ладдера', f.region),
         field('Сколько топов брать', f.topN, 'Топ-100 даёт больше игр на редких героях, топ-50 — только самые сильные игроки.'),
         field('Источник топа', f.topSource, 'Только текущий сезон. Если ладдер ещё короткий, недостающие игроки добираются из свежих матчей этого сезона с самым высоким рангом.'),
-        field('За сколько дней статистика', f.days, 'По умолчанию 3 дня — свежая мета. Больше дней — больше игр на редких героях.'),
+        field('За сколько дней матчи топов', f.days, 'По умолчанию неделя. Меньше дней — свежее мета, больше — больше игр на редких героях. После смены нажми «Обновить данные».'),
         field('Только рейтинговые матчи', h('label.check', f.onlyRanked, 'учитывать только ranked')),
         field('С кем сравнивать мои матчи', f.benchmarkSource, '«Все игроки в матчах топов» — это тоже очень высокий уровень, а данных в несколько раз больше.'),
         field('Сравнивать только с победами', h('label.check', f.winsOnly, 'показывать, как играют топы, когда выигрывают')),
@@ -2604,6 +2617,28 @@
         h('label', 'Мои герои для рейтинга'), h('div', poolBlock),
         h('label', 'Узнавать состав сам'), h('div', recSettings(logBlock)),
         h('label', 'Игровой режим'), h('div', gameModeSettings()),
+        h('label', 'Матчи топов'), h('div',
+          h('button.btn.small.danger', { onclick: async (e) => {
+            const b = e.currentTarget;
+            if (b.dataset.sure !== '1') {
+              b.dataset.sure = '1';
+              b.lastChild.textContent = 'Точно сбросить? Нажми ещё раз';
+              setTimeout(() => { b.dataset.sure = ''; b.lastChild.textContent = 'Сбросить матчи топов'; }, 4000);
+              return;
+            }
+            b.disabled = true;
+            try {
+              const r = await dc.resetTop();
+              S.top = null;
+              toast(`Удалено ${F.num(r.removed)} матчей топов. Твои матчи на месте (${F.num(r.kept)}). Нажми «Обновить данные», чтобы собрать мету заново.`);
+            } catch (err) {
+              toast(err.message);
+            }
+            b.disabled = false;
+            b.dataset.sure = '';
+            b.lastChild.textContent = 'Сбросить матчи топов';
+          } }, Icon('refresh'), h('span', 'Сбросить матчи топов')),
+          h('div.hint', { style: { margin: '6px 0 0' } }, 'Удаляет все скачанные матчи топов и посчитанную по ним мету — например, когда начался новый сезон или сменился патч. Твои собственные матчи не трогает.')),
         h('label', 'Журнал зависаний'), h('div',
           h('button.btn.small', { onclick: async () => {
             const t = await dc.lagLog().catch(() => '');

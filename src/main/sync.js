@@ -84,6 +84,20 @@ function recentHeroes(list, since) {
 }
 const nowSec = () => Math.floor(Date.now() / 1000);
 
+// Ниже этого ранга игрок не считается топом, если его нет в ладдере (91 = Phantom 1).
+const MIN_TOP_BADGE = 91;
+
+// Ранг игрока по истории: значок из самой свежей рейтинговой игры.
+function badgeOf(hist) {
+  let best = null;
+  for (const m of hist || []) {
+    const b = Number(m.ranked_display_badge);
+    const t = Number(m.start_time) || 0;
+    if (b > 0 && (!best || t > best.t)) best = { b, t };
+  }
+  return best ? best.b : null;
+}
+
 class Sync {
   constructor({ api, store, emit }) {
     this.api = api;
@@ -244,6 +258,24 @@ class Sync {
     }
   }
 
+  // Несколько аккаунтов с одним ником: берём тот, у кого выше ранг в последней рейтинговой игре
+  // (а не просто последнего игравшего) и только если он не ниже Phantom.
+  async pickBestAccount(candidates, report) {
+    let best = null;
+    for (const c of candidates.slice(0, 6)) {
+      try {
+        const h = await this.api.matchHistory(c, 60 * 60e3);
+        const badge = badgeOf(h) || 0;
+        const last = Math.max(0, ...h.map((m) => Number(m.start_time) || 0));
+        if (!last) continue;
+        if (!best || badge > best.badge || (badge === best.badge && last > best.last)) best = { id: c, badge, last };
+      } catch (e) {
+        if (report) report.errors.push(`история ${c}: ${e.message}`);
+      }
+    }
+    return best && best.badge >= MIN_TOP_BADGE ? best.id : null;
+  }
+
   async pickMostRecent(candidates, report) {
     let best = null;
     for (const c of candidates.slice(0, 6)) {
@@ -292,7 +324,7 @@ class Sync {
       if (merged.filter((x) => x.accountId).length >= settings.topN) break;
       if (!p.accountId || ids.has(p.accountId)) continue;
       ids.add(p.accountId);
-      merged.push({ ...p, rank: merged.length + 1, how: 'discovered' });
+      merged.push({ ...p, rank: null, ladder: false, how: 'discovered' }); // места в ладдере у него нет
     }
     const res = { ...out, players: merged, source: merged.length > out.players.length ? 'ladder+discovered' : out.source };
     this.store.write('top.json', res);
@@ -337,7 +369,7 @@ class Sync {
         accountId = old.accountId; // уже определяли раньше — не тратим запросы
         how = old.how;
       } else if (candidates.length > 1) {
-        accountId = await this.pickMostRecent(candidates, report);
+        accountId = await this.pickBestAccount(candidates, report);
         if (accountId) how = 'guess';
       } else if (e.account_name) {
         // Сервер не сопоставил ник с аккаунтом — ищем профиль Steam по нику.
@@ -346,14 +378,14 @@ class Sync {
           const exact = found.filter((p) => String(p.personaname || '').toLowerCase() === name.toLowerCase()).map((p) => Number(p.account_id)).filter(Boolean);
           candidates = exact;
           if (exact.length === 1) accountId = exact[0];
-          else if (exact.length > 1) accountId = await this.pickMostRecent(exact, report);
+          else if (exact.length > 1) accountId = await this.pickBestAccount(exact, report);
           if (accountId) how = 'search';
         } catch (err) {
           report.errors.push(`поиск ника ${name}: ${err.message}`);
         }
       }
       counts[how] += 1;
-      players.push({ rank: e.rank, name, accountId, how, candidates, topHeroes: e.top_hero_ids || [] });
+      players.push({ rank: e.rank, ladder: source === 'ladder', name, accountId, how, candidates, topHeroes: e.top_hero_ids || [] });
     }
     report.accounts = counts;
     const out = { fetchedAt: nowSec(), region: settings.region, source, players };
@@ -530,7 +562,7 @@ class Sync {
     }
     pool = pool.slice(0, settings.topN);
     const names = await this.namesFor(pool.map((c) => c.account_id));
-    const players = pool.map((c, i) => ({ rank: i + 1, name: names.get(c.account_id) || `ID ${c.account_id}`, accountId: c.account_id, how: 'discovered', badge: c.badge ?? c.matchBadge ?? null, candidates: [c.account_id], topHeroes: [] }));
+    const players = pool.map((c) => ({ rank: null, ladder: false, name: names.get(c.account_id) || `ID ${c.account_id}`, accountId: c.account_id, how: 'discovered', badge: c.badge ?? c.matchBadge ?? null, candidates: [c.account_id], topHeroes: [] }));
     report.fallback.source = 'discovered';
     report.accounts = { discovered: players.length };
     const out = { fetchedAt: nowSec(), region: settings.region, source: players.length ? 'discovered' : 'none', players };
@@ -554,6 +586,14 @@ class Sync {
         const list = await this.api.matchHistory(p.accountId);
         h.ok += 1;
         p.recent = recentHeroes(list, since);
+        // ранг — из последней рейтинговой игры этого сезона; кто не в ладдере и ниже Phantom — не топ
+        p.badge = badgeOf(list);
+        const trusted = p.how === 'exact' || p.how === 'manual' || p.how === 'list' || p.how === 'favorite' || p.favorite;
+        p.excluded = !trusted && (p.badge === null || p.badge < MIN_TOP_BADGE);
+        if (p.excluded) {
+          h.lowRank = (h.lowRank || 0) + 1;
+          continue;
+        }
         if (!list.length) h.empty += 1;
         if (!h.sample && list.length) h.sample = list[0];
         for (const m of list) {
@@ -623,7 +663,7 @@ class Sync {
     if (!top) return null;
     const meta = buildMeta({
       matches: this.store.allMatches(),
-      topList: top.players,
+      topList: top.players.filter((p) => !p.excluded),
       sinceTs: nowSec() - settings.days * DAY,
       onlyRanked: settings.onlyRanked,
       assets: this.assets,
@@ -681,7 +721,7 @@ class Sync {
   // ---------- билд героя: варианты сборок, паверспайки, кто играет ----------
   async heroBuild(heroId, settings) {
     const top = this.store.read('top.json', { players: [] });
-    const accounts = new Set(top.players.filter((p) => p.accountId).map((p) => p.accountId));
+    const accounts = new Set(top.players.filter((p) => p.accountId && !p.excluded).map((p) => p.accountId));
     const since = nowSec() - settings.days * DAY;
     const matches = this.store.allMatches().filter((m) => m.start_time >= since && isStandardMatch(m, { onlyRanked: settings.onlyRanked }));
     const bench = benchmarkPlayers({ matches, heroId, accounts });
@@ -970,7 +1010,7 @@ class Sync {
       if (x) matches.set(x.match_id, x);
     }
     const top = this.store.read('top.json', { players: [] });
-    const topAccounts = new Set(top.players.filter((p) => p.accountId).map((p) => p.accountId));
+    const topAccounts = new Set(top.players.filter((p) => p.accountId && !p.excluded).map((p) => p.accountId));
     const topMatches = topAccounts.size ? this.store.allMatches().filter((m) => m.players.some((p) => topAccounts.has(p.account_id))) : [];
     const o = buildOverview({ history: hist, matches, accountId: id, days: d, topAccounts, topMatches, assets: this.assets });
     o.notFound = notFound;
@@ -991,7 +1031,7 @@ class Sync {
       x.last = Math.max(x.last, Number(m.start_time) || 0);
     }
     const tops = this.store.read('top.json', { players: [] });
-    const topAcc = new Set(tops.players.filter((p) => p.accountId).map((p) => p.accountId));
+    const topAcc = new Set(tops.players.filter((p) => p.accountId && !p.excluded).map((p) => p.accountId));
     const topGames = new Map();
     for (const m of this.store.allMatches()) for (const p of m.players) if (topAcc.has(p.account_id)) topGames.set(p.hero_id, (topGames.get(p.hero_id) || 0) + 1);
     return [...by.values()].map((x) => ({ ...x, topGames: topGames.get(x.hero_id) || 0 })).sort((a, b) => b.games - a.games || b.last - a.last);
@@ -1036,7 +1076,7 @@ class Sync {
     });
     this.store.write('mine.json', [...mine].slice(-500));
     const top = this.store.read('top.json', { players: [] });
-    const accounts = new Set(top.players.filter((p) => p.accountId).map((p) => p.accountId));
+    const accounts = new Set(top.players.filter((p) => p.accountId && !p.excluded).map((p) => p.accountId));
     const bench = benchmarkPlayers({ matches: this.store.allMatches(), heroId: hid, accounts, excludeAccount: id });
     const rep = heroReport({ heroId: hid, games, bench, assets: this.assets, accountId: id });
     rep.matchups = myMatchups(games.filter((g) => g.match && g.me).map((g) => ({ match: g.match, me: g.me })));
@@ -1187,7 +1227,20 @@ class Sync {
   // ---------- общие помощники для тренера и матчапов ----------
   topAccounts() {
     const top = this.store.read('top.json', { players: [] });
-    return new Set(top.players.filter((p) => p.accountId).map((p) => p.accountId));
+    return new Set(top.players.filter((p) => p.accountId && !p.excluded).map((p) => p.accountId));
+  }
+
+  // Удалить все скачанные матчи топов (свои матчи остаются) и всё, что по ним посчитано.
+  async resetTopMatches() {
+    if (this.running) throw new Error('Сейчас идёт обновление меты — дождись конца и попробуй ещё раз');
+    const mine = new Set(this.store.read('mine.json', []));
+    const removed = await this.store.removeMatches((m) => !mine.has(m.match_id));
+    for (const f of ['missing.json', 'picktables.json']) this.store.write(f, f === 'missing.json' ? {} : null);
+    this._topHero = null;
+    this._counters = null;
+    this._planTables = null;
+    const meta = this.computeMeta(this.store.settings());
+    return { removed, kept: this.store.matches.size, meta };
   }
 
   topRecords(heroId = null, excludeAccount = null) {
@@ -1594,13 +1647,13 @@ class Sync {
       const p = top.players.find((x) => x.accountId === Number(target.accountId));
       label = p ? `${p.name} (#${p.rank})` : `игрок ${target.accountId}`;
     } else {
-      accounts = source === 'lobby' ? null : new Set(top.players.filter((p) => p.accountId).map((p) => p.accountId));
+      accounts = source === 'lobby' ? null : new Set(top.players.filter((p) => p.accountId && !p.excluded).map((p) => p.accountId));
       label = source === 'lobby' ? 'все игроки в матчах топов' : `топ-${top.players.length || 50}`;
     }
     let pool = this.store.allMatches();
     // в режиме "все игроки в матчах топов" берём только матчи, где был хотя бы один топ
     if (source === 'lobby' && target.type !== 'player') {
-      const topAcc = new Set(top.players.filter((p) => p.accountId).map((p) => p.accountId));
+      const topAcc = new Set(top.players.filter((p) => p.accountId && !p.excluded).map((p) => p.accountId));
       pool = pool.filter((x) => x.players.some((p) => topAcc.has(p.account_id)));
     }
     const bench = benchmarkPlayers({ matches: pool, heroId: me.hero_id, accounts, winsOnly, excludeMatchId: m.match_id, excludeAccount: Number(accountId) });

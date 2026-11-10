@@ -9,7 +9,14 @@
 // 2) slotFeature: вырезаем портрет над плашкой, берём центр (по краям значки «!»)
 //    и сжимаем в маленькую сетку цветов.
 // 3) Сравнение с образцами: картинки героев из справочника (с прозрачностью,
-//    подбираем масштаб и сдвиг) и портреты, которые пользователь подтвердил сам.
+//    подбираем масштаб и сдвиг), встроенные образцы (герои, чей портрет в игре
+//    не совпадает с картинкой справочника) и портреты, которые пользователь подтвердил сам.
+//    Фон за портретом всё время разный (цвет команды, карта сквозь полупрозрачную
+//    плашку), поэтому сравниваем двумя способами и складываем:
+//    — цвет только в овале лица (углы с фоном не считаем);
+//    — контуры (перепады яркости) — форма головы и деталей от фона почти не зависит.
+//    Каждую оценку переводим в «насколько этот герой выделяется среди всех» (z-оценка),
+//    так две шкалы складываются честно, а уверенность — это отрыв от второго места.
 
 const GW = 24; // сетка признаков
 const GH = 30;
@@ -196,6 +203,51 @@ function slotFeature(img, slot) {
   return gridFrom(img, slotBox(img, slot));
 }
 
+// Контуры: перепады яркости по горизонтали и вертикали в каждой клетке сетки.
+function gradGrid(g) {
+  const L = new Float32Array(GW * GH);
+  for (let i = 0; i < GW * GH; i++) L[i] = 0.3 * g[i * 3] + 0.59 * g[i * 3 + 1] + 0.11 * g[i * 3 + 2];
+  const out = new Float32Array(GW * GH * 3);
+  for (let y = 0; y < GH; y++) {
+    for (let x = 0; x < GW; x++) {
+      const i = y * GW + x;
+      const xl = Math.max(0, x - 1);
+      const xr = Math.min(GW - 1, x + 1);
+      const yu = Math.max(0, y - 1);
+      const yd = Math.min(GH - 1, y + 1);
+      out[i * 3] = L[y * GW + xr] - L[y * GW + xl];
+      out[i * 3 + 1] = L[yd * GW + x] - L[yu * GW + x];
+    }
+  }
+  return out;
+}
+
+// Овал лица: цвет сравниваем только внутри него (по углам — фон).
+const FACE = (() => {
+  const m = new Uint8Array(GW * GH);
+  for (let y = 0; y < GH; y++) {
+    for (let x = 0; x < GW; x++) {
+      const u = ((x + 0.5) / GW - 0.5) / 0.5;
+      const v = ((y + 0.5) / GH - 0.52) / 0.42;
+      m[y * GW + x] = u * u + v * v <= 1 ? 1 : 0;
+    }
+  }
+  return m;
+})();
+
+function andMask(a, b) {
+  if (!a) return b;
+  const m = new Uint8Array(b.length);
+  for (let i = 0; i < b.length; i++) m[i] = a[i] && b[i] ? 1 : 0;
+  return m;
+}
+
+// Образец для сравнения из готовой сетки (выученный или встроенный портрет).
+function sampleVariant(grid) {
+  const g = grid instanceof Float32Array ? grid : Float32Array.from(grid);
+  return { grid: g, mask: null, face: FACE, gr: gradGrid(g) };
+}
+
 // Нормированная корреляция двух сеток (по маске, если она есть). 1 — одинаковые.
 function ncc(a, b, mask = null) {
   let n = 0;
@@ -281,48 +333,96 @@ function refVariants(ref, { scales = [0.85, 1, 1.15, 1.3], shifts = [-0.08, 0, 0
             }
           }
         }
-        out.push({ grid, mask });
+        out.push({ grid, mask, face: andMask(mask, FACE), gr: gradGrid(grid) });
       }
     }
   }
   return out;
 }
 
-// Сравнение признаков слота с героем: лучший из вариантов образцов справочника и выученных образцов.
-function scoreHero(feature, hero) {
-  let best = -1;
-  for (const v of hero.variants || []) best = Math.max(best, ncc(feature, v.grid, v.mask));
-  for (const l of hero.learned || []) best = Math.max(best, ncc(feature, l) + 0.05); // свои образцы чуть важнее
-  return best;
+// Признаки слота для сравнения: сетка цветов и контуры.
+function slotFeatures(img, slot) {
+  const g = slotFeature(img, slot);
+  return { g, gr: gradGrid(g) };
+}
+
+function ensureVariant(v) {
+  if (!v.gr) v.gr = gradGrid(v.grid);
+  if (!v.face) v.face = andMask(v.mask, FACE);
+  return v;
+}
+
+// Сырые оценки героя: лучший образец по цвету (в овале) и лучший по контурам.
+function rawScores(f, hero) {
+  let c = -1;
+  let e = -1;
+  // выученные портреты (сетки) — превращаем в образцы один раз
+  if (hero.learned && hero.learned.length && (!hero._learnedV || hero._learnedV.src !== hero.learned)) {
+    hero._learnedV = hero.learned.map(sampleVariant);
+    hero._learnedV.src = hero.learned;
+  }
+  const all = (hero.variants || []).concat(hero.samples || [], (hero.learned && hero._learnedV) || []);
+  for (const v0 of all) {
+    const v = ensureVariant(v0);
+    c = Math.max(c, ncc(f.g, v.grid, v.face));
+    e = Math.max(e, ncc(f.gr, v.gr, v.mask));
+  }
+  return { c, e };
+}
+
+function zs(arr) {
+  const m = arr.reduce((a, x) => a + x, 0) / arr.length;
+  const sd = Math.sqrt(arr.reduce((a, x) => a + (x - m) ** 2, 0) / arr.length) || 1;
+  return arr.map((x) => (x - m) / sd);
+}
+
+// Оценки всех героев для одного слота: среднее z-оценок по цвету и по контурам.
+function slotScores(f, heroes) {
+  const raw = heroes.map((h) => rawScores(f, h));
+  const zc = zs(raw.map((r) => r.c));
+  const ze = zs(raw.map((r) => r.e));
+  return heroes.map((_, i) => (zc[i] + ze[i]) / 2);
+}
+
+// Совместимость: оценка одного героя (z-оценка среди всех не нужна — для отладки).
+function scoreHero(f, hero) {
+  const ff = f.g ? f : { g: f, gr: gradGrid(f) };
+  const r = rawScores(ff, hero);
+  return (r.c + r.e) / 2;
 }
 
 // Распределяем героев по слотам: каждый герой — не больше одного раза (жадно по уверенности).
-function assignHeroes(features, heroes) {
+// scores — для каждого слота массив оценок в порядке heroes (можно усреднить по нескольким кадрам).
+function assignFromScores(scores, heroes) {
   const cand = [];
-  features.forEach((f, si) => {
-    for (const h of heroes) cand.push({ si, id: h.id, s: scoreHero(f, h) });
-  });
-  const bySlot = features.map((_, si) => cand.filter((c) => c.si === si).sort((a, b) => b.s - a.s));
+  scores.forEach((arr, si) => arr.forEach((s, hi) => cand.push({ si, id: heroes[hi].id, s })));
+  const bySlot = scores.map((_, si) => cand.filter((c) => c.si === si).sort((a, b) => b.s - a.s));
   cand.sort((a, b) => b.s - a.s);
   const usedS = new Set();
   const usedH = new Set();
-  const res = features.map(() => null);
+  const res = scores.map(() => null);
   for (const c of cand) {
     if (usedS.has(c.si) || usedH.has(c.id)) continue;
     usedS.add(c.si);
     usedH.add(c.id);
     const top = bySlot[c.si];
     const second = top.find((x) => x.id !== c.id);
-    res[c.si] = { id: c.id, score: c.s, margin: second ? c.s - second.s : 1, top3: top.slice(0, 3).map((x) => ({ id: x.id, s: Math.round(x.s * 1000) / 1000 })) };
+    res[c.si] = { id: c.id, score: c.s, margin: second ? c.s - second.s : 9, top3: top.slice(0, 3).map((x) => ({ id: x.id, s: Math.round(x.s * 100) / 100 })) };
   }
   return res;
 }
 
-// Уверенность: насколько похоже вообще и насколько выше второго варианта.
-// По проверке на реальных снимках: верный герой по картинке справочника ≈ 0,87
-// при отрыве ≥ 0,3; выученный образец ≈ 0,97+; «не тот» — до ~0,55 с отрывом ~0,03.
-function confident(r) {
-  return !!r && r.score >= 0.65 && r.margin >= 0.1; // 0,65: полупрозрачные портреты соперников в паузе дают 0,67–0,8
+// features — признаки слотов (slotFeatures) или старые сетки.
+function assignHeroes(features, heroes) {
+  const fs = features.map((f) => (f && f.g ? f : { g: f, gr: gradGrid(f) }));
+  return assignFromScores(fs.map((f) => slotScores(f, heroes)), heroes);
 }
 
-module.exports = { GW, GH, teamColor, findSlots, layoutSlots, slotBox, isOwnSlot, slotFeature, gridFrom, ncc, refVariants, scoreHero, assignHeroes, confident };
+// Уверенность: насколько герой выделяется среди всех (z) и отрыв от второго места.
+// Проверка на 24 портретах (пауза перед игрой и матч с полупрозрачными соперниками):
+// верные — z 2,0–5,4 с отрывом 0,86–4,3; герои, которых нет в образцах, — отрыв до 0,6.
+function confident(r) {
+  return !!r && r.score >= 1.8 && r.margin >= 0.75;
+}
+
+module.exports = { GW, GH, teamColor, findSlots, layoutSlots, slotBox, isOwnSlot, slotFeature, slotFeatures, gridFrom, gradGrid, ncc, refVariants, sampleVariant, scoreHero, slotScores, assignFromScores, assignHeroes, confident };

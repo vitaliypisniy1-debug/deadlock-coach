@@ -253,6 +253,26 @@ class Api {
     throw lastErr;
   }
 
+  // Готовая статистика deadlock-api по всем матчам выбранного уровня (для совета по пику).
+  // since — unix-время начала окна, badge — минимальный средний ранг матча (91 = Фантом 1).
+  _analytics(kind, { since, badge, lane = null }) {
+    const q = [`game_mode=normal`, `min_average_badge=${badge}`, `min_unix_timestamp=${since}`];
+    if (lane !== null) q.push(`same_lane_filter=${lane ? 'true' : 'false'}`);
+    return this.get(`/v1/analytics/${kind}?${q.join('&')}`, { ttlMs: 3 * 3600e3 }).then((r) => (Array.isArray(r) ? r : []));
+  }
+
+  heroStatsAnalytics(opts) {
+    return this._analytics('hero-stats', { ...opts, lane: null });
+  }
+
+  heroCounterAnalytics(opts) {
+    return this._analytics('hero-counter-stats', opts);
+  }
+
+  heroSynergyAnalytics(opts) {
+    return this._analytics('hero-synergy-stats', opts);
+  }
+
   ingestSalts(records) {
     return this.post('/v1/matches/salts', records);
   }

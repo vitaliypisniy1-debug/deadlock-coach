@@ -2601,11 +2601,11 @@
       };
       const list = d.allHeroes.filter((x) => x.games >= 1).slice(0, 40);
       poolBlock = h('div',
-        h('div.hint', { style: { marginBottom: '8px' } }, d.manual ? 'Список задан вручную.' : 'Сейчас — герои, на которых у тебя 15+ побед (столько нужно для рейтинга). Нажми на героя, чтобы добавить или убрать.'),
+        h('div.hint', { style: { marginBottom: '8px' } }, d.manual ? 'Список задан вручную.' : 'Сейчас — герои, доступные в рейтинге (15+ побед в обычных играх или уже играл в рейтинге), на которых ты играл хотя бы 3 раза за 2 месяца. Нажми на героя, чтобы добавить или убрать.'),
         h('div.pool-grid', list.map((x) => h(`button.pool-hero${inPool.has(x.hero_id) ? '.on' : ''}`, { onclick: () => toggle(x.hero_id), title: `${x.games} игр, ${x.wins} побед` },
           heroIcon(x.hero_id, '.sm'), h('span', heroName(x.hero_id)), h('span.num.dim', `${x.wins}п`)))),
         d.manual ? h('button.btn.small', { style: { marginTop: '10px' }, onclick: async () => { const r = await dc.saveSettings({ pickPool: null }); S.settings = r.settings; OV.data = null; loadOverlayData(); } }, 'Вернуть автоматический список') : null,
-        h('div.hint', { style: { marginTop: '8px' } }, d.ready < d.poolSize ? `Таблицы матчапов готовы для ${d.ready} из ${d.poolSize} героев — остальные считаются в фоне (первый раз до нескольких минут).` : `Таблицы матчапов готовы для всех ${d.poolSize}.`));
+        h('div.hint', { style: { marginTop: '8px' } }, d.metaInfo ? `Совет считается по ${d.metaInfo.games.toLocaleString('ru-RU')} матчам ${d.metaInfo.badge >= 91 ? 'Фантом и выше' : 'Оракул и выше'} за 2 недели (статистика deadlock-api) и твоим играм.` : `Статистика deadlock-api пока не загрузилась (${d.metaError || 'нет связи'}) — совет считается по скачанным матчам.`));
     }
     const lg = OV.log;
     let logBlock = null;

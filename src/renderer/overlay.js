@@ -13,6 +13,8 @@
     enemies: [],
     allies: [],
     me: null,
+    lane: [], // соперники на твоей линии (до 2)
+    partner: null, // напарник по линии
     q: '',
     advice: null,
     error: null,
@@ -48,7 +50,14 @@
     const b = n % 10;
     return `${n} ${a > 10 && a < 20 ? 'очков' : b === 1 ? 'очко' : b >= 2 && b <= 4 ? 'очка' : 'очков'}`;
   };
-  const SCORE_TIP = 'Оценка — сумма: насколько чаще обычного побеждают на этом герое против каждого соперника (в процентах, каждый максимум ±15) плюс сила героя. Вес данных: 80% — игры топового уровня, 20% — твои игры.';
+  const SCORE_TIP = 'Шанс победы: 50% плюс сила героя в патче, плюс поправка за каждого соперника (на твоей линии — цифры именно для линии), за союзников и за состав команды. Вес данных: 80% — все игры топового уровня за 2 недели, 20% — твои игры.';
+  const pct = (x) => `${Math.round(x * 100)}%`;
+  // проценты с одной цифрой после запятой: +0,4
+  const pts1 = (x) => `${x > 0 ? '+' : x < 0 ? '−' : ''}${(Math.round(Math.abs(x) * 1000) / 10).toFixed(1).replace('.', ',')}`;
+  const souls = (n) => `${n > 0 ? '+' : n < 0 ? '−' : ''}${Math.abs(Math.round(n)).toLocaleString('ru-RU')}`;
+  const ROLE = { tank: 'танк', support: 'поддержка', spirit: 'урон способностями', gun: 'урон пулями' };
+  const ROLE_SHORT = { tank: 'танк', support: 'саппорт', spirit: 'дух', gun: 'пули' };
+  const roleOf = (id) => (S.advice && S.advice.roles && S.advice.roles[id]) || null;
 
   // ---------- выбор героев ----------
   function where(id) {
@@ -61,7 +70,21 @@
   function removeHero(id) {
     S.enemies = S.enemies.filter((x) => x !== id);
     S.allies = S.allies.filter((x) => x !== id);
+    S.lane = S.lane.filter((x) => x !== id);
+    if (S.partner === id) S.partner = null;
     if (S.me === id) S.me = null;
+  }
+
+  // Отметка «на моей линии» (соперники, до 2) и «напарник» (один союзник).
+  function toggleLane(id) {
+    if (S.lane.includes(id)) S.lane = S.lane.filter((x) => x !== id);
+    else S.lane = [...S.lane, id].slice(-2);
+    changed();
+  }
+
+  function togglePartner(id) {
+    S.partner = S.partner === id ? null : id;
+    changed();
   }
 
   // Исправление портрета: герой встаёт в роль этого слота, а программа запоминает образец.
@@ -118,7 +141,7 @@
     if (!S.auth) return renderRight();
     S.loading = true;
     try {
-      S.advice = await dc.pickAdvise({ enemies: S.enemies, allies: S.allies, current: S.me });
+      S.advice = await dc.pickAdvise({ enemies: S.enemies, allies: S.allies, current: S.me, laneEnemies: S.lane, partner: S.partner });
       S.error = null;
     } catch (e) {
       S.error = e.message;
@@ -132,6 +155,8 @@
     S.enemies = [];
     S.allies = [];
     S.me = null;
+    S.lane = [];
+    S.partner = null;
     S.mode = 'enemies';
     S.timerStart = 0;
     changed();
@@ -140,7 +165,17 @@
   // ---------- левая часть ----------
   function slot(id, kind, i) {
     if (!id) return h(`div.slot.empty.${kind}`, h('span', kind === 'me' ? 'ты' : String(i + 1)));
-    return h(`button.slot.${kind}`, { title: `${heroName(id)} — убрать`, onclick: () => { removeHero(id); changed(); } }, heroImg(id), h('span.slot-name', heroName(id)));
+    const role = roleOf(id);
+    const btn = h(`button.slot.${kind}`, { title: `${heroName(id)}${role ? ` · ${ROLE[role]}` : ''} — убрать`, onclick: () => { removeHero(id); changed(); } }, heroImg(id), h('span.slot-name', heroName(id)));
+    if (kind === 'enemy') {
+      const on = S.lane.includes(id);
+      return h('div.slot-col', btn, h(`button.lane-tg${on ? '.on' : ''}`, { title: 'Этот соперник стоит на твоей линии', onclick: () => toggleLane(id) }, on ? 'на линии' : 'линия?'));
+    }
+    if (kind === 'ally') {
+      const on = S.partner === id;
+      return h('div.slot-col', btn, h(`button.lane-tg.ally${on ? '.on' : ''}`, { title: 'Это твой напарник по линии', onclick: () => togglePartner(id) }, on ? 'напарник' : 'пара?'));
+    }
+    return btn;
   }
 
   function recStrip() {
@@ -199,8 +234,8 @@
     const allySlots = [...Array(LIMIT.allies)].map((_, i) => slot(S.allies[i], 'ally', i));
     $('rec').replaceChildren(...[recStrip()].filter(Boolean));
     $('slots').replaceChildren(
-      h('div.slot-group', h('div.slot-label', 'Соперники'), h('div.slot-row', enemySlots)),
-      h('div.slot-group.small', h('div.slot-label', 'Союзники ', h('span', '(не обязательно)')), h('div.slot-row', allySlots)),
+      h('div.slot-group', h('div.slot-label', 'Соперники ', h('span', S.enemies.length ? '— отметь, кто на твоей линии (видно в начале игры)' : '')), h('div.slot-row', enemySlots)),
+      h('div.slot-group.small', h('div.slot-label', 'Союзники ', h('span', S.allies.length ? '— отметь напарника по линии' : '(не обязательно)')), h('div.slot-row', allySlots)),
       h('div.slot-group.small', h('div.slot-label', 'Твой герой'), h('div.slot-row', slot(S.me, 'me', 0))),
     );
     const modes = [
@@ -224,24 +259,63 @@
 
   // ---------- правая часть: совет ----------
   function chip(x, good) {
-    return h(`span.chip.${good ? 'good' : 'bad'}`, { title: `${good ? 'Удобный' : 'Неудобный'} соперник: ${pts(x.d)} к победам` }, heroImg(x.hero_id, '.xs'), pts(x.d));
+    return h(`span.chip.${good ? 'good' : 'bad'}`, { title: `${good ? 'Удобный' : 'Неудобный'} соперник: ${pts1(x.d)}% к шансу победы (сверх силы самих героев)` }, heroImg(x.hero_id, '.xs'), pts1(x.d));
+  }
+
+  // Соперник на твоей линии: души к 9-й минуте.
+  function laneChip(x) {
+    const cls = x.souls >= 250 ? 'good' : x.souls <= -250 ? 'bad' : 'even';
+    return h(`span.chip.lane.${cls}`, { title: `На линии против ${heroName(x.hero_id)}: в среднем ${souls(x.souls)} душ к 9-й минуте у игроков Оракул+` }, 'линия', heroImg(x.hero_id, '.xs'), souls(x.souls));
   }
 
   function mateChip(x, good) {
-    return h(`span.chip.mate.${good ? 'good' : 'bad'}`, { title: `${good ? 'Хорошая' : 'Слабая'} связка с союзником ${heroName(x.hero_id)}: ${pts(x.d)} к победам` }, 'с', heroImg(x.hero_id, '.xs'), pts(x.d));
+    return h(`span.chip.mate.${good ? 'good' : 'bad'}`, { title: `${good ? 'Хорошая' : 'Слабая'} связка с ${x.partner ? 'напарником по линии' : 'союзником'} ${heroName(x.hero_id)}: ${pts1(x.d)}% к шансу победы` }, 'с', heroImg(x.hero_id, '.xs'), pts1(x.d));
   }
 
   // План на игру: что важно помнить именно в этом матче.
   function planCard(p) {
     const names = (list) => list.map((x) => heroName(x.hero_id)).join(' и ');
     const rows = [];
-    if (p.hard.length) rows.push(h('div.plan-row.bad', h('b', 'Опасны'), h('span', `${names(p.hard)} — у топов ${heroName(p.hero_id)} против ${p.hard.length > 1 ? 'них' : 'него'} выигрывает реже. Попался на линии — играй от крипов, не начинай размен первым.`)));
-    if (p.easy.length) rows.push(h('div.plan-row.good', h('b', 'Дави'), h('span', `${names(p.easy)} — удобные соперники: против ${p.easy.length > 1 ? 'них' : 'него'} можно разменяться и забирать линию.`)));
+    if (p.hard.length) rows.push(h('div.plan-row.bad', h('b', 'Неудобные'), h('span', `${names(p.hard)} — у топов ${heroName(p.hero_id)} против ${p.hard.length > 1 ? 'них' : 'него'} выигрывает чуть реже обычного. Не лезь к ${p.hard.length > 1 ? 'ним' : 'нему'} в одиночку.`)));
+    if (p.easy.length) rows.push(h('div.plan-row.good', h('b', 'Удобные'), h('span', `${names(p.easy)} — против ${p.easy.length > 1 ? 'них' : 'него'} ${heroName(p.hero_id)} выигрывает чуть чаще обычного: ищи с ${p.easy.length > 1 ? 'ними' : 'ним'} драки.`)));
+    const L = p.lane;
+    if (L && L.known && L.list.length) {
+      const bad = L.list.filter((x) => x.souls <= -250);
+      const good = L.list.filter((x) => x.souls >= 250);
+      const s9 = (list) => list.map((x) => `${souls(x.souls)} душ`).join(', ');
+      const even = L.list.filter((x) => !bad.includes(x) && !good.includes(x));
+      const t = [];
+      if (bad.length) t.push(`Против ${names(bad)} ${heroName(p.hero_id)} на линии обычно отстаёт (${s9(bad)} к 9-й минуте) — добивай крипов из-за волны, не меняйся уроном первым.`);
+      if (good.length) t.push(`Против ${names(good)} у ${heroName(p.hero_id)} преимущество (${s9(good)}) — дави: размены, отказ в душах, охранник.`);
+      if (even.length) t.push(`С ${names(even)} — ровно (${s9(even)}), решает добивание.`);
+      const text = t.join(' ');
+      rows.push(h(`div.plan-row${bad.length ? '.bad' : good.length ? '.good' : ''}`, h('b', 'Линия'), h('span', text)));
+    } else if (L && !L.known && (L.hard.length || L.easy.length)) {
+      const t = [];
+      if (L.hard.length) t.push(`тяжело против ${L.hard.map((x) => `${heroName(x.hero_id)} (${souls(x.souls)} душ)`).join(' и ')}`);
+      if (L.easy.length) t.push(`легко против ${L.easy.map((x) => `${heroName(x.hero_id)} (${souls(x.souls)} душ)`).join(' и ')}`);
+      rows.push(h('div.plan-row', h('b', 'Если на линии'), h('span', `${t.join(', ')}. Как увидишь, кто против тебя, — отметь «линия?» под соперником.`)));
+    }
     if (p.items.length) rows.push(h('div.plan-row', h('b', 'Собери'), h('span.plan-items', p.items.map((it) => h('span.plan-item', { title: `Против ${heroName(it.vs)} берут в ${String(it.lift).replace('.', ',')} раза чаще обычного` }, itemImg(it.id), itemName(it.id), h('i', `от ${heroName(it.vs)}`))))));
     if (p.mates.length) rows.push(h('div.plan-row.good', h('b', 'Связка'), h('span', `Играй рядом с ${names(p.mates)} — вместе вы выигрываете чаще.`)));
     if (p.leak && p.leak.title) rows.push(h('div.plan-row.warn', h('b', 'Твоя ошибка'), h('span', `${p.leak.title} (${p.leak.count} из ${p.leak.games} игр).${p.leak.fix ? ' ' + p.leak.fix : ''}`)));
     if (!rows.length) return h('div');
     return h('div.plan', h('div.plan-head', `План на игру за ${heroName(p.hero_id)}`), rows);
+  }
+
+  // Состав твоей команды: роли и чего не хватает.
+  function compCard(c) {
+    const n = c.counts;
+    const cell = (k, label) => h(`span.comp-cell${n[k] ? '' : '.miss'}`, h('b', String(n[k])), label);
+    const notes = [];
+    if (!n.tank) notes.push('Нет танка — команды без него выигрывают на 2% реже. Если есть свой танк — подумай о нём.');
+    if (!n.support) notes.push('Нет поддержки — саппорты в этом патче в среднем выигрывают чаще остальных.');
+    if (n.gun >= 3) notes.push('Уже 3+ стрелка: соперники соберут броню от пуль — лучше урон способностями.');
+    if (n.spirit >= 3) notes.push('Уже 3+ героя на способностях: соперники соберут защиту от духа — лучше урон пулями.');
+    return h('div.comp',
+      h('div.plan-head', `Твоя команда (без тебя): ${c.known} из 5`),
+      h('div.comp-row', cell('tank', 'танк'), cell('support', 'поддержка'), cell('gun', 'пули'), cell('spirit', 'способности')),
+      notes.length ? h('div.comp-notes', notes.map((t) => h('div', t))) : h('div.comp-notes.ok', 'Состав сбалансирован.'));
   }
 
   function renderRight() {
@@ -261,7 +335,7 @@
     }
     const parts = [];
     if (!a.poolSize) {
-      parts.push(h('div.ov-empty', h('b', 'Нет героев для рейтинга'), 'В рейтинге можно играть героями с 15 победами. Если список неверный — выбери своих героев в основном окне: Настройки → «Мои герои для рейтинга».'));
+      parts.push(h('div.ov-empty', h('b', 'Нет героев для рейтинга'), 'Показываю героев, доступных в рейтинге, на которых ты играл последние 2 месяца. Если список неверный — выбери своих героев в основном окне: Настройки → «Мои герои для рейтинга».'));
       r.replaceChildren(...parts);
       return;
     }
@@ -273,36 +347,44 @@
       const keep = v && v.keep;
       const hid = keep ? v.hero_id : best.hero_id;
       const row = a.all.find((x) => x.hero_id === hid) || best;
+      const cur = v && !keep ? a.all.find((x) => x.hero_id === v.from) : null;
       parts.push(h(`div.verdict${keep ? '.keep' : ''}`,
         heroImg(hid, '.big'),
         h('div.v-main',
           h('div.v-kicker', keep ? 'Оставайся' : v ? `Меняй ${heroName(v.from)} на` : 'Лучший пик'),
           h('div.v-name', heroName(hid)),
           h('div.v-sub', keep
-            ? v.gap > 0.005 ? `${heroName(best.hero_id)} сильнее всего на ${ochki(v.gap)} — менять не стоит.` : 'Твой герой — лучший из доступных против этого состава.'
-            : v ? `Сильнее, чем ${heroName(v.from)}, на ${ochki(v.gap)} против этого состава.` : 'Сильнее всего против этого состава из твоих героев.')),
-        h('div.v-score', { title: SCORE_TIP }, h('b', pts(row.score)), h('span', 'оценка'))));
+            ? v.gap > 0.002 ? `${heroName(best.hero_id)} лучше всего на ${pts1(v.gap)}% — менять не стоит.` : 'Твой герой — лучший из доступных против этого состава.'
+            : cur ? `Шанс победы ${pct(row.chance)} против ${pct(cur.chance)} на ${heroName(v.from)}.` : 'Лучший из твоих героев против этого состава.')),
+        h('div.v-score', { title: SCORE_TIP }, h('b', pct(row.chance)), h('span', 'шанс победы'))));
       if (a.plan) parts.push(planCard(a.plan));
     }
+    if (a.comp && a.comp.known >= 3) parts.push(compCard(a.comp));
     const list = a.rows.map((x, i) => h(`div.pick${S.me === x.hero_id ? '.cur' : ''}`,
       h('span.pk-n', String(i + 1)),
       heroImg(x.hero_id, '.md'),
       h('div.pk-main',
-        h('div.pk-name', heroName(x.hero_id), S.me === x.hero_id ? h('em', 'сейчас') : null),
+        h('div.pk-name', heroName(x.hero_id), x.role ? h('i.pk-role', ROLE_SHORT[x.role]) : null, S.me === x.hero_id ? h('em', 'сейчас') : null),
         h('div.pk-why',
+          (x.lanes || []).map(laneChip),
           x.pros.map((p) => chip(p, true)),
           x.cons.map((p) => chip(p, false)),
           (x.mates || []).map((p) => mateChip(p, true)),
           (x.matesBad || []).map((p) => mateChip(p, false)),
-          h('span.pk-rec', { title: 'Твои игры на этом герое' }, x.games ? `ты ${x.wins}–${x.games - x.wins}` : 'нет твоих игр'),
-          x.noTable ? h('span.pk-warn', 'считаю…') : null)),
-      h(`b.pk-score${Math.abs(x.score) < 0.005 ? '' : x.score > 0 ? '.pos' : '.neg'}`, pts(x.score))));
-    parts.push(h('div.picks-head', h('span', 'Твои герои'), h('span', { title: SCORE_TIP }, 'оценка ⓘ')), h('div.picks', list));
+          x.compWhy === 'tank' ? h('span.chip.good.tag', { title: 'В команде нет танка — команды без него выигрывают на 2% реже' }, 'нужен танк +2') : null,
+          x.compWhy === 'gunHeavy' ? h('span.chip.bad.tag', { title: 'В команде уже 3 стрелка — с четвёртым выигрывают на 1,5% реже' }, 'много стрелков') : null,
+          x.weak ? h('span.chip.bad.tag', { title: 'В матчах топового уровня за 2 недели этот герой выигрывает реже 48%' }, `слабый в патче ${(Math.round(x.metaWr * 1000) / 10).toFixed(1).replace('.', ',')}%`) : null,
+          x.stale ? h('span.pk-warn', { title: 'Давно не играл на этом герое' }, `не играл ${x.stale} дн.`) : null,
+          h('span.pk-rec', { title: 'Твои игры на этом герое за 2 месяца / всего' }, x.games ? `ты ${x.wins}–${x.games - x.wins}${x.recent ? ` · ${x.recent} игр за 2 мес.` : ''}` : 'нет твоих игр'))),
+      h(`b.pk-score${x.chance >= 0.52 ? '.pos' : x.chance <= 0.48 ? '.neg' : ''}`, { title: SCORE_TIP }, pct(x.chance))));
+    parts.push(h('div.picks-head', h('span', 'Твои герои'), h('span', { title: SCORE_TIP }, 'шанс победы ⓘ')), h('div.picks', list));
+    if (a.inactive && a.inactive.length) parts.push(h('div.ov-note', `Не показываю — давно не играл: ${a.inactive.map((x) => heroName(x.hero_id)).join(', ')}. Свой список — в Настройках, «Мои герои для рейтинга».`));
     const taken = a.all.filter((x) => x.taken).map((x) => heroName(x.hero_id));
     if (taken.length) parts.push(h('div.ov-note', `Заняты: ${taken.join(', ')}.`));
     const notReady = a.poolSize - a.ready;
+    const metaTxt = a.metaInfo ? `Мета: ${a.metaInfo.games.toLocaleString('ru-RU')} матчей ${a.metaInfo.badge >= 91 ? 'Фантом+' : 'Оракул+'} за 2 недели` : `Мета не загружена (${a.metaError || 'нет связи'}) — считаю по скачанным матчам`;
     parts.push(h('div.ov-foot',
-      h('span', S.progress && S.progress.stage === 'pick' ? S.progress.text : notReady > 0 ? `Готовлю таблицы: ${a.ready} из ${a.poolSize} героев` : `Таблицы готовы для ${a.poolSize} ${a.poolSize === 1 ? 'героя' : 'героев'}${a.tablesAt ? ` · ${ago(a.tablesAt)}` : ''}`),
+      h('span', S.progress && S.progress.stage === 'pick' ? S.progress.text : notReady > 0 ? `${metaTxt} · твои игры: ${a.ready} из ${a.poolSize} героев` : `${metaTxt} · твои игры готовы${a.tablesAt ? ` (${ago(a.tablesAt)})` : ''}`),
       h('button.ov-btn.ghost.small', { onclick: () => dc.pickPrepare(true).then(() => { S.progress = { stage: 'pick', text: 'Пересчитываю…' }; renderRight(); }) }, 'Пересчитать')));
     r.replaceChildren(...parts);
   }

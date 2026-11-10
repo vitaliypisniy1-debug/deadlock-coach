@@ -7,6 +7,18 @@
 const fs = require('fs');
 const path = require('path');
 const P = require('../core/portraits');
+const SAMPLES = require('../core/portraitSamples.json');
+
+const FRAMES = 3; // кадров на одно распознавание: оценки усредняем, случайный фон гасится
+const FRAME_GAP_MS = 350;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Встроенные образцы (герои, чей портрет в игре не похож на картинку справочника).
+const builtinSamples = (() => {
+  const out = new Map();
+  for (const [id, list] of Object.entries((SAMPLES && SAMPLES.heroes) || {})) out.set(Number(id), list.map(P.sampleVariant));
+  return out;
+})();
 
 const MAX_LEARNED = 4; // сколько своих образцов храним на героя
 
@@ -45,6 +57,18 @@ class Recognizer {
 
   learnedAll() {
     return this.store.read('portraits.json', {});
+  }
+
+  // Выученные образцы героя: сетки превращаем в образцы один раз и держим, пока файл не изменился.
+  learnedFor(all, id) {
+    const list = all[id] || [];
+    this._learnedCache = this._learnedCache || new Map();
+    const key = list.length ? `${list.length}:${list[0][0]}:${list[0][list[0].length - 1]}` : '';
+    const hit = this._learnedCache.get(id);
+    if (hit && hit.key === key) return hit.v;
+    const v = list.map((a) => Float32Array.from(a));
+    this._learnedCache.set(id, { key, v });
+    return v;
   }
 
   // Картинки героев из справочника → варианты образцов. Один раз за запуск.
@@ -113,12 +137,14 @@ class Recognizer {
       .map((h) => ({
         id: h.id,
         variants: (refs.get(h.id) || {}).variants || [],
-        learned: (learned[h.id] || []).map((a) => Float32Array.from(a)),
+        samples: builtinSamples.get(h.id) || [],
+        learned: this.learnedFor(learned, h.id),
       }));
     const evaluate = (shot, sl) => {
-      const features = sl.map((x) => P.slotFeature(shot, x));
-      const picks = P.assignHeroes(features, heroes);
-      return { features, picks, sure: picks.filter((p) => P.confident(p)).length };
+      const feats = sl.map((x) => P.slotFeatures(shot, x));
+      const scores = feats.map((f) => P.slotScores(f, heroes));
+      const picks = P.assignFromScores(scores, heroes);
+      return { features: feats.map((f) => f.g), scores, picks, sure: picks.filter((p) => P.confident(p)).length };
     };
     let img = null;
     let slots = [];
@@ -164,6 +190,23 @@ class Recognizer {
       };
     }
     if (!ev) ev = evaluate(img, slots);
+    // ещё пара кадров того же экрана: оценки складываем — фон за полупрозрачными портретами
+    // меняется (камера, анимации), а герой — нет
+    let frames = 1;
+    for (let k = 1; k < FRAMES && Date.now() - t0 < 4000; k++) {
+      await sleep(FRAME_GAP_MS);
+      try {
+        const more = (await this.captureScreens()).find((x) => x.id === img.id && x.w === img.w && x.h === img.h);
+        if (!more) break;
+        const e2 = evaluate(more, slots);
+        ev.scores = ev.scores.map((arr, si) => arr.map((v, hi) => v + e2.scores[si][hi]));
+        frames += 1;
+      } catch (e) {
+        this.log(`recognition frame: ${e.message}`);
+        break;
+      }
+    }
+    if (frames > 1) ev.picks = P.assignFromScores(ev.scores.map((arr) => arr.map((v) => v / frames)), heroes);
     const { features, picks } = ev;
     const own = slots.map((s) => P.isOwnSlot(img, s));
     const ownIdx = own.indexOf(true);
@@ -194,6 +237,7 @@ class Recognizer {
       ok: true,
       at: Date.now(),
       ms: Date.now() - t0,
+      frames,
       screen: { w: img.w, h: img.h },
       slots: result,
       me: result.find((r) => r.own && sure(r))?.hero || null,

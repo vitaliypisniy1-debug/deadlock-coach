@@ -174,3 +174,23 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .rthumb { flex: 1 1 0; min-width: 0; width: auto; max-width: 50px; }
 .rthumb img { height: 42px; }
 .rt-name { font-size: 9px; }
+/* линия и напарник */
+.slot-col { display: flex; flex-direction: column; gap: 3px; align-items: center; }
+.lane-tg { font: 600 9.5px var(--mono); padding: 1px 4px; border-radius: 5px; border: 1px dashed var(--line-2); background: transparent; color: var(--muted); width: 100%; cursor: pointer; white-space: nowrap; }
+.slot-group.small .lane-tg { font-size: 8.5px; padding: 1px 2px; }
+.lane-tg:hover { color: var(--text); border-color: var(--text); }
+.lane-tg.on { border-style: solid; border-color: var(--enemy); color: #fff; background: rgba(255, 79, 97, 0.28); }
+.lane-tg.ally.on { border-color: var(--ally); background: rgba(80, 140, 255, 0.28); }
+.chip.lane { box-shadow: 0 0 0 1px currentColor inset; }
+.chip.tag { padding: 1px 6px; font-family: inherit; font-weight: 600; }
+.pk-role { font-style: normal; font-size: 10.5px; font-weight: 600; color: var(--muted); }
+/* состав команды */
+.comp { border: 1px solid var(--line-2); border-radius: 12px; background: var(--panel); padding: 10px 12px; display: grid; gap: 7px; }
+.comp-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.comp-cell { display: inline-flex; align-items: baseline; gap: 5px; padding: 3px 8px; border-radius: 7px; background: var(--panel-2); border: 1px solid var(--line); font-size: 12px; }
+.comp-cell b { font: 700 14px var(--mono); }
+.comp-cell.miss { border-color: var(--warn); color: var(--warn); }
+.comp-notes { font-size: 12px; line-height: 1.4; color: var(--text-2, #c7ccd5); display: grid; gap: 3px; }
+.comp-notes.ok { color: var(--good); }
+.chip.lane { padding-left: 6px; font-family: inherit; font-weight: 600; }
+.chip.lane.even { color: var(--muted); }

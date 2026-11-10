@@ -535,59 +535,89 @@ test('skills: order, consensus and build export', () => {
 });
 
 test('pick advice: best pick vs enemies, keep/swap verdict, pool rules', () => {
-  const { heroPool, pickAdvice } = require('../src/core/pick');
+  const { heroPool, pickAdvice, gamePlan, buildPickMeta, pairDelta, heroRole, teamComp, mixMatchup, MY_SHARE } = require('../src/core/pick');
+  const now = 1000 * 86400;
   const hist = [];
-  const push = (hero, n, wins) => { for (let i = 0; i < n; i++) hist.push({ hero_id: hero, won: i < wins, start_time: 1000 + i }); };
-  push(1, 30, 18); push(2, 25, 16); push(3, 20, 10); push(4, 6, 2);
-  const { pool } = heroPool(hist);
-  assert.deepStrictEqual(pool.map((p) => p.hero_id).sort(), [1, 2], 'в пуле только герои с 15+ победами');
-  assert.deepStrictEqual(heroPool(hist, { manual: [3, 4] }).pool.map((p) => p.hero_id), [3, 4], 'ручной список');
-  const full = heroPool(hist, { minWins: 0 }).pool;
-  const tables = {
-    1: { vs: { 10: { delta: -0.12, evidence: 20 }, 11: { delta: -0.05, evidence: 10 } } },
-    2: { vs: { 10: { delta: 0.08, evidence: 15 }, 11: { delta: 0.02, evidence: 8 } } },
-    3: { vs: { 10: { delta: 0.3, evidence: 4 }, 11: { delta: -0.1, evidence: 6 } } }, // выброс ограничивается ±15%
-  };
-  const a = pickAdvice({ pool: full, tables, enemies: [10, 11], current: 1 });
-  assert.strictEqual(a.rows[0].hero_id, 2, 'лучший против состава — герой 2');
+  // герой 1: 30 обычных (18 побед), недавно; 2: 25 обычных (16 побед), недавно; 3: 20 обычных (10 побед), давно;
+  // 4: 6 игр, из них 4 рейтинговых недавно (раз играл в рейтинге — значит доступен); 5: одна рейтинговая
+  const push = (hero, n, wins, { mode = 1, t = now - 86400 } = {}) => { for (let i = 0; i < n; i++) hist.push({ hero_id: hero, won: i < wins, match_mode: mode, start_time: t - i }); };
+  push(1, 30, 18); push(2, 25, 16); push(3, 20, 15, { t: now - 200 * 86400 }); push(4, 2, 1); push(4, 4, 2, { mode: 4 }); push(5, 1, 1, { mode: 4 });
+  const hp = heroPool(hist, { now });
+  assert.deepStrictEqual(hp.pool.map((p) => p.hero_id).sort(), [1, 2, 4], '15+ побед в обычных или игры в рейтинге, и играешь последние 2 месяца');
+  assert.deepStrictEqual(hp.inactive.map((p) => p.hero_id).sort(), [3, 5], 'давно не играл / одна игра — отдельно');
+  assert.strictEqual(hp.inactive.find((p) => p.hero_id === 3).lastDays, 200);
+  assert.deepStrictEqual(heroPool(hist, { manual: [3, 5], now }).pool.map((p) => p.hero_id), [3, 5], 'ручной список');
+
+  // роли из справочника
+  assert.strictEqual(heroRole({ type: 'brawler', tags: [] }), 'tank');
+  assert.strictEqual(heroRole({ type: null, tags: ['Teamplay'] }), 'support');
+  assert.strictEqual(heroRole({ type: 'mystic', tags: ['Inventor', 'Support'] }), 'support');
+  assert.strictEqual(heroRole({ type: 'mystic', tags: [] }), 'spirit');
+  assert.strictEqual(heroRole({ type: 'assassin', tags: [] }), 'gun');
+  assert.deepStrictEqual(teamComp(['gun', 'gun', 'spirit']).missing, ['tank', 'support']);
+
+  // мета: сила героев и пары
+  const stats = [
+    { hero_id: 1, wins: 4700, matches: 10000 }, // слабый: 47%
+    { hero_id: 2, wins: 5300, matches: 10000 }, // сильный: 53%
+    { hero_id: 4, wins: 5000, matches: 10000 },
+    { hero_id: 10, wins: 5000, matches: 10000 },
+    { hero_id: 11, wins: 5000, matches: 10000 },
+    { hero_id: 30, wins: 5000, matches: 10000 },
+  ];
+  const counters = [
+    { hero_id: 1, enemy_hero_id: 10, wins: 6000, matches_played: 10000 }, // сильный контр: +13% сырых → после стягивания ≈ +6%, потолок 3%
+    { hero_id: 2, enemy_hero_id: 10, wins: 530, matches_played: 1000 },
+    { hero_id: 4, enemy_hero_id: 10, wins: 400, matches_played: 1000 },
+  ];
+  const synergy = [{ hero_id1: 2, hero_id2: 30, wins: 600, matches_played: 1000 }];
+  const laneSouls = [{ h: 2, e: 10, n: 400, d: -600 }, { h: 2, e: 11, n: 20, d: 900 }];
+  const pm = buildPickMeta({ stats, counters, synergy, laneSouls, badge: 91 });
+  assert.ok(pm.with[30][2] && pm.with[2][30], 'связки в обе стороны');
+  assert.ok(pm.souls[2][10] && !pm.souls[2][11], 'души: малые выборки отброшены');
+  const pd = pairDelta(pm, 'vs', 2, 10, -1);
+  assert.ok(pd.d > 0 && pd.d < 0.003, 'пара с тысячей игр почти не влияет (реальный разброс пар ~0,5%)');
+  const roles = { 1: 'gun', 2: 'gun', 4: 'tank', 10: 'gun', 11: 'spirit', 30: 'gun', 31: 'gun', 32: 'spirit' };
+  const a = pickAdvice({ pool: hp.pool, pm, roles, enemies: [10, 11], current: 1 });
+  const r1 = a.all.find((r) => r.hero_id === 1);
+  const r2 = a.all.find((r) => r.hero_id === 2);
+  assert.strictEqual(a.rows[0].hero_id, 2, 'сильный герой впереди');
+  assert.ok(r1.weak && !r2.weak, 'слабый в патче помечен');
+  assert.ok(r1.parts.find((x) => x.hero_id === 10).d === 0.03, 'один соперник — не больше 3%');
+  assert.ok(Math.abs(r2.chance - (0.5 + r2.score)) < 1e-9 && r2.chance > 0.5);
   assert.ok(a.verdict && !a.verdict.keep && a.verdict.hero_id === 2 && a.verdict.from === 1);
-  assert.ok(Math.abs(a.all.find((r) => r.hero_id === 3).vsScore - 0.05) < 1e-9, 'матчап ограничен 15%');
-  assert.ok(a.rows[0].pros.length >= 1 && a.all.find((r) => r.hero_id === 1).cons.length === 2);
-  const keep = pickAdvice({ pool: full, tables, enemies: [10, 11], current: 2 });
+  const keep = pickAdvice({ pool: hp.pool, pm, roles, enemies: [10, 11], current: 2 });
   assert.ok(keep.verdict.keep, 'уже на лучшем — оставаться');
-  const taken = pickAdvice({ pool: full, tables, enemies: [10, 2] });
+  const taken = pickAdvice({ pool: hp.pool, pm, roles, enemies: [10, 2] });
   assert.ok(!taken.rows.some((r) => r.hero_id === 2), 'занятого героя не советуем');
-  assert.ok(taken.all.find((r) => r.hero_id === 4).noTable, 'нет таблицы — помечено');
-  // связки с союзниками и план на игру
-  const { gamePlan } = require('../src/core/pick');
-  const tw = {
-    1: { vs: { 10: { pro: -0.08, mine: null }, 11: { pro: 0.05, mine: null } }, with: { 30: { pro: 0.08, mine: null }, 31: { pro: -0.06, mine: null } } },
-    2: { vs: { 10: { pro: -0.08, mine: null }, 11: { pro: 0.05, mine: null } }, with: {} },
-  };
-  const wa = pickAdvice({ pool: full.filter((p) => p.hero_id <= 2), tables: tw, enemies: [10, 11], allies: [30, 31, 1] });
-  const r1 = wa.all.find((r) => r.hero_id === 1);
-  assert.ok(Math.abs(r1.allyScore - 0.01) < 1e-9, 'связки: (0.08 − 0.06) × 0.5');
-  assert.strictEqual(r1.mates[0].hero_id, 30);
-  assert.strictEqual(r1.matesBad[0].hero_id, 31);
-  const plan = gamePlan({ row: r1, counters: { 10: [{ id: 500, lift: 1.9 }], 11: [{ id: 500, lift: 1.6 }, { id: 501, lift: 1.5 }] }, leak: { title: 'X', count: 3, games: 10 } });
-  assert.deepStrictEqual(plan.hard.map((x) => x.hero_id), [10]);
-  assert.deepStrictEqual(plan.easy.map((x) => x.hero_id), [11]);
-  assert.deepStrictEqual(plan.items.map((x) => [x.id, x.vs]), [[500, 10], [501, 11]], 'предметы без повторов, сначала от опасного');
+
+  // состав: нет танка у союзников — танку +2%; три стрелка — четвёртому −1,5%
+  const comp = pickAdvice({ pool: hp.pool, pm, roles, enemies: [10], allies: [30, 31, 32] });
+  assert.strictEqual(comp.all.find((r) => r.hero_id === 4).compD, 0.02);
+  assert.strictEqual(comp.all.find((r) => r.hero_id === 2).compD, 0);
+  assert.deepStrictEqual(comp.comp.missing, ['tank', 'support']);
+  const heavy = pickAdvice({ pool: hp.pool, pm, roles: { ...roles, 32: 'gun', 33: 'tank' }, enemies: [10], allies: [30, 31, 32, 33] });
+  assert.strictEqual(heavy.all.find((r) => r.hero_id === 2).compD, -0.015);
+
+  // линия: души к 9-й минуте и план
+  const ln = pickAdvice({ pool: hp.pool, pm, roles, enemies: [10, 11], allies: [30], laneEnemies: [10, 99], partner: 30 });
+  assert.deepStrictEqual(ln.laneEnemies, [10], 'на линии только отмеченные соперники');
+  const l2 = ln.all.find((r) => r.hero_id === 2);
+  assert.ok(l2.lanes.length === 1 && l2.lanes[0].souls < -400 && l2.lanes[0].souls > -600, 'души стянуты к нулю немного');
+  assert.ok(l2.mates.length === 1 && l2.mates[0].partner, 'напарник по линии');
+  const counterItems = { 10: [{ id: 500, lift: 1.9 }], 11: [{ id: 500, lift: 1.6 }, { id: 501, lift: 1.5 }] };
+  const plan = gamePlan({ row: l2, counters: counterItems, leak: { title: 'X', count: 3, games: 10 }, laneEnemies: ln.laneEnemies });
+  assert.ok(plan.lane.known && plan.lane.list[0].hero_id === 10);
+  const plan2 = gamePlan({ row: l2, counters: counterItems });
+  assert.ok(!plan2.lane.known && plan2.lane.hard[0].hero_id === 10, 'без отметки: «если попадётся на линии»');
+  assert.deepStrictEqual(plan2.items.map((x) => x.id), [500], 'предметы — от известных соперников, без повторов');
   assert.strictEqual(plan.leak.title, 'X');
-  // 80% топы, 20% твои игры
-  const { mixMatchup, MY_SHARE } = require('../src/core/pick');
+
+  // без меты — запасной вариант по старым таблицам
+  const old = pickAdvice({ pool: hp.pool, tables: { 1: { vs: { 10: { pro: -0.02 } } }, 2: { vs: { 10: { pro: 0.02 } } } }, enemies: [10], current: 1 });
+  assert.strictEqual(old.rows[0].hero_id, 2);
   assert.strictEqual(MY_SHARE, 0.2);
   assert.ok(Math.abs(mixMatchup({ pro: 0.1, mine: -0.1 }) - 0.06) < 1e-9, '0.8·0.1 + 0.2·(−0.1)');
-  assert.strictEqual(mixMatchup({ pro: 0.05, mine: null }), 0.05, 'нет твоих игр — только топы');
-  assert.ok(Math.abs(mixMatchup({ pro: null, mine: 0.1 }) - 0.02) < 1e-9, 'нет игр топов — твоим всё равно 20%');
-  assert.strictEqual(mixMatchup(null), null);
-  // топы говорят «плохо», ты сам — «хорошо»: решают топы
-  const split = {
-    1: { vs: { 10: { pro: -0.1, mine: 0.15, evidence: 30 } } },
-    2: { vs: { 10: { pro: 0.04, mine: -0.05, evidence: 30 } } },
-  };
-  const sp = pickAdvice({ pool: full, tables: split, enemies: [10] });
-  assert.strictEqual(sp.rows[0].hero_id, 2, 'мета весит больше твоих игр');
 });
 
 test('updater: versions, release parsing, check and download', async () => {
@@ -673,13 +703,18 @@ test('portraits: slots, own portrait, learned matching, log events', () => {
   assert.deepStrictEqual(slots.map((s) => s.team), ['amber', 'amber', 'sapphire', 'sapphire']);
   assert.deepStrictEqual(slots.map((s) => P.isOwnSlot(img, s)), [false, true, false, false], 'свой портрет по квадратной подложке');
   const feats = slots.map((s) => P.slotFeature(img, s));
-  const heroes = [10, 11, 12, 13].map((id, k) => ({ id, learned: [feats[k]] }));
+  // как в игре: героев много — 4 с образцами и 30 «чужих» со случайными образцами
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) * 255;
+  const noise = () => Float32Array.from({ length: P.GW * P.GH * 3 }, rnd);
+  const others = Array.from({ length: 30 }, (_, k) => ({ id: 100 + k, learned: [noise()] }));
+  const heroes = [10, 11, 12, 13].map((id, k) => ({ id, learned: [feats[k]] })).concat(others);
   const res = P.assignHeroes(feats, heroes);
   assert.deepStrictEqual(res.map((r) => r.id), [10, 11, 12, 13]);
-  assert.ok(res.every(P.confident));
+  assert.ok(res.every(P.confident), JSON.stringify(res.map((r) => [r.score, r.margin])));
   // неизвестный герой: образцов нет → не уверены
-  const res2 = P.assignHeroes(feats, [{ id: 10, learned: [feats[0]] }, { id: 99, learned: [] }]);
-  assert.ok(P.confident(res2[0]) && !res2.slice(1).some((r) => r && P.confident(r)));
+  const res2 = P.assignHeroes(feats, [{ id: 10, learned: [feats[0]] }, { id: 99, learned: [] }].concat(others));
+  assert.ok(P.confident(res2[0]) && !res2.slice(1).some((r) => r && P.confident(r)), JSON.stringify(res2.map((r) => [r.id, r.score, r.margin])));
   // строки настоящего лога Deadlock
   const st = { matchId: null, phase: null };
   const ev = parseLines([
@@ -759,7 +794,7 @@ test('portraits: fixed layout for pregame, dim plates, mirror fill', () => {
   assert.strictEqual(F.length, 12, `найдено ${F.length}`);
   assert.strictEqual(F.filter((s) => s.guessed).length, 3);
   assert.ok(F.slice(6).every((s) => s.team === 'amber'));
-  assert.ok(P.confident({ score: 0.67, margin: 0.12 }) && !P.confident({ score: 0.65, margin: 0.01 }) && !P.confident({ score: 0.61, margin: 0.32 }));
+  assert.ok(P.confident({ score: 2.0, margin: 0.86 }) && !P.confident({ score: 2.1, margin: 0.6 }) && !P.confident({ score: 1.5, margin: 1.2 }));
 });
 
 test('leaks: new match data (v2) and mistakes with moments', () => {

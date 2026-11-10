@@ -329,7 +329,7 @@ function onGameMode(active) {
   if (active) {
     if (recognizer) recognizer.loadRefs().catch(() => {});
     const a = store.read('auth.json', null);
-    if (a && a.accountId) store.ready.then(() => sync.pickTables(a.accountId)).catch(() => {});
+    if (a && a.accountId) store.ready.then(() => Promise.all([sync.pickMeta().catch(() => {}), sync.pickTables(a.accountId)])).catch(() => {});
   } else if (autoPending) {
     setTimeout(() => {
       if (!inGameMode() && autoPending) autoRefresh();
@@ -580,6 +580,7 @@ function registerIpc() {
   handle('pick:advise', async (opts) => sync.pickAdvise(authId(), opts || {}));
   handle('pick:prepare', async (force) => {
     const id = authId();
+    sync.pickMeta({ force: !!force }).catch(() => {});
     sync.pickTables(id, { force: !!force }).catch(() => {});
     return true;
   });

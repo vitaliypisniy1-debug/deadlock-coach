@@ -21,7 +21,7 @@ const { proCandidates, versus } = require('../core/versus');
 const { playerFeatures, refAll } = require('../core/features');
 const { matchTips } = require('../core/tipsMatch');
 const { skillOrder, skillConsensus, compareSkills } = require('../core/skills');
-const { heroPool, pickAdvice, gamePlan } = require('../core/pick');
+const { heroPool, pickAdvice, gamePlan, buildPickMeta, heroRole } = require('../core/pick');
 const { matchBuild, buildText, buildFile } = require('../core/buildExport');
 const { encodeBuildCode } = require('../core/gameCode');
 
@@ -157,13 +157,13 @@ class Sync {
   async loadAssets(force = false) {
     const cached = this.store.read('assets.json', null);
     // v2: в справочнике есть компоненты предметов, карта и ранги — старый кэш перекачиваем
-    if (!force && cached && cached.v === 5 && Date.now() - cached.fetchedAt < 24 * 3600e3) {
+    if (!force && cached && cached.v === 6 && Date.now() - cached.fetchedAt < 24 * 3600e3) {
       this.assets = cached;
       return cached;
     }
     try {
       const [heroes, items] = await Promise.all([this.api.heroesAssets(), this.api.itemsAssets()]);
-      const a = { v: 5, fetchedAt: Date.now(), heroes: {}, items: {} };
+      const a = { v: 6, fetchedAt: Date.now(), heroes: {}, items: {} };
       for (const h of heroes || []) {
         if (!h || !h.id) continue;
         const im = h.images || {};
@@ -176,6 +176,8 @@ class Sync {
           disabled: !!h.disabled,
           inDev: !!h.in_development,
           cls: h.class_name || null,
+          type: h.hero_type || null,
+          tags: Array.isArray(h.tags) ? h.tags : [],
           // способности 1–4 (class_name из items героя: signature1..signature4)
           abilityCls: ['signature1', 'signature2', 'signature3', 'signature4'].map((k) => (h.items && h.items[k]) || null),
         };
@@ -1185,30 +1187,98 @@ class Sync {
     }
   }
 
-  async pickAdvise(accountId, { enemies = [], allies = [], current = null } = {}) {
+  // Мета для совета по пику: готовая статистика deadlock-api по всем матчам топового уровня
+  // за 2 недели — сила героев, герой против героя (вообще и на одной линии), связки.
+  // Пять быстрых запросов, кэш на 6 часов.
+  async pickMeta({ force = false } = {}) {
+    const cached = this.store.read('pickmeta.json', null);
+    if (!force && cached && cached.v === 1 && Date.now() - cached.at < 6 * 3600e3) return cached;
+    if (this._pmRunning) return this._pmRunning;
+    this._pmRunning = (async () => {
+      const since = Math.floor(Date.now() / 1000) - 14 * 86400;
+      let badge = 91;
+      let stats = await this.api.heroStatsAnalytics({ since, badge });
+      // на высоком ранге мало игр — берём уровень пониже
+      if (stats.reduce((s, r) => s + (Number(r.matches) || 0), 0) / 12 < 15000) {
+        badge = 81;
+        stats = await this.api.heroStatsAnalytics({ since, badge });
+      }
+      const [counters, laneCounters, synergy, laneSynergy] = await Promise.all([
+        this.api.heroCounterAnalytics({ since, badge, lane: false }),
+        this.api.heroCounterAnalytics({ since, badge, lane: true }),
+        this.api.heroSynergyAnalytics({ since, badge, lane: false }),
+        this.api.heroSynergyAnalytics({ since, badge, lane: true }),
+      ]);
+      // души на линии к 9-й минуте по парам (SQL, лимит 2 запроса в минуту — кэш на сутки)
+      let laneSouls = [];
+      const ls = this.store.read('lanesouls.json', null);
+      if (ls && Date.now() - ls.at < 24 * 3600e3 && ls.rows && ls.rows.length) laneSouls = ls.rows;
+      else {
+        try {
+          const rank = badge >= 91 ? 91 : 81;
+          laneSouls = await this.api.sqlRows(
+            `WITH p AS (SELECT match_id, team, assigned_lane lane, hero_id, "stats.net_worth"[3]::BIGINT nw FROM match_player WHERE start_time > now() - INTERVAL 14 DAY AND match_mode='Ranked' AND game_mode='Normal' AND player_rank_initial_display_rank >= ${rank} AND len("stats.net_worth") >= 4) ` +
+              `SELECT a.hero_id h, b.hero_id e, count(*) n, round(avg(a.nw - b.nw)) d FROM p a JOIN p b ON a.match_id=b.match_id AND a.lane=b.lane AND a.team<>b.team GROUP BY 1,2 HAVING count(*) >= 30`,
+            ['h', 'e', 'n', 'd'],
+          );
+          laneSouls = laneSouls.map((r) => ({ h: Number(r.h), e: Number(r.e), n: Number(r.n), d: Number(r.d) })).filter((r) => r.h && r.e);
+          if (laneSouls.length) this.store.write('lanesouls.json', { at: Date.now(), rows: laneSouls });
+        } catch (e) {
+          this.emit('log', `lanesouls: ${e.message}`);
+          if (ls && ls.rows) laneSouls = ls.rows;
+        }
+      }
+      const pm = { ...buildPickMeta({ stats, counters, laneCounters, synergy, laneSynergy, laneSouls, badge, since }), at: Date.now() };
+      if (!Object.keys(pm.base).length) throw new Error('deadlock-api не отдал статистику героев');
+      this.store.write('pickmeta.json', pm);
+      return pm;
+    })();
+    try {
+      return await this._pmRunning;
+    } finally {
+      this._pmRunning = null;
+    }
+  }
+
+  heroRoles() {
+    const out = {};
+    for (const [id, h] of Object.entries((this.assets && this.assets.heroes) || {})) out[id] = heroRole(h);
+    return out;
+  }
+
+  async pickAdvise(accountId, { enemies = [], allies = [], current = null, laneEnemies = [], partner = null } = {}) {
     const id = Number(accountId);
-    const { pool, all, manual } = await this.pickPool(id);
+    const { pool, all, inactive, manual } = await this.pickPool(id);
     const cached = this.store.read('picktables.json', null);
     const tables = cached && cached.accountId === id ? cached.tables || {} : {};
     const meta = {};
     const m = this.store.read('meta.json', null);
     for (const r of (m && m.heroes) || []) meta[r.hero_id] = { winrate: r.winrate, games: r.games };
-    const advice = pickAdvice({ pool, tables, enemies: enemies.map(Number), allies: allies.map(Number), current, meta });
+    let pm = this.store.read('pickmeta.json', null);
+    let pmError = null;
+    if (!pm || pm.v !== 1 || Date.now() - pm.at > 6 * 3600e3) {
+      // нет меты — ждём (это несколько секунд); устарела — обновляем в фоне
+      const job = this.pickMeta().catch((e) => {
+        pmError = e.message;
+        this.emit('log', `pickmeta: ${e.message}`);
+        return null;
+      });
+      if (!pm || pm.v !== 1) pm = await Promise.race([job, new Promise((r) => setTimeout(() => r(null), 20000))]);
+    }
+    await this.loadAssets().catch(() => {});
+    const roles = this.heroRoles();
+    const opts = { enemies: enemies.map(Number), allies: allies.map(Number), laneEnemies: laneEnemies.map(Number), partner, roles, meta, pm };
+    const advice = pickAdvice({ pool, tables, current, ...opts });
     const ready = pool.filter((p) => tables[p.hero_id]).length;
     // план на игру: для текущего героя, а если он не отмечен — для лучшего пика
     let plan = null;
     if (enemies.length) {
       const hid = current ? Number(current) : advice.rows[0] && advice.rows[0].hero_id;
       let row = advice.all.find((r) => r.hero_id === hid) || null;
-      // текущий герой не из списка для рейтинга — считаем для него таблицу на лету (без скачиваний)
+      // текущий герой не из твоих — считаем для него отдельно (мета есть для всех героев)
       if (!row && hid) {
         try {
-          this._planTables = this._planTables || {};
-          if (!this._planTables[hid]) {
-            const o = await this.heroOutlook(id, hid, { download: 0, quiet: true });
-            this._planTables[hid] = { vs: o.vs, with: o.with };
-          }
-          const one = pickAdvice({ pool: [{ hero_id: hid, games: 0, wins: 0 }], tables: { [hid]: this._planTables[hid] }, enemies: enemies.map(Number), allies: allies.map(Number), meta });
+          const one = pickAdvice({ pool: [{ hero_id: hid, games: 0, wins: 0, recent: 0, recentWins: 0, lastDays: null }], tables: {}, ...opts });
           row = one.all[0] || null;
         } catch (e) {
           this.emit('log', `plan: ${e.message}`);
@@ -1218,10 +1288,25 @@ class Sync {
       try {
         counters = this.counterTable();
       } catch {}
-      plan = gamePlan({ row, counters, leak: this.store.read(`leaks-top-${id}.json`, null) });
+      plan = gamePlan({ row, counters, leak: this.store.read(`leaks-top-${id}.json`, null), laneEnemies: advice.laneEnemies });
+      if (plan && row) plan.chance = row.chance;
     }
     for (const r of advice.all) delete r.parts;
-    return { ...advice, plan, pool: pool.map((p) => p.hero_id), allHeroes: all.map((p) => ({ hero_id: p.hero_id, games: p.games, wins: p.wins })), manual, ready, poolSize: pool.length, tablesAt: cached ? cached.at : null, preparing: !!this._pickRunning };
+    return {
+      ...advice,
+      plan,
+      roles: Object.fromEntries([...enemies, ...allies, ...pool.map((p) => p.hero_id)].map((h) => [h, roles[h] || null])),
+      pool: pool.map((p) => p.hero_id),
+      inactive: inactive.map((p) => ({ hero_id: p.hero_id, lastDays: p.lastDays })),
+      allHeroes: all.map((p) => ({ hero_id: p.hero_id, games: p.games, wins: p.wins })),
+      manual,
+      ready,
+      poolSize: pool.length,
+      tablesAt: cached ? cached.at : null,
+      preparing: !!this._pickRunning,
+      metaInfo: pm ? { at: pm.at, badge: pm.badge, games: pm.games } : null,
+      metaError: pm ? null : pmError || 'мета ещё загружается',
+    };
   }
 
   // ---------- общие помощники для тренера и матчапов ----------

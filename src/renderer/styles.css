@@ -1107,3 +1107,85 @@ body.gaming *, body.gaming *::before, body.gaming *::after {
   animation: none !important;
   transition: none !important;
 }
+
+/* ===== Разбор ошибок («Что мешает тебе расти») ===== */
+.leak-focus { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 28px; padding: 26px 28px; border-radius: var(--radius); border: 1px solid rgba(255, 84, 104, 0.35); margin-bottom: 18px;
+  background: radial-gradient(620px 260px at 0% 0%, rgba(255, 51, 73, 0.16), transparent 70%), linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent), var(--panel); }
+.leak-kicker { display: inline-flex; align-items: center; gap: 6px; font: 600 11px var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+.leak-kicker .ico { width: 14px; height: 14px; }
+.leak-focus-title { font: 800 30px/1.12 var(--head); letter-spacing: -0.02em; margin: 8px 0 8px; }
+.leak-focus-freq { color: var(--text-2); font-size: 15px; }
+.leak-focus-freq b { color: var(--text); font-size: 16px; }
+.leak-cost { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.wr-compare { display: grid; gap: 6px; margin-top: 14px; max-width: 460px; }
+.wr-line { display: grid; grid-template-columns: 130px minmax(0, 1fr) 48px; align-items: center; gap: 10px; font-size: 12.5px; }
+.wr-label { color: var(--muted); }
+.wr-track { height: 8px; border-radius: 4px; background: var(--bg-2); border: 1px solid var(--line); overflow: hidden; }
+.wr-track span { display: block; height: 100%; border-radius: 4px; }
+.wr-track span.bad { background: var(--bad); }
+.wr-track span.good { background: var(--good); }
+.wr-line b { text-align: right; }
+.leak-fix { margin-top: 18px; }
+.leak-fix-title, .leak-side-title { font: 600 11px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+.leak-side-title { margin-top: 14px; }
+.leak-focus-side .leak-side-title { margin-top: 0; }
+.leak-fix ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; color: var(--text-2); line-height: 1.45; }
+.leak-fix li::marker { color: var(--accent); font-weight: 700; }
+.leak-examples { display: grid; gap: 8px; }
+.leak-ex { display: flex; gap: 10px; align-items: flex-start; text-align: left; padding: 10px 12px; border-radius: 10px; background: var(--bg-2); border: 1px solid var(--line); color: var(--text); cursor: pointer; font: inherit; }
+.leak-ex:hover { border-color: var(--line-2); background: var(--panel-2); }
+.leak-ex:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.leak-ex-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.leak-ex-moments { display: grid; gap: 2px; margin-top: 4px; font-size: 12.5px; color: var(--text-2); }
+.leak-ex-moments b { color: var(--accent-2); font-size: 12px; }
+.leak-list { display: grid; gap: 8px; }
+.leak-row { border: 1px solid var(--line); border-radius: 10px; background: var(--bg-2); }
+.leak-row.open { border-color: var(--line-2); }
+.leak-row-head { display: flex; align-items: center; gap: 14px; width: 100%; padding: 12px 14px; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.leak-row-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 10px; }
+.leak-rank { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; background: var(--panel-2); border: 1px solid var(--line-2); font-weight: 700; font-size: 12px; color: var(--text-2); flex: none; }
+.leak-area { font: 600 10.5px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
+.leak-title { font: 650 15px/1.3 var(--head); margin-top: 2px; }
+.leak-freq { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); flex: none; }
+.leak-freq-bar { width: 90px; height: 6px; border-radius: 3px; background: var(--panel-3); overflow: hidden; }
+.leak-freq-bar span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.leak-row-body { padding: 0 14px 16px 54px; }
+.habit-grid { display: grid; gap: 0; }
+.habit-head, .habit-row { display: grid; grid-template-columns: minmax(0, 2.2fr) repeat(3, minmax(70px, 0.7fr)) minmax(110px, 0.9fr); gap: 12px; align-items: center; padding: 10px 4px; }
+.habit-head { font: 600 11px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); border-bottom: 1px solid var(--line); }
+.habit-row { border-bottom: 1px solid var(--line); }
+.habit-row:last-child { border-bottom: 0; }
+.habit-label { font-weight: 600; }
+.habit-why { font-size: 12px; color: var(--dim); margin-top: 2px; }
+.habit-row b.bad { color: var(--bad); }
+.habit-row b.ok { color: var(--good); }
+.habit-link { color: var(--text-2); }
+.moments { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.moment { display: inline-flex; gap: 6px; align-items: baseline; padding: 4px 9px; border-radius: 7px; background: var(--panel-2); border: 1px solid var(--line-2); color: var(--text-2); font: 500 12.5px var(--body); cursor: pointer; }
+.moment b { color: var(--accent-2); font-size: 12px; }
+.moment:hover:not([disabled]) { border-color: var(--accent); color: var(--text); }
+.moment.on { border-color: var(--accent); background: rgba(255, 51, 73, 0.12); color: var(--text); }
+.moment[disabled] { cursor: default; }
+.moment:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mleak-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 18px; margin-top: 14px; align-items: start; }
+.mleak-grid.nomap { grid-template-columns: 1fr; }
+.mleak-list { display: grid; gap: 10px; }
+.mleak { padding: 14px 16px; border-radius: 10px; background: var(--bg-2); border: 1px solid var(--line); border-left: 3px solid var(--warn); }
+.mleak.bad { border-left-color: var(--bad); }
+.mleak-head { display: grid; gap: 2px; }
+.mleak-head b { font: 650 15px/1.3 var(--head); }
+.mleak-text { color: var(--text-2); font-size: 13.5px; margin-top: 6px; line-height: 1.45; }
+.mleak-map { position: sticky; top: 12px; }
+.mleak-good { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+@media (max-width: 1100px) {
+  .leak-focus { grid-template-columns: 1fr; }
+  .mleak-grid { grid-template-columns: 1fr; }
+  .mleak-map { position: static; max-width: 420px; }
+}
+@media (max-width: 760px) {
+  .habit-head { display: none; }
+  .habit-row { grid-template-columns: 1fr 1fr 1fr; }
+  .habit-row > div:first-child { grid-column: 1 / -1; }
+  .leak-row-head { flex-wrap: wrap; }
+  .leak-row-body { padding-left: 14px; }
+}

@@ -56,6 +56,7 @@ contextBridge.exposeInMainWorld('dc', {
   recLearn: (slot, heroId) => call('rec:learn', { slot, heroId }),
   recForget: () => call('rec:forget'),
   recStatus: () => call('rec:status'),
+  leaks: () => call('leaks:get'),
   gameModeStatus: () => call('game:mode'),
   matchBuild: (matchId, accountId, slot) => call('build:get', { matchId, accountId, slot }),
   buildText: (b) => call('build:text', b),

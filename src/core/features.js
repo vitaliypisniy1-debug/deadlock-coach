@@ -95,6 +95,12 @@ function playerFeatures(p, match, assets = null) {
     if (d0 !== null && d1 !== null) spikeDmg = (d1 - d0) / 3;
   }
 
+  // Тайминги карты (только в матчах, скачанных с версии 0.11: в старых этих полей нет)
+  const has = (f) => st.length > 0 && st[0][f] !== undefined;
+  const atS = (f, t) => (has(f) && t <= endS + 5 ? valueAt(st, f, t) : null);
+  const pu = Array.isArray(p.pu) ? p.pu : null;
+  const puBy = (t) => (pu && endS >= t ? pu.filter(([pt]) => pt <= t).length : null);
+
   // Противники по линии (если API отдал назначенную линию)
   const laneFoes = p.lane !== null && p.lane !== undefined ? enemies.filter((x) => x.lane === p.lane) : [];
   const laneFoeNw10 = laneFoes.length ? median(laneFoes.map((x) => at(x.stats, 'nw', 10)).filter((v) => v !== null)) : null;
@@ -174,6 +180,14 @@ function playerFeatures(p, match, assets = null) {
     firstBigT: big ? big[1] : null,
     firstBigId: big ? big[0] : null,
     firstHugeT: huge ? huge[1] : null,
+    brk9: atS('g_brk', 540),
+    brk20: atS('g_brk', 1200),
+    neu9: atS('g_neutral', 540),
+    pu10: puBy(600),
+    pu20: puBy(1200),
+    tre20: atS('g_treasure', 1200),
+    lost20: atS('g_lost', 1200),
+    lostPerDeath: p.d >= 2 && last && has('g_lost') ? last.g_lost / p.d : null,
     spikeFights: spikeN ? spikeFought / spikeN : null,
     spikeDmg,
     itemsSold: itemFates(p.items, assets).filter((f) => f.fate === 'sold').length,

@@ -411,6 +411,7 @@ function registerIpc() {
     return auth.accountId;
   };
   handle('coach:get', async (opts) => sync.coach(authId(), opts || {}));
+  handle('leaks:get', async () => sync.leaks(authId()));
   handle('mu:mine', async () => sync.matchups(authId()));
   handle('mu:hero', async (heroId) => sync.heroMatchups(heroId));
   handle('mu:outlook', async (heroId) => {

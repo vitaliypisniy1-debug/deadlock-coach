@@ -1,7 +1,7 @@
 'use strict';
 // Сбор данных: справочники, ладдер, матчи топов, твои матчи.
 
-const { extractMatch } = require('../core/extract');
+const { extractMatch, EXTRACT_V } = require('../core/extract');
 const { buildMeta, isStandardMatch, firstPurchases, isUpgrade, itemFates } = require('../core/meta');
 const { benchmarkPlayers, analyze, SOURCE_NAMES } = require('../core/compare');
 const { valueAt, lastMinute, SOURCE_FIELDS } = require('../core/timeline');
@@ -11,7 +11,8 @@ const { rankBuilds } = require('../core/buildMatch');
 const { NotFoundError } = require('./api');
 const { playersFromMatches, mergeCandidates, rankOf } = require('../core/discover');
 const { parseSteamInput, vanityOf, resolveVanity } = require('./steamIds');
-const { buildOverview } = require('../core/overview');
+const { buildOverview, rankFromBadges } = require('../core/overview');
+const { gameLeaks, leakProfile, counterItems, winLink, RANK_BENCH, WIN_LINKS } = require('../core/leaks');
 const { mapData } = require('../core/mapdata');
 const { heroReport } = require('../core/heroReport');
 const { updateCoach } = require('../core/coach');
@@ -96,6 +97,31 @@ class Sync {
 
   progress(stage, done, total, text) {
     this.emit('progress', { stage, done, total, text });
+  }
+
+  // Матч сохранён старой версией (до 0.11: без коробок, статуй, урона по врагам и режима боя
+  // в маршрутах) — его стоит перекачать. Один раз: если API его уже не отдаёт, больше не пробуем.
+  needsUpgrade(m) {
+    return !!m && (m.v || 1) < EXTRACT_V && !m.upgradeTried;
+  }
+
+  needsDownload(id) {
+    const m = this.store.getMatch(Number(id));
+    return !m || this.needsUpgrade(m);
+  }
+
+  // Скачать свой матч (с маршрутами). Не вышло, но есть старая копия — отдаём её.
+  async fetchMine(id) {
+    try {
+      return extractMatch(await this.api.matchMetadata(Number(id)), { paths: true });
+    } catch (e) {
+      const stored = this.store.getMatch(Number(id));
+      if (stored) {
+        stored.upgradeTried = true;
+        return stored;
+      }
+      throw e;
+    }
   }
 
   // Игровой режим: фоновое обновление ждёт, пока игра не закроется.
@@ -548,7 +574,10 @@ class Sync {
     }
     this.store.write('top.json', top); // сохраняем, кто что играл в последних матчах
     const now = nowSec();
-    const todo = [...ids].filter((id) => !this.store.hasMatch(id) && !(missing[id] && now - missing[id] < 2 * 3600));
+    const fresh = [...ids].filter((id) => !this.store.hasMatch(id) && !(missing[id] && now - missing[id] < 2 * 3600));
+    // старые копии (до 0.11) понемногу перекачиваем: новые сначала, не больше 120 за раз
+    const upgrade = [...ids].filter((id) => this.needsUpgrade(this.store.getMatch(id))).sort((a, b) => b - a).slice(0, 120);
+    const todo = fresh.concat(upgrade);
     const mr = (report.matches = { unique: ids.size, alreadyHave: ids.size - todo.length, todo: todo.length, downloaded: 0, notFound: 0, failed: 0 });
     let done = 0;
     for (const id of todo) {
@@ -561,6 +590,12 @@ class Sync {
         delete missing[id];
         mr.downloaded += 1;
       } catch (e) {
+        const stored = this.store.getMatch(id);
+        if (stored) {
+          stored.upgradeTried = true;
+          this.store.putMatch(stored);
+          continue;
+        }
         if (e instanceof NotFoundError) {
           missing[id] = now;
           mr.notFound += 1;
@@ -701,7 +736,7 @@ class Sync {
     const id = Number(matchId);
     let m = this.store.getMatch(id);
     const needPaths = paths && m && !m.paths && !m.pathsTried;
-    if (!m || needPaths) {
+    if (!m || needPaths || this.needsUpgrade(m)) {
       try {
         m = extractMatch(await this.api.matchMetadata(id), { paths });
         if (paths) m.pathsTried = true;
@@ -709,6 +744,7 @@ class Sync {
         const stored = this.store.getMatch(id);
         if (stored) {
           stored.pathsTried = true;
+          stored.upgradeTried = true;
           return stored;
         }
         if (e instanceof NotFoundError) throw new Error('Подробных данных этого матча пока нет в deadlock-api. Попробуй позже.');
@@ -901,7 +937,7 @@ class Sync {
     const since = nowSec() - d * DAY;
     const inPeriod = hist.filter((m) => (Number(m.start_time) || 0) >= since);
     // Скачиваем подробные данные своих матчей за период (уже скачанные — из памяти).
-    const need = inPeriod.filter((m) => !this.store.getMatch(Number(m.match_id))).slice(0, 80);
+    const need = inPeriod.filter((m) => this.needsDownload(m.match_id)).slice(0, 80);
     let notFound = 0;
     let failed = 0;
     const mine = new Set(this.store.read('mine.json', []));
@@ -909,7 +945,7 @@ class Sync {
       const mid = Number(need[i].match_id);
       this.progress('overview', i, need.length, `Скачиваю твои матчи: ${i + 1} из ${need.length}`);
       try {
-        const m = extractMatch(await this.api.matchMetadata(mid), { paths: true });
+        const m = await this.fetchMine(mid);
         m.pathsTried = true;
         this.store.putMatch(m);
         mine.add(mid);
@@ -959,12 +995,12 @@ class Sync {
     const hid = Number(heroId);
     const hist = await this.api.matchHistory(id, 2 * 60e3);
     const rows = hist.filter((m) => Number(m.hero_id) === hid).sort((a, b) => (b.start_time || 0) - (a.start_time || 0)).slice(0, limit);
-    const need = rows.filter((m) => !this.store.getMatch(Number(m.match_id)));
+    const need = rows.filter((m) => this.needsDownload(m.match_id));
     const mine = new Set(this.store.read('mine.json', []));
     for (let i = 0; i < need.length; i++) {
       this.progress('hero', i, need.length, `Скачиваю игры на герое: ${i + 1} из ${need.length}`);
       try {
-        const m = extractMatch(await this.api.matchMetadata(Number(need[i].match_id)), { paths: true });
+        const m = await this.fetchMine(need[i].match_id);
         m.pathsTried = true;
         this.store.putMatch(m);
       } catch (e) {
@@ -1135,7 +1171,90 @@ class Sync {
     return out;
   }
 
+  // Что топы чаще берут против каждого героя (все игроки в матчах топового уровня).
+  // Считается раз на набор матчей — кэш до следующего обновления меты.
+  counterTable() {
+    const all = this.store.allMatches();
+    const key = `${all.length}:${this.assets ? Object.keys(this.assets.items || {}).length : 0}`;
+    if (this._counters && this._counters.key === key) return this._counters.table;
+    const mine = new Set(this.store.read('mine.json', []));
+    const records = [];
+    for (const m of all) {
+      if (mine.has(m.match_id) || !isStandardMatch(m)) continue;
+      for (const p of m.players) if (!p.abandoned && p.items && p.items.length) records.push({ match: m, player: p });
+    }
+    const cost = (id) => (this.assets && this.assets.items && this.assets.items[id] && this.assets.items[id].cost) || 0;
+    const table = counterItems(records, { isItem: (id) => isUpgrade(this.assets, id) && cost(id) >= 1250 });
+    this._counters = { key, table };
+    return table;
+  }
+
+  // Разбор ошибок: каждая из последних игр + общая картина «что мешает расти».
+  async leaks(accountId, { limit = 30 } = {}) {
+    const id = Number(accountId);
+    const list = await this.myLoadedGames(id, { limit, download: limit, label: 'Скачиваю твои матчи для разбора ошибок' });
+    const topHero = this.topFeaturesByHero();
+    const counters = this.counterTable();
+    const picks = this.store.read('picktables.json', null);
+    const heroName = (hid) => (this.assets && this.assets.heroes[hid] ? this.assets.heroes[hid].name : `Герой ${hid}`);
+    const itemName = (iid) => (this.assets && this.assets.items[iid] ? this.assets.items[iid].name : `Предмет ${iid}`);
+    const badges = [];
+    for (const x of list) if (x.match && x.me && Array.isArray(x.match.badge) && typeof x.match.badge[x.me.team] === 'number') badges.push(x.match.badge[x.me.team]);
+    const rank = rankFromBadges(badges);
+    const tier = rank ? rank.tier : null;
+    const games = [];
+    for (const x of list) {
+      if (!x.match || !x.me) continue;
+      const m = x.match;
+      const me = x.me;
+      const f = playerFeatures(me, m, this.assets);
+      const table = picks && picks.tables && picks.tables[me.hero_id];
+      const laneVs = table && table.vs ? Object.fromEntries(Object.entries(table.vs).map(([k, v]) => [k, typeof v.pro === 'number' ? v.pro : v.delta])) : null;
+      const fresh = (m.v || 1) >= EXTRACT_V;
+      const leaks = gameLeaks({ m, me, f, ref: topHero.get(me.hero_id) || null, tier, assets: this.assets, counters, laneVs, heroName, itemName });
+      games.push({ match_id: m.match_id, start_time: m.start_time, duration_s: m.duration_s, hero: me.hero_id, won: me.won, k: me.k, d: me.d, a: me.a, fresh, leaks, f });
+    }
+    const profile = leakProfile(games.filter((g) => g.fresh));
+    // Привычки до 10:00: твои медианы, твой ранг, высокий ранг и как это связано с победой
+    const med = (k) => {
+      const v = games.filter((g) => g.fresh).map((g) => g.f[k]).filter((x) => x !== null && x !== undefined && Number.isFinite(x)).sort((a, b) => a - b);
+      return v.length >= 3 ? v[Math.floor(v.length / 2)] : null;
+    };
+    const tierB = tier ? RANK_BENCH[Math.max(1, Math.min(10, tier))] : null;
+    const habits = ['d10', 'neu9', 'brk9', 'pu10', 'brk20', 'pu20'].map((k) => {
+      const key = k === 'd10' ? 'd9' : k;
+      const mine = med(k);
+      return {
+        key: k,
+        mine,
+        rank: tierB ? tierB[k] ?? null : null,
+        top: RANK_BENCH[10][k] ?? null,
+        link: WIN_LINKS[key] ? { mine: winLink(key, mine), best: WIN_LINKS[key][key === 'd9' ? 0 : WIN_LINKS[key].length - 1] } : null,
+      };
+    });
+    return {
+      rank,
+      games: games.map(({ f, ...g }) => ({ ...g, leaks: g.leaks.map((l) => ({ key: l.key, area: l.area, level: l.level, title: l.title, text: l.text, fix: l.fix, moments: l.moments, score: l.score })) })),
+      fresh: games.filter((g) => g.fresh).length,
+      total: games.length,
+      profile,
+      habits,
+      countersReady: Object.keys(counters).length > 0,
+      topsReady: topHero.size > 0,
+    };
+  }
+
   topFeaturesByHero() {
+    // кэш до изменения набора матчей (считать заново — секунды на тысячах игр)
+    const all = this.store.allMatches();
+    const key = `${all.length}:${all.reduce((s, m) => s + (m.v || 1), 0)}:${this.topAccounts().size}`;
+    if (this._topHero && this._topHero.key === key) return this._topHero.map;
+    const map = this.computeTopFeatures();
+    this._topHero = { key, map };
+    return map;
+  }
+
+  computeTopFeatures() {
     const by = new Map();
     for (const r of this.topRecords()) {
       if (!by.has(r.player.hero_id)) by.set(r.player.hero_id, []);
@@ -1149,11 +1268,11 @@ class Sync {
     const id = Number(accountId);
     const hist = await this.api.matchHistory(id, 60e3);
     const rows = hist.slice().sort((a, b) => (Number(b.start_time) || 0) - (Number(a.start_time) || 0)).slice(0, limit);
-    const need = rows.filter((m) => !this.store.getMatch(Number(m.match_id))).slice(0, download);
+    const need = rows.filter((m) => this.needsDownload(m.match_id)).slice(0, download);
     for (let i = 0; i < need.length; i++) {
       this.progress('coach', i, need.length, `${label}: ${i + 1} из ${need.length}`);
       try {
-        const m = extractMatch(await this.api.matchMetadata(Number(need[i].match_id)), { paths: true });
+        const m = await this.fetchMine(need[i].match_id);
         m.pathsTried = true;
         this.store.putMatch(m);
       } catch (e) {
@@ -1226,12 +1345,21 @@ class Sync {
       tilt: afterL.length >= 4 && wrOf(afterL) < wrOf(decided) - 0.12,
     };
     const tipsCache = new Map();
+    const counters = this.counterTable();
+    const tierOf = (g) => (g.match && Array.isArray(g.match.badge) && g.me && typeof g.match.badge[g.me.team] === 'number' ? Math.floor(g.match.badge[g.me.team] / 10) : null);
     const tipsFor = (g) => {
       if (!g.f || !g.match) return [];
       if (tipsCache.has(g.match_id)) return tipsCache.get(g.match_id);
       const ref = topHero.get(g.hero) || lobby;
       const lob = refAll(g.match.players.filter((p) => p !== g.me && !p.abandoned).map((p) => playerFeatures(p, g.match, this.assets)));
-      const t = matchTips({ me: g.f, ref, lobby: lob, heroName, itemName, won: g.me.won }).sort((a, b) => b.score - a.score);
+      const tips = matchTips({ me: g.f, ref, lobby: lob, heroName, itemName, won: g.me.won });
+      // ошибки с моментами (лес во время драк, размены, тайминги карты) — в общий список
+      let lk = [];
+      try {
+        lk = gameLeaks({ m: g.match, me: g.me, f: g.f, ref: topHero.get(g.hero) || null, tier: tierOf(g), assets: this.assets, counters, heroName, itemName })
+          .map((l) => ({ title: l.title, text: l.text, tip: l.fix && l.fix[0], area: l.area, level: l.level, score: l.score }));
+      } catch {}
+      const t = tips.concat(lk).sort((a, b) => b.score - a.score);
       tipsCache.set(g.match_id, t);
       return t;
     };
@@ -1297,12 +1425,12 @@ class Sync {
         hist = await this.api.matchHistory(id, 2 * 60e3);
       } catch {}
       const rows = hist.filter((m) => Number(m.hero_id) === hid).sort((a, b) => (b.start_time || 0) - (a.start_time || 0)).slice(0, 60);
-      const need = rows.filter((m) => !this.store.getMatch(Number(m.match_id))).slice(0, download);
+      const need = rows.filter((m) => this.needsDownload(m.match_id)).slice(0, download);
       const name = this.assets && this.assets.heroes[hid] ? this.assets.heroes[hid].name : 'герое';
       for (let i = 0; i < need.length; i++) {
         if (!quiet) this.progress('hero', i, need.length, `Скачиваю твои игры на ${name}: ${i + 1} из ${need.length}`);
         try {
-          const m = extractMatch(await this.api.matchMetadata(Number(need[i].match_id)), { paths: true });
+          const m = await this.fetchMine(need[i].match_id);
           m.pathsTried = true;
           this.store.putMatch(m);
         } catch {}
@@ -1374,7 +1502,7 @@ class Sync {
   async loadMatch(matchId) {
     const id = Number(matchId);
     let m = this.store.getMatch(id);
-    if (!m || (!m.paths && !m.pathsTried)) {
+    if (!m || (!m.paths && !m.pathsTried) || this.needsUpgrade(m)) {
       const stored = m;
       try {
         m = extractMatch(await this.api.matchMetadata(id), { paths: true });
@@ -1441,7 +1569,20 @@ class Sync {
     const nameOf = (id) => (this.assets && this.assets.items[id] ? this.assets.items[id].name : `Предмет ${id}`);
     const result = analyze({ me, myMatch: m, bench, assets: this.assets, nameOf });
     const benchDays = bench.length ? Math.ceil((nowSec() - Math.min(...bench.map((b) => b.start_time))) / DAY) : 0;
+    let leaks = [];
+    try {
+      const picks = this.store.read('picktables.json', null);
+      const table = picks && picks.tables && picks.tables[me.hero_id];
+      const laneVs = table && table.vs ? Object.fromEntries(Object.entries(table.vs).map(([k, v]) => [k, typeof v.pro === 'number' ? v.pro : v.delta])) : null;
+      const heroName = (hid) => (this.assets && this.assets.heroes[hid] ? this.assets.heroes[hid].name : `Герой ${hid}`);
+      const tierOf = Array.isArray(m.badge) && typeof m.badge[me.team] === 'number' ? Math.floor(m.badge[me.team] / 10) : null;
+      leaks = gameLeaks({ m, me, f: playerFeatures(me, m, this.assets), ref: this.topFeaturesByHero().get(me.hero_id) || null, tier: tierOf, assets: this.assets, counters: this.counterTable(), laneVs, heroName, itemName: nameOf });
+    } catch (e) {
+      this.emit('log', `leaks: ${e.message}`);
+    }
     return {
+      leaks,
+      fresh: (m.v || 1) >= EXTRACT_V,
       map: mapData(m),
       mySlot: me.slot,
       match: { match_id: m.match_id, duration_s: m.duration_s, start_time: m.start_time, hero_id: me.hero_id, won: me.won, k: me.k, d: me.d, a: me.a, nw: me.nw },

@@ -3,6 +3,9 @@
 // Полные метаданные весят сотни КБ; нам нужна только малая часть, поэтому
 // храним выжимку (~10–20 КБ на матч) — так база на сотни матчей остаётся лёгкой.
 
+// Версия выжимки: 2 — коробки, командный бонус, статуи, урон по врагам, режим боя в маршрутах.
+const EXTRACT_V = 2;
+
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 
 // Короткие имена полей для снимков статистики (накопительные значения "на момент t").
@@ -27,11 +30,76 @@ function compactStat(s) {
     g_boss: num(s.gold_boss) + num(s.gold_boss_orb),
     g_treasure: num(s.gold_treasure),
     g_lost: num(s.gold_death_loss),
+    // источники душ из списка gold_sources: 12 — коробки (ломаемые ящики), 8 — командный бонус
+    g_brk: goldSource(s, 12),
+    g_bonus: goldSource(s, 8),
     hit: num(s.shots_hit),
     miss: num(s.shots_missed),
     hhit: num(s.hero_bullets_hit),
     hcrit: num(s.hero_bullets_hit_crit),
   };
+}
+
+// Души из конкретного источника (EGoldSource): 1 герои, 2 крипы, 3 лес, 4 боссы,
+// 5 сокровища, 6 помощь, 7 отбор, 8 командный бонус, 12 коробки.
+function goldSource(s, id) {
+  const list = Array.isArray(s.gold_sources) ? s.gold_sources : null;
+  if (list) {
+    const e = list.find((x) => x && x.source === id);
+    return e ? num(e.gold) + num(e.gold_orbs) : 0;
+  }
+  // плоские поля (как в SQL-таблице deadlock-api); нет и их — данных нет (undefined, а не 0)
+  if (id === 12 && typeof s.gold_source_breakable_gold === 'number') return s.gold_source_breakable_gold;
+  if (id === 8 && typeof s.gold_source_team_bonus_gold === 'number') return s.gold_source_team_bonus_gold;
+  return undefined;
+}
+
+// Постоянные бафы со статуй: [время, тип] по возрастанию времени.
+function powerUps(p) {
+  if (!Array.isArray(p.power_up_buffs)) return null; // нет данных — не «ноль статуй»
+  const out = [];
+  for (const b of p.power_up_buffs || []) {
+    if (!b || !b.is_permanent) continue;
+    const type = String(b.type || '').replace(/_permanent_pickup/, '').replace(/_pickup$/, '');
+    for (const t of b.pickup_times_s || []) if (typeof t === 'number') out.push([t, type]);
+  }
+  return out.sort((a, b) => a[0] - b[0]);
+}
+
+// Урон между игроками по времени: { t: [секунды снимков], d: { "кто>кого": [накопленный урон] } }.
+// В матрице каждый урон записан дважды: по конкретному оружию/способности и по общей
+// категории (Bullet, Ability, Melee). Берём только stat_type 0 (урон) и общие категории —
+// их сумма ровно совпадает с player_damage игрока (проверено на матче).
+function extractDamage(mi) {
+  const dm = mi.damage_matrix;
+  if (!dm || !Array.isArray(dm.damage_dealers) || !Array.isArray(dm.sample_time_s)) return null;
+  const sd = dm.source_details || {};
+  const types = Array.isArray(sd.stat_type) ? sd.stat_type : null;
+  const names = Array.isArray(sd.source_name) ? sd.source_name : null;
+  const counts = (i) => {
+    if (!types || !names) return true;
+    return types[i] === 0 && /^[A-Z][A-Za-z]*$/.test(String(names[i] || ''));
+  };
+  const n = dm.sample_time_s.length;
+  const teamOf = new Map((mi.players || []).map((p) => [p.player_slot, p.team]));
+  const d = {};
+  for (const dealer of dm.damage_dealers) {
+    for (const src of dealer.damage_sources || []) {
+      if (!counts(src.source_details_index)) continue;
+      for (const tp of src.damage_to_players || []) {
+        // только урон по врагам: так запись остаётся маленькой (~4 КБ на матч)
+        const ta = teamOf.get(dealer.dealer_player_slot);
+        const tb = teamOf.get(tp.target_player_slot);
+        if (ta === undefined || tb === undefined || ta === tb) continue;
+        const key = `${dealer.dealer_player_slot}>${tp.target_player_slot}`;
+        const arr = d[key] || (d[key] = new Array(n).fill(0));
+        const vals = tp.damage || [];
+        // массив может быть короче: последние значения — без изменений
+        for (let i = 0; i < n; i++) arr[i] += num(vals[Math.min(i, vals.length - 1)] ?? 0);
+      }
+    }
+  }
+  return { t: dm.sample_time_s.slice(), d };
 }
 
 // Позиция {x, y} из разных возможных форм ответа API.
@@ -56,7 +124,10 @@ function deathRows(p) {
 }
 
 // Маршруты героев (match_paths): позиции раз в step секунд в мировых координатах.
-// Ответ API: { interval_s, x_resolution, y_resolution, paths: [{ player_slot, x_min, x_max, y_min, y_max, x_pos[], y_pos[], alive[]? }] }
+// Ответ API: { interval_s, x_resolution, y_resolution, paths: [{ player_slot, x_min, x_max, y_min, y_max, x_pos[], y_pos[], health[], combat_type[] }] }
+// Точка: [x, y, жив, с кем бился за эти step секунд (биты: 1 герои, 2 крипы линии, 4 лес), здоровье %].
+// combat_type в данных: 0 — нет боя, 1 — с героями, 2 — с крипами линии, 3 — с лесными крипами
+// (проверено на матче: доля секунд «3» совпадает с убитыми лесными крипами, корреляция 0,9).
 function extractPaths(mi, step = 5) {
   const mp = mi.match_paths || mi.paths;
   if (!mp || !Array.isArray(mp.paths) || !mp.paths.length) return null;
@@ -72,9 +143,20 @@ function extractPaths(mi, step = 5) {
     const scaleX = xr && typeof p.x_min === 'number' && typeof p.x_max === 'number' ? (v) => p.x_min + (v / xr) * (p.x_max - p.x_min) : (v) => v;
     const scaleY = yr && typeof p.y_min === 'number' && typeof p.y_max === 'number' ? (v) => p.y_min + (v / yr) * (p.y_max - p.y_min) : (v) => v;
     const pts = [];
+    const hp = Array.isArray(p.health) ? p.health : null;
+    const ct = Array.isArray(p.combat_type) ? p.combat_type : null;
     for (let i = 0; i < xs.length; i += every) {
-      const alive = Array.isArray(p.alive) ? (p.alive[i] ? 1 : 0) : 1;
-      pts.push([Math.round(scaleX(xs[i])), Math.round(scaleY(ys[i])), alive]);
+      let alive = Array.isArray(p.alive) ? (p.alive[i] ? 1 : 0) : 1;
+      if (!Array.isArray(p.alive) && hp) alive = hp[i] > 0 ? 1 : 0;
+      let mask = 0;
+      if (ct) {
+        for (let j = i; j < Math.min(i + every, ct.length); j++) {
+          if (ct[j] === 1) mask |= 1;
+          else if (ct[j] === 2) mask |= 2;
+          else if (ct[j] === 3) mask |= 4;
+        }
+      }
+      pts.push([Math.round(scaleX(xs[i])), Math.round(scaleY(ys[i])), alive, mask, hp ? Math.round(hp[i]) : null]);
     }
     out[p.player_slot] = pts;
   }
@@ -116,11 +198,18 @@ function extractMatch(raw, { paths = false } = {}) {
       items,
       deaths_t: (p.death_details || []).map(deathTime).filter((t) => t !== null),
       deaths: deathRows(p),
+      pu: powerUps(p),
       stats,
     };
   });
+  const objectives = (mi.objectives || [])
+    .filter((o) => o && typeof o.destroyed_time_s === 'number' && o.destroyed_time_s > 0)
+    .map((o) => [teamNum(o.team), o.team_objective_id ?? o.team_objective ?? null, o.destroyed_time_s]);
+  const midBoss = (mi.mid_boss || [])
+    .filter((b) => b && typeof b.destroyed_time_s === 'number')
+    .map((b) => [teamNum(b.team_killed), teamNum(b.team_claimed), b.destroyed_time_s]);
   return {
-    v: 1,
+    v: EXTRACT_V,
     match_id: Number(mi.match_id),
     start_time: num(mi.start_time),
     duration_s: num(mi.duration_s),
@@ -130,7 +219,17 @@ function extractMatch(raw, { paths = false } = {}) {
     badge: [mi.average_badge_team0 ?? null, mi.average_badge_team1 ?? null],
     players,
     paths: paths ? extractPaths(mi) : null,
+    dmg: extractDamage(mi),
+    objectives,
+    midBoss,
   };
 }
 
-module.exports = { extractMatch, compactStat, extractPaths };
+// Команда в ответе бывает числом (0/1) или строкой ("Team0"/"k_ECitadelLobbyTeam_Team1").
+function teamNum(v) {
+  if (typeof v === 'number') return v;
+  const m = /([01])\s*$/.exec(String(v || ''));
+  return m ? Number(m[1]) : null;
+}
+
+module.exports = { EXTRACT_V, extractMatch, compactStat, extractPaths, extractDamage, goldSource, powerUps };

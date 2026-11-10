@@ -23,6 +23,7 @@
     top: null,
     busy: false,
     coach: { data: null, loading: false, error: null, for: null },
+    growth: { data: null, loading: false, error: null, for: null, open: null, moment: {} },
     prep: { myHero: null, enemies: [], laneFoe: null, result: null, loading: false, mu: null, muLoading: false, muError: null, outlook: {} },
     heroMu: {},
     ov: { days: 7, data: null, loading: false, error: null, mode: 'lobby', srcMode: 'top', for: null },
@@ -90,7 +91,7 @@
 
   // ---------- навигация ----------
   // Меню: «Моя игра» (главная, тренер, матчи, герои) и «Мета» (герои меты, перед игрой, про-игроки).
-  const VIEW_OF = { home: 'overview', overview: 'overview', coach: 'coach', matches: 'camp', camp: 'camp', myheroes: 'camp', meta: 'meta', players: 'meta', prep: 'prep', settings: 'settings' };
+  const VIEW_OF = { home: 'overview', overview: 'overview', coach: 'coach', growth: 'growth', matches: 'camp', camp: 'camp', myheroes: 'camp', meta: 'meta', players: 'meta', prep: 'prep', settings: 'settings' };
   function navKey() {
     if (S.view === 'camp') return S.my.mode === 'hero' ? 'myheroes' : 'matches';
     if (S.view === 'meta') return S.metaTab === 'players' ? 'players' : 'meta';
@@ -117,7 +118,7 @@
     if (v === 'players') S.metaTab = 'players';
     const view = VIEW_OF[v] || v;
     S.view = view;
-    for (const id of ['overview', 'coach', 'meta', 'camp', 'prep', 'settings']) $(`view-${id}`).hidden = id !== view;
+    for (const id of ['overview', 'coach', 'growth', 'meta', 'camp', 'prep', 'settings']) $(`view-${id}`).hidden = id !== view;
     render();
     if (navKey() !== prevKey) {
       document.querySelector('.main').scrollTop = 0;
@@ -132,6 +133,7 @@
     }
     if (view === 'overview' && S.auth && !S.ov.loading && (!S.ov.data || S.ov.for !== S.auth.accountId)) loadOverview();
     if (view === 'coach' && S.auth && !S.coach.loading && (!S.coach.data || S.coach.for !== S.auth.accountId)) loadCoach(false);
+    if (view === 'growth' && S.auth && !S.growth.loading && (!S.growth.data || S.growth.for !== S.auth.accountId)) loadGrowth();
     if (view === 'prep' && S.auth && !S.prep.mu && !S.prep.muLoading) loadMyMatchups();
   }
   document.querySelectorAll('.nav-item').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
@@ -141,6 +143,7 @@
     renderAccount();
     if (S.view === 'overview') renderOverview();
     if (S.view === 'coach') renderCoach();
+    if (S.view === 'growth') renderGrowth();
     if (S.view === 'prep') renderPrep();
     if (S.view === 'meta') renderMeta();
     if (S.view === 'camp') renderCamp();
@@ -1384,7 +1387,7 @@
   }
 
   // ================= ОБЗОР =================
-  const RANK_NAMES = ['Obscurus', 'Initiate', 'Seeker', 'Acolyte', 'Sentinel', 'Mystic', 'Ritualist', 'Emissary', 'Oracle', 'Phantom', 'Ascendant', 'Eternus'];
+  const RANK_NAMES = ['Obscurus', 'Initiate', 'Seeker', 'Alchemist', 'Arcanist', 'Ritualist', 'Emissary', 'Archon', 'Oracle', 'Phantom', 'Ascendant', 'Eternus'];
   const rankName = (tier) => {
     const r = S.assets.ranks && S.assets.ranks[tier];
     return (r && r.name) || RANK_NAMES[tier] || `Ранг ${tier}`;
@@ -1762,6 +1765,7 @@
 
   async function openMatch(matchId) {
     S.my.selected = Number(matchId);
+    S.my.leakMoment = null;
     S.my.vs = null;
     S.my.analysis = null;
     S.my.error2 = null;
@@ -1967,6 +1971,39 @@
       h('div.match-list', items));
   }
 
+  // Ошибки этой игры с моментами; момент можно посмотреть на мини-карте (повтор позиций).
+  function matchLeaksPanel(A) {
+    const leaks = (A.leaks || []).filter((l) => l.level !== 'good');
+    const good = (A.leaks || []).filter((l) => l.level === 'good');
+    if (!leaks.length && !good.length) {
+      return A.fresh === false ? h('div.panel', h('h2', 'Ошибки этой игры'), h('div.muted', 'Матч сохранён старой версией программы, подробных данных нет. Открой его ещё раз чуть позже — программа перекачает данные.')) : null;
+    }
+    const hasMap = A.map && A.map.paths;
+    const mini = hasMap ? MapView(A.map, { focusSlot: A.mySlot ?? null, focusName: 'Ты', heroName, heroImg: heroImgSrc, mapAsset: S.assets.map || null, compact: true }) : null;
+    const pick = S.my.leakMoment || null;
+    if (mini && pick) mini.setTime(pick.t);
+    const cards = leaks.map((l, li) => h(`div.mleak.${l.level}`,
+      h('div.mleak-head', h('span.leak-area', l.area), h('b', l.title)),
+      h('div.mleak-text', l.text),
+      momentChips(l, mini ? (i, mo) => { S.my.leakMoment = { li, i, t: mo.t }; mini.setTime(mo.t); renderMomentSel(); } : null, pick && pick.li === li ? pick.i : null),
+      l.fix && l.fix.length ? h('div.tip', Icon('bulb'), h('span', l.fix[0])) : null));
+    const panel = h('div.panel.mleak-panel', h('div.row', h('h2', { style: { margin: 0 } }, 'Ошибки этой игры — по моментам'), h('div.grow'), h('button.btn.small', { onclick: () => setView('growth'), title: 'Какие ошибки повторяются из игры в игру' }, 'Все мои ошибки')),
+      good.length ? h('div.mleak-good', good.map((g) => h('span.pill.good', Icon('trophy'), g.title))) : null,
+      h(`div.mleak-grid${mini ? '' : '.nomap'}`, h('div.mleak-list', cards.length ? cards : h('div.muted', 'Явных ошибок в этой игре не нашёл.')),
+        mini ? h('div.mleak-map', mini, h('div.hint', pick ? `Позиции всех героев на ${F.time(pick.t)}. Ты — с белой обводкой.` : 'Нажми на время у ошибки — покажу, где были все герои в этот момент.')) : null));
+    function renderMomentSel() {
+      panel.querySelectorAll('.moment').forEach((b) => b.classList.remove('on'));
+      const sel = S.my.leakMoment;
+      if (!sel) return;
+      const card = panel.querySelectorAll('.mleak')[sel.li];
+      const btn = card && card.querySelectorAll('.moment')[sel.i];
+      if (btn) btn.classList.add('on');
+      const hint = panel.querySelector('.mleak-map .hint');
+      if (hint) hint.textContent = `Позиции всех героев на ${F.time(sel.t)}. Ты — с белой обводкой.`;
+    }
+    return panel;
+  }
+
   function analysisArea() {
     if (!S.my.selected) return h('div.empty', h('strong', 'Выбери матч слева'), 'Покажу поминутно: души, урон по героям, источники фарма, тайминги предметов и после каких покупок топы идут драться.');
     if (S.my.analyzing && !S.my.analysis) return skeleton('Загружаю матч и сравниваю с топами');
@@ -2121,7 +2158,143 @@
         }))),
       h('div.hint', 'Слева твоё значение, справа — медиана топов. Зелёный — не хуже топов.'));
 
-    return h('div', h('div.panel', head, bar, scores), mainPanel, variantPanel, phasePanel, sourcesPanel, spikePanel, chartPanel, A.map ? mapPanel(A.map, A.mySlot ?? null, 'Карта матча') : null, itemsPanel, insights, cpTable);
+    return h('div', h('div.panel', head, bar, scores), mainPanel, matchLeaksPanel(A), variantPanel, phasePanel, sourcesPanel, spikePanel, chartPanel, A.map ? mapPanel(A.map, A.mySlot ?? null, 'Карта матча') : null, itemsPanel, insights, cpTable);
+  }
+
+
+  // ================= РАЗБОР ОШИБОК =================
+  // Что мешает расти: повторяющиеся ошибки по последним играм, их цена и как исправить.
+  async function loadGrowth() {
+    if (!S.auth) return;
+    S.growth.loading = true;
+    S.growth.error = null;
+    if (S.view === 'growth') renderGrowth();
+    try {
+      S.growth.data = await dc.leaks();
+      S.growth.for = S.auth.accountId;
+    } catch (e) {
+      S.growth.error = e.message;
+    } finally {
+      S.growth.loading = false;
+      if (S.view === 'growth') renderGrowth();
+    }
+  }
+
+  const HABITS = {
+    d10: { label: 'Смерти до 10:00', fmt: (v) => String(Math.round(v * 10) / 10).replace('.', ','), lower: true, why: 'На всех рангах в среднем одна. Но каждая лишняя смерть на линии отнимает около 3–4% шанса на победу.' },
+    neu9: { label: 'Души с леса к 9:00', fmt: (v) => F.num(v), why: 'Лесной лагерь у линии — бесплатные души, пока ждёшь волну.' },
+    brk9: { label: 'Души с коробок к 9:00', fmt: (v) => F.num(v), why: 'Коробки у линии ломаются за пару выстрелов и дают души без риска.' },
+    pu10: { label: 'Статуи к 10:00', fmt: (v) => String(Math.round(v)), why: 'Каждая статуя — постоянный баф: здоровье, урон, скорость стрельбы до конца игры.' },
+    brk20: { label: 'Души с коробок к 20:00', fmt: (v) => F.num(v) },
+    pu20: { label: 'Статуи к 20:00', fmt: (v) => String(Math.round(v)) },
+  };
+
+  // Моменты ошибки: чипы со временем. Клик — показать момент на мини-карте матча.
+  function momentChips(leak, onPick, picked) {
+    if (!leak.moments || !leak.moments.length) return null;
+    return h('div.moments', leak.moments.map((mo, i) => h(`button.moment${picked === i ? '.on' : ''}`, {
+      onclick: onPick ? () => onPick(i, mo) : null,
+      disabled: onPick ? null : true,
+      title: onPick ? 'Показать этот момент на карте' : null,
+    }, h('b.num', F.time(mo.t)), h('span', mo.text))));
+  }
+
+  function wrCompare(row) {
+    if (row.wrWith === null || row.wrWithout === null) return null;
+    const bar = (label, v, cls) => h('div.wr-line', h('span.wr-label', label), h('div.wr-track', h(`span.${cls}`, { style: { width: `${Math.max(3, Math.round(v * 100))}%` } })), h('b.num', F.pct(v)));
+    return h('div.wr-compare', bar('с этой ошибкой', row.wrWith, 'bad'), bar('без неё', row.wrWithout, 'good'));
+  }
+
+  function leakCost(row) {
+    const parts = [];
+    if (row.souls) parts.push(h('span.pill.bad', `≈ ${F.num(row.souls)} ${plural(row.souls, 'душа', 'души', 'душ')} мимо`));
+    if (row.deaths) parts.push(h('span.pill.bad', `${row.deaths} ${plural(row.deaths, 'смерть', 'смерти', 'смертей')} на линии`));
+    if (row.allyDeaths) parts.push(h('span.pill.bad', `${row.allyDeaths} ${plural(row.allyDeaths, 'смерть', 'смерти', 'смертей')} союзников`));
+    if (row.statues) parts.push(h('span.pill.warn', `${row.statues} ${plural(row.statues, 'статуя', 'статуи', 'статуй')} мимо`));
+    return parts.length ? h('div.leak-cost', parts) : null;
+  }
+
+  function leakExamples(row) {
+    return h('div.leak-examples', row.examples.map((g) => h('button.leak-ex', { onclick: () => { setView('matches'); openMatch(g.match_id); }, title: 'Открыть разбор этого матча' },
+      heroIcon(g.hero, '.sm'),
+      h('div.grow',
+        h('div.leak-ex-head', h('b', heroName(g.hero)), h(`span.res.${g.won ? 'win' : 'loss'}`, g.won ? 'победа' : 'поражение'), h('span.dim', F.ago(g.start_time))),
+        g.moments.length ? h('div.leak-ex-moments', g.moments.slice(0, 3).map((mo) => h('span', h('b.num', F.time(mo.t)), ' ', mo.text))) : h('div.dim.small', g.text.slice(0, 120) + (g.text.length > 120 ? '…' : ''))))));
+  }
+
+  function renderGrowth() {
+    const v = $('view-growth');
+    if (!v) return;
+    const G = S.growth;
+    const d = G.data;
+    const head = h('div.page-head',
+      h('div', h('div.crumbs', 'Моя игра / Ошибки'), h('h1', 'Что мешает тебе расти'),
+        h('div.sub', 'Разбор твоих последних игр: какие ошибки повторяются, сколько они стоят и что делать. Сравниваю с топами на твоих героях и с игроками высоких рангов.')),
+      h('div.row', h('button.btn', { onclick: loadGrowth, disabled: G.loading || null }, G.loading ? h('span.spin') : Icon('refresh'), 'Проверить новые игры')));
+    if (!S.auth) return void v.replaceChildren(head, h('div.empty', h('strong', 'Войди через Steam'), 'Разбор ошибок строится по твоим матчам.', h('div', { style: { marginTop: '14px' } }, h('button.btn.steam', { onclick: login }, 'Войти через Steam'))));
+    if (G.loading && !d) return void v.replaceChildren(head, skeleton('Скачиваю твои матчи и ищу повторяющиеся ошибки — в первый раз это займёт пару минут'));
+    if (G.error && !d) return void v.replaceChildren(head, h('div.empty', h('strong', 'Не получилось'), G.error, h('div', { style: { marginTop: '12px' } }, h('button.btn', { onclick: loadGrowth }, 'Попробовать ещё раз'))));
+    if (!d) return void v.replaceChildren(head);
+
+    const rows = d.profile.rows;
+    const n = d.profile.games;
+    const notes = [];
+    if (d.fresh < d.total) {
+      notes.push(h('div.note', Icon('info'), h('div', d.fresh
+        ? `Подробные данные (лес, коробки, статуи, драки по секундам) есть для ${d.fresh} из ${d.total} игр. Остальные скачаются заново при следующих проверках — разбор станет точнее.`
+        : 'Твои матчи сохранены старой версией программы — в них нет леса, коробок, статуй и драк по секундам. Нажми «Проверить новые игры»: программа перекачает их.')));
+    }
+    if (!n) return void v.replaceChildren(head, ...notes, h('div.empty', h('strong', 'Пока нечего разбирать'), 'Нужны матчи с подробными данными. Сыграй пару игр или нажми «Проверить новые игры».'));
+
+    // ---------- главное сейчас ----------
+    const top = rows[0];
+    const focus = top ? h('section.leak-focus',
+      h('div.leak-focus-main',
+        h('div.leak-kicker', Icon('flame'), 'Главное сейчас'),
+        h('h2.leak-focus-title', top.title),
+        h('div.leak-focus-freq', h('b.num', `${top.count} из ${n}`), ` ${plural(n, 'игры', 'игр', 'игр')} — `, top.share >= 0.5 ? 'это происходит почти каждую игру' : top.share >= 0.3 ? 'это повторяется постоянно' : 'это повторяется'),
+        leakCost(top),
+        wrCompare(top),
+        h('div.leak-fix', h('div.leak-fix-title', 'Что делать в следующей игре'), h('ol', (top.fix || []).map((x) => h('li', x))))),
+      h('div.leak-focus-side', h('div.leak-side-title', 'Где это было'), leakExamples(top))) : h('div.empty', h('strong', 'Повторяющихся ошибок не нашёл'), 'В последних играх нет ошибки, которая повторялась бы. Продолжай — и смотри разбор каждой игры в «Моих матчах».');
+
+    // ---------- все ошибки ----------
+    const list = rows.length > 1 ? h('section.panel', h('h2', 'Всё, что повторяется'),
+      h('div.hint', { style: { marginBottom: '12px' } }, 'По важности: как часто случается и насколько дорого обходится. Нажми, чтобы раскрыть.'),
+      h('div.leak-list', rows.map((r, i) => {
+        const open = G.open === r.key;
+        return h(`div.leak-row${open ? '.open' : ''}`,
+          h('button.leak-row-head', { onclick: () => { G.open = open ? null : r.key; renderGrowth(); }, 'aria-expanded': open ? 'true' : 'false' },
+            h('span.leak-rank.num', String(i + 1)),
+            h('div.grow', h('div.leak-area', r.area), h('div.leak-title', r.title)),
+            h('div.leak-freq', h('div.leak-freq-bar', h('span', { style: { width: `${Math.round(r.share * 100)}%` } })), h('span.num', `${r.count} из ${n}`)),
+            r.wrWith !== null && r.wrWithout !== null ? h(`span.pill.${r.wrWith < r.wrWithout - 0.05 ? 'bad' : ''}`, { title: 'Доля побед в играх с этой ошибкой и без неё' }, `${F.pct(r.wrWith)} / ${F.pct(r.wrWithout)}`) : null),
+          open ? h('div.leak-row-body', leakCost(r), wrCompare(r),
+            h('div.leak-fix', h('div.leak-fix-title', 'Как исправить'), h('ol', (r.fix || []).map((x) => h('li', x)))),
+            h('div.leak-side-title', 'Примеры'), leakExamples(r)) : null);
+      }))) : null;
+
+    // ---------- привычки первых минут ----------
+    const rankLabel = d.rank ? rankName(d.rank.tier) : 'твой ранг';
+    const habits = h('section.panel', h('h2', 'Первые 10 минут: ты, твой ранг и высокий ранг'),
+      h('div.hint', { style: { marginBottom: '14px' } }, `Медианы по 640 тыс. рейтинговых игр (deadlock-api). «Шанс победы» — как часто выигрывают игроки рангов Arcanist–Emissary с таким же показателем.`),
+      h('div.habit-grid',
+        h('div.habit-head', h('span', ''), h('span', 'Ты'), h('span', rankLabel), h('span', 'Ascendant+'), h('span', 'Шанс победы')),
+        d.habits.filter((x) => HABITS[x.key]).map((x) => {
+          const H = HABITS[x.key];
+          // красный — хуже твоего ранга, зелёный — на уровне Ascendant+, без цвета — между ними
+          const worse = x.mine !== null && x.rank !== null && (H.lower ? x.mine > x.rank : x.mine < x.rank * 0.9);
+          const great = x.mine !== null && x.top !== null && (H.lower ? x.mine <= x.top : x.mine >= x.top * 0.95);
+          const link = x.link && x.link.mine ? `${F.pct(x.link.mine.wr)} → ${F.pct(x.link.best[1])}` : '—';
+          return h('div.habit-row',
+            h('div', h('div.habit-label', H.label), H.why ? h('div.habit-why', H.why) : null),
+            h(`b.num${worse ? '.bad' : great ? '.ok' : ''}`, x.mine === null ? '—' : H.fmt(x.mine)),
+            h('span.num.muted', x.rank === null ? '—' : H.fmt(x.rank)),
+            h('span.num', x.top === null ? '—' : H.fmt(x.top)),
+            h('span.num.habit-link', { title: x.link ? `С твоим показателем — ${link.split(' → ')[0]}, с лучшим — ${link.split(' → ')[1] || '—'}` : null }, link));
+        })));
+
+    v.replaceChildren(head, ...notes, focus, list, habits);
   }
 
   // ================= НАСТРОЙКИ =================

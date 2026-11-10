@@ -721,6 +721,129 @@ test('game mode: process detection, log activity, background sync waits', async 
   assert.ok(released);
 });
 
+test('leaks: new match data (v2) and mistakes with moments', () => {
+  const { extractMatch: ex, EXTRACT_V } = require('../src/core/extract');
+  const L = require('../src/core/leaks');
+  const { playerFeatures: pf } = require('../src/core/features');
+  assert.strictEqual(EXTRACT_V, 2);
+  // ---- извлечение: формат как в настоящем ответе API ----
+  const snap = (t, extra = {}) => ({ time_stamp_s: t, net_worth: t * 10, kills: 0, deaths: 0, assists: 0, creep_kills: 0, neutral_kills: 0, gold_death_loss: 0, gold_neutral_creep: 0, gold_neutral_creep_orbs: 0,
+    gold_sources: [{ source: 12, gold: Math.round(t / 2), gold_orbs: 0 }, { source: 8, gold: 50, gold_orbs: null }], ...extra });
+  const rawPlayers = Array.from({ length: 12 }, (_, i) => ({ account_id: 100 + i, player_slot: i + 1, team: i < 6 ? 0 : 1, hero_id: 10 + i, assigned_lane: [1, 1, 4, 4, 6, 6][i % 6], kills: 0, deaths: 0, assists: 0, net_worth: 9000, last_hits: 0, level: 10,
+    items: [], death_details: [], stats: [snap(180), snap(360), snap(540), snap(720), snap(900), snap(1200)],
+    power_up_buffs: [{ is_permanent: true, type: 'hp_permanent_pickup', pickup_times_s: [200, 590] }, { is_permanent: true, type: 'firerate_permanent_pickup_lv2', pickup_times_s: [900] }, { is_permanent: false, type: 'gun_powerup_pickup', pickup_times_s: [] }] }));
+  const raw = { match_info: { match_id: 777, start_time: 1, duration_s: 1300, winning_team: 0, players: rawPlayers,
+    objectives: [{ team: 1, team_objective_id: 3, destroyed_time_s: 482 }], mid_boss: [{ team_killed: 0, team_claimed: 0, destroyed_time_s: 1263 }],
+    damage_matrix: { sample_time_s: [180, 360, 540], source_details: { stat_type: [0, 0, 6], source_name: ['Bullet', 'citadel_weapon_x', 'Bullet'] },
+      damage_dealers: [{ dealer_player_slot: 1, damage_sources: [
+        { source_details_index: 0, damage_to_players: [{ target_player_slot: 7, damage: [100, 300] }, { target_player_slot: 2, damage: [999] }] },
+        { source_details_index: 1, damage_to_players: [{ target_player_slot: 7, damage: [100, 300, 500] }] },
+        { source_details_index: 2, damage_to_players: [{ target_player_slot: 7, damage: [5000] }] }] }] },
+    match_paths: { interval_s: 1, x_resolution: 100, y_resolution: 100, paths: [{ player_slot: 1, x_min: 0, x_max: 100, y_min: 0, y_max: 100, x_pos: Array(12).fill(50), y_pos: Array(12).fill(50), health: [100, 100, 100, 100, 100, 0, 0, 0, 0, 0, 80, 80], combat_type: [0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2] }] } } };
+  const m2 = ex(raw, { paths: true });
+  const p1 = m2.players[0];
+  assert.strictEqual(m2.v, 2);
+  assert.strictEqual(p1.stats[2].g_brk, 270, 'коробки из gold_sources (12)');
+  assert.strictEqual(p1.stats[2].g_bonus, 50, 'командный бонус (8)');
+  assert.deepStrictEqual(p1.pu, [[200, 'hp'], [590, 'hp'], [900, 'firerate_lv2']], 'только постоянные бафы, по времени');
+  assert.deepStrictEqual(m2.dmg.d['1>7'], [100, 300, 300], 'урон: только категория Bullet, хвост массива — без изменений');
+  assert.ok(!m2.dmg.d['1>2'], 'урон по своим не храним');
+  assert.deepStrictEqual(m2.paths.players[1][0], [50, 50, 1, 4, 100], 'в маршруте: лес (бит 4) и здоровье');
+  assert.strictEqual(m2.paths.players[1][1][2], 0, 'здоровье 0 — мёртв');
+  assert.deepStrictEqual(m2.paths.players[1][2].slice(0, 4), [50, 50, 1, 3], 'герои (1) + крипы линии (2)');
+  assert.deepStrictEqual(m2.objectives, [[1, 3, 482]]);
+  const f2 = pf(p1, m2, null);
+  assert.strictEqual(f2.brk9, 270);
+  assert.strictEqual(f2.pu10, 2);
+  assert.strictEqual(f2.pu20, 3);
+
+  // ---- детекторы на компактном матче ----
+  const step = 5;
+  const mkPath = (fn) => Array.from({ length: 400 }, (_, i) => fn(i * step));
+  const players = [];
+  for (let i = 0; i < 12; i++) {
+    const team = i < 6 ? 0 : 1;
+    players.push({ account_id: 1 + i, hero_id: 20 + i, team, slot: i, lane: [1, 1, 4, 4, 6, 6][i % 6], won: team === 1, k: 0, d: 0, a: 0, nw: 20000, items: [], deaths: [], deaths_t: [], pu: [],
+      stats: [{ t: 540, nw: 6000, d: 0, g_lost: 0, g_brk: 600, g_neutral: 600, g_treasure: 0, pdmg: 3000, ka: 0, k: 0, a: 0 }, { t: 1200, nw: 18000, d: 0, g_lost: 0, g_brk: 2200, g_neutral: 3000, g_treasure: 330, pdmg: 9000, k: 0, a: 0 }, { t: 1800, nw: 24000, d: 0, g_lost: 0, g_brk: 2600, g_neutral: 4000, g_treasure: 330, pdmg: 15000, k: 0, a: 0 }] });
+  }
+  const me = players[0];
+  // я: 2 смерти на линии от врага по линии (слот 6), проиграл размены; потом 2 раза фармил лес, пока своих убивали
+  me.deaths = [[200, 0, 0, 6, 0, 0], [420, 0, 0, 6, 0, 0], [1500, 0, 0, 7, 0, 0]];
+  me.deaths_t = [200, 420, 1500];
+  me.d = 3;
+  me.stats = [{ t: 540, nw: 4000, d: 2, g_lost: 0, g_brk: 100, g_neutral: 50, g_treasure: 0, k: 0, a: 0 }, { t: 1200, nw: 12000, d: 2, g_lost: 0, g_brk: 700, g_neutral: 900, g_treasure: 0, k: 0, a: 0 }, { t: 1800, nw: 18000, d: 3, g_lost: 1500, g_brk: 900, g_neutral: 1200, g_treasure: 0, k: 0, a: 0 }];
+  me.pu = [[500, 'hp']];
+  const ally = players[1];
+  const ally2 = players[2];
+  ally.deaths = [[900, 6000, 0, 8, 6000, 0], [1300, 6000, 0, 8, 6000, 0]];
+  ally2.deaths = [[905, 6100, 0, 9, 6100, 0], [1305, 6100, 0, 9, 6100, 0]];
+  const pathsP = {};
+  for (const p of players) pathsP[p.slot] = mkPath((t) => [p === me ? 0 : 6000, 0, 1, p === me && t > 600 ? 4 : 0, 100]);
+  const mm = { match_id: 9001, start_time: 1, duration_s: 1800, players, paths: { step, players: pathsP }, badge: [52, 52],
+    dmg: { t: [180, 360, 540, 1800], d: { '0>6': [200, 500, 900, 2000], '6>0': [600, 1500, 3000, 4000], '7>0': [0, 0, 0, 9000] } } };
+  const fm = pf(me, mm, null);
+  const leaks = L.gameLeaks({ m: mm, me, f: fm, ref: null, tier: 5, laneVs: { 26: -0.06 }, heroName: (x) => `H${x}`, itemName: (x) => `I${x}`,
+    counters: { 27: [{ id: 555, lift: 2.1, rateVs: 0.4 }] } });
+  const keys = leaks.map((l) => l.key);
+  assert.ok(keys.includes('lane_trades'), 'размены на линии');
+  const lt = leaks.find((l) => l.key === 'lane_trades');
+  assert.ok(/Тяжёлый матчап с H26/.test(lt.title) && /6% реже/.test(lt.text), 'матчап по топам в тексте');
+  assert.strictEqual(lt.moments.length, 2);
+  assert.ok(keys.includes('farm_while_fight'), 'лес во время проигранных драк');
+  const fw = leaks.find((l) => l.key === 'farm_while_fight');
+  assert.strictEqual(fw.moments.length, 2);
+  assert.strictEqual(fw.cost.allyDeaths, 4);
+  assert.ok(/19 с бега/.test(fw.moments[0].text), `время бега: ${fw.moments[0].text}`);
+  assert.ok(keys.includes('map_timings'), 'тайминги карты');
+  assert.ok(/у игроков Ascendant\+/.test(leaks.find((l) => l.key === 'map_timings').text));
+  assert.ok(keys.includes('sinner'), 'казино');
+  assert.ok(keys.includes('lost_souls'), 'потерянные души');
+  assert.strictEqual(leaks.find((l) => l.key === 'lost_souls').moments[0].t, 1500);
+  assert.ok(keys.includes('counter_missing'), 'нет ответа на опасного героя');
+  assert.ok(/I555/.test(leaks.find((l) => l.key === 'counter_missing').text));
+  for (const l of leaks) assert.ok(!/undefined|NaN/.test(l.title + l.text), `${l.key}: ${l.text}`);
+  // драки, в которых я дрался, не считаются
+  const pathsFight = { ...pathsP, 0: mkPath((t) => [0, 0, 1, t > 600 ? 5 : 0, 100]) };
+  const l2 = L.gameLeaks({ m: { ...mm, paths: { step, players: pathsFight } }, me, f: fm, tier: 5 });
+  assert.ok(!l2.some((l) => l.key === 'farm_while_fight'), 'был в бою с героями — не ошибка');
+  // далеко за пределами досягаемости — тоже не ошибка
+  const pathsFar = {};
+  for (const p of players) pathsFar[p.slot] = mkPath((t) => [p === me ? -9500 : 6000, 0, 1, p === me && t > 600 ? 4 : 0, 100]);
+  const l3 = L.gameLeaks({ m: { ...mm, paths: { step, players: pathsFar } }, me, f: fm, tier: 5 });
+  assert.ok(!l3.some((l) => l.key === 'farm_while_fight'), 'не успел бы добежать — не ошибка');
+
+  // ---- общая картина ----
+  const games = [
+    { match_id: 1, won: false, hero: 1, leaks },
+    { match_id: 2, won: false, hero: 1, leaks: leaks.filter((l) => l.key === 'lane_trades') },
+    { match_id: 3, won: true, hero: 1, leaks: [] },
+    { match_id: 4, won: true, hero: 1, leaks: [] },
+    { match_id: 5, won: true, hero: 1, leaks: [] },
+  ];
+  const prof = L.leakProfile(games);
+  assert.strictEqual(prof.games, 5);
+  const lr = prof.rows.find((r) => r.key === 'lane_trades');
+  assert.strictEqual(lr.count, 2);
+  assert.strictEqual(lr.wrWith, null, 'мало игр с ошибкой — винрейт не показываем');
+  assert.strictEqual(lr.deaths, 4);
+  assert.strictEqual(prof.rows[0].key, 'lane_trades', 'на первом месте — то, что чаще и дороже');
+
+  // ---- что берут против героя ----
+  const recs = [];
+  for (let i = 0; i < 400; i++) {
+    const withE = i % 3 === 0;
+    const enemies = [{ team: 1, hero_id: withE ? 50 : 51 }];
+    const items = [[1, 600]].concat(withE ? (i % 2 === 0 ? [[2, 900]] : []) : i % 10 === 0 ? [[2, 900]] : []);
+    recs.push({ match: { players: [{ team: 0, hero_id: 1 }, ...enemies] }, player: { team: 0, items } });
+  }
+  const ct = L.counterItems(recs);
+  assert.ok(ct[50] && ct[50][0].id === 2 && ct[50][0].lift > 3, 'против героя 50 чаще берут предмет 2');
+  assert.ok(!ct[50].some((x) => x.id === 1), 'предмет, который берут всегда, — не ответ');
+  // привычки и победа
+  assert.strictEqual(L.winLink('d9', 2).wr, 0.473);
+  assert.strictEqual(L.winLink('pu10', 7).wr, 0.519);
+});
+
 test('versus: candidates and side by side', () => {
   const recs = benchM.map((m) => ({ match: m, player: m.players[0] }));
   const myM = extractMatch(fakeMatch({ id: 4242, seed: 77, start: 1, accounts: [777, ...ACC.slice(1)], skill: [0.8] }), { paths: true });

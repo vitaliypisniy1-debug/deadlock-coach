@@ -59,7 +59,7 @@ class Recognizer {
       await Promise.all(
         heroes.map(async (h) => {
           try {
-            const res = await fetch(h.card, { headers: { 'User-Agent': 'DeadlockCoach/1.0' } });
+            const res = await fetch(h.card, { headers: { 'User-Agent': 'DeadlockCoach/1.0' }, signal: AbortSignal.timeout(6000) });
             if (!res.ok) return;
             const img = nativeImage.createFromBuffer(Buffer.from(await res.arrayBuffer()));
             const size = img.getSize();

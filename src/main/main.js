@@ -163,7 +163,14 @@ async function runRecognition({ retries = 0, focus = true, reason = 'manual' } =
   recognizing = (async () => {
     const o = overlay && !overlay.isDestroyed() ? overlay : null;
     const wasVisible = !!(o && o.isVisible());
-    if (wasVisible) {
+    // окно прячем на время снимка, только если оно закрывает верхнюю полосу с портретами
+    let covers = false;
+    try {
+      const b = o && o.getBounds();
+      const d = b && screen.getDisplayMatching(b);
+      covers = !!(wasVisible && d && b.y < d.bounds.y + d.bounds.height * 0.14);
+    } catch {}
+    if (covers) {
       o.hide();
       await wait(250);
     }
@@ -171,7 +178,8 @@ async function runRecognition({ retries = 0, focus = true, reason = 'manual' } =
     for (let i = 0; i <= retries; i++) {
       try {
         lastIpc = `распознавание портретов (${reason})`;
-        const r = await recognizer.recognize();
+        // распознавание не должно подвешивать оверлей: ждём не дольше 8 секунд
+        const r = await Promise.race([recognizer.recognize(), wait(8000).then(() => ({ ok: false, reason: 'Распознавание не ответило за 8 секунд (медленный интернет или снимок экрана). Отметь героев вручную или нажми «Узнать заново».' }))]);
         // лучший снимок — где уверенно узнано больше героев (портреты соперников проявляются не сразу)
         const sure = (x) => (x && x.ok ? x.slots.length - x.unsure : -1);
         if (!best || sure(r) > sure(best)) best = r;
@@ -183,7 +191,7 @@ async function runRecognition({ retries = 0, focus = true, reason = 'manual' } =
     }
     best.reason2 = reason;
     sendToOverlay('overlay:recognized', best);
-    if (wasVisible || reason !== 'hotkey-silent') showOverlay({ focus });
+    if (covers || !wasVisible) showOverlay({ focus });
     return best;
   })();
   try {
@@ -202,9 +210,9 @@ function toggleOverlay(force = null) {
   }
   const st = store.settings();
   const fresh = recognizer && recognizer.last && Date.now() - recognizer.last.out.at < 90e3;
-  if (st.autoRecognize !== false && recognizer && !fresh) {
-    runRecognition({ reason: 'hotkey' }).catch(() => showOverlay());
-  } else showOverlay();
+  // окно открываем сразу, состав узнаём в фоне — оверлей не должен ждать распознавания
+  showOverlay();
+  if (st.autoRecognize !== false && recognizer && !fresh) runRecognition({ reason: 'hotkey' }).catch(() => {});
 }
 
 function registerOverlayKey(key) {
@@ -637,6 +645,7 @@ app.whenReady().then(() => {
       const st = store.settings();
       emit('game:event', ev);
       if (ev.type === 'pregame' && st.autoRecognize !== false) {
+        showOverlay({ focus: false }); // сразу, не дожидаясь распознавания
         setTimeout(() => runRecognition({ retries: 4, focus: false, reason: 'pregame' }).catch(() => {}), 1500);
       }
       if (ev.type === 'started' && st.overlayAutoHide !== false) {

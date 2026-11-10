@@ -868,7 +868,12 @@ module.exports = { playerFeatures, refOf, refAll, deathTimes, teamSumAt };
 //   - маршруты героев по 5 секунд: позиция, жив ли, с кем бился (1 герои, 2 крипы линии, 4 лес), здоровье;
 //   - урон между игроками по времени (раз в 3 минуты);
 //   - души по источникам: коробки, лес, казино (Sinner's Sacrifice), потери при смерти;
-//   - время подбора постоянных бафов со статуй.
+//   - время получения постоянных бафов (контейнеры с бафами — бывшие золотые статуи — и джекпот Sinner's).
+//
+// Тайминги карты (патч 30.10.2026, deadlockhandbook.com и senseos.gg; проверено по данным матчей):
+//   коробки и контейнеры с бафами — с 3:00, снова через 3 мин после поломки (в туннелях 5 мин);
+//   лес: малый лагерь 2:00 (снова через 1:25), средний 5:00 (4:50), большой 8:00 (5:35);
+//   Sinner's Sacrifice — с 8:00, снова через 5 мин после поломки; ~340 душ, джекпот тяжёлым ударом — 4 бафа.
 //
 // Цифры для сравнения: топы на твоём герое (ref) или, если их данных ещё нет,
 // медианы по рангам из 640 тыс. рейтинговых игр (RANK_BENCH, deadlock-api, ноябрь 2026).
@@ -880,7 +885,7 @@ const souls = (n) => `${N(n)} ${plural(n, 'душа', 'души', 'душ')}`;
 
 // Медианы по рангу (average_badge // 10). Рейтинг, игры от 25 минут, 2 дня, 640 тыс. игроко-игр.
 // d10 — смерти до 9–10 минуты (медиана 1 на всех рангах: высокие ранги умирают рано не реже),
-// brk — души с коробок, neu — души с леса, pu — статуи (постоянные бафы), nw — души всего.
+// brk — души с коробок, neu — души с леса, pu — постоянные бафы (контейнеры и джекпот Sinner's), nw — души всего.
 const RANK_BENCH = {
   1: { d10: 1, brk9: 161, brk20: 886, neu9: 144, neu20: 1239, pu10: 1, pu20: 6, nw9: 5671, nw20: 16825 },
   2: { d10: 1, brk9: 232, brk20: 1145, neu9: 232, neu20: 1556, pu10: 1, pu20: 7, nw9: 5805, nw20: 17079 },
@@ -1034,6 +1039,7 @@ function gameLeaks(c) {
           level: 'bad',
           score: 70 + laneDeaths.length * 8,
           title: hard ? `Тяжёлый матчап с ${heroName(worstFoe.hero_id)} — и ты пошёл в размены` : 'Размены на линии шли в пользу врага',
+          groupTitle: 'Размены на линии шли в пользу врага',
           text: `К ${T(tAt)} ты нанёс противникам по линии ${N(out9)} урона, а получил ${N(in9)} — в ${(in9 / Math.max(1, out9)).toFixed(1).replace('.', ',')} раза больше. ` +
             `Итог — ${laneDeaths.length} ${plural(laneDeaths.length, 'смерть', 'смерти', 'смертей')} на линии.` +
             (hard ? ` У топов ${heroName(me.hero_id)} против ${heroName(worstFoe.hero_id)} выигрывает на ${Math.round(-vs * 100)}% реже обычного — в такой линии размены не твоя сила.` : ''),
@@ -1093,6 +1099,7 @@ function gameLeaks(c) {
         level: lostOnes.length >= 3 ? 'bad' : 'warn',
         score: 55 + lostOnes.length * 10 + allyDeathsTotal * 2,
         title: jungle >= missed.length / 2 ? 'Бил лес, пока команда дралась' : 'Фармил, пока команда дралась',
+        groupTitle: 'Фармил, пока команда проигрывала драки',
         text: `${missed.length} ${plural(missed.length, 'раз', 'раза', 'раз')} после 10:00 команда проиграла драку без тебя, а ты в это время фармил ${jungle ? 'лес' : 'крипов'} в 10–28 секундах бега от неё. ` +
           `В этих драках погибло ${allyDeathsTotal} ${plural(allyDeathsTotal, 'союзник', 'союзника', 'союзников')}.`,
         fix: [
@@ -1106,7 +1113,7 @@ function gameLeaks(c) {
     }
   }
 
-  // ---------- 3. Тайминги карты: лес, коробки, статуи, казино ----------
+  // ---------- 3. Тайминги карты: лес, коробки, контейнеры с бафами, казино ----------
   const timing = [];
   if (f.neu9 !== null && f.neu9 !== undefined && endS >= 600) {
     const b = benchFor('neu9', c.ref, c.tier);
@@ -1121,11 +1128,11 @@ function gameLeaks(c) {
   }
   if (f.pu10 !== null && f.pu10 !== undefined) {
     const b = benchFor('pu10', c.ref, c.tier);
-    if (b.target && f.pu10 <= b.target - 4) timing.push({ k: 'pu10', what: 'статуй к 10:00', me: f.pu10, ...b, souls: 0, statues: b.target - f.pu10 });
+    if (b.target && f.pu10 <= b.target - 4) timing.push({ k: 'pu10', what: 'постоянных бафов к 10:00', me: f.pu10, ...b, souls: 0, statues: b.target - f.pu10 });
   }
   if (f.pu20 !== null && f.pu20 !== undefined) {
     const b = benchFor('pu20', c.ref, c.tier);
-    if (b.target && f.pu20 <= b.target - 6) timing.push({ k: 'pu20', what: 'статуй к 20:00', me: f.pu20, ...b, souls: 0, statues: b.target - f.pu20 });
+    if (b.target && f.pu20 <= b.target - 6) timing.push({ k: 'pu20', what: 'постоянных бафов к 20:00', me: f.pu20, ...b, souls: 0, statues: b.target - f.pu20 });
   }
   if (timing.length) {
     const lostSouls = timing.reduce((s, x) => s + x.souls, 0);
@@ -1140,11 +1147,11 @@ function gameLeaks(c) {
       title: 'Не забираешь то, что лежит на карте',
       text: timing.map((x) => fmt(x)).map((t, i) => (i === 0 ? t[0].toUpperCase() + t.slice(1) : t)).join('; ') + '.' +
         (lostSouls ? ` Это ${souls(lostSouls)}, которые просто остались на карте.` : '') +
-        (statues ? ` И ${statues} ${plural(statues, 'постоянный баф', 'постоянных бафа', 'постоянных бафов')} со статуй — это здоровье, урон и скорость стрельбы до конца игры.` : ''),
+        (statues ? ` И ${statues} ${plural(statues, 'постоянный баф', 'постоянных бафа', 'постоянных бафов')} мимо — это здоровье, урон и скорость стрельбы до конца игры.` : ''),
       fix: [
-        'Когда волна ушла к врагу и до следующей есть время — ломай коробки и статуи рядом с линией, а не стой у башни.',
-        'Лесной лагерь рядом с линией бери, как только он появился: пока ждёшь волну, это бесплатные души.',
-        'Идёшь с базы или на другую линию — веди маршрут через коробки и статуи по пути.',
+        'Коробки и контейнеры с бафами (бывшие золотые статуи) появляются на 3:00 и восстанавливаются через 3 минуты после поломки. Волна ушла к врагу — ломай те, что у твоей линии, и возвращайся к следующей волне.',
+        'Малый лесной лагерь появляется на 2:00 и восстанавливается через 1:25 — бери его каждый раз, пока ждёшь волну. Средний — с 5:00, большой — с 8:00.',
+        'Идёшь с базы или на другую линию — веди маршрут через коробки и контейнеры по пути.',
       ],
       moments: [],
       cost: { souls: lostSouls, statues },
@@ -1158,10 +1165,14 @@ function gameLeaks(c) {
       level: 'warn',
       score: 22,
       title: 'Не брал казино (Sinner’s Sacrifice)',
-      text: 'За первые 20 минут ты ни разу не забрал Sinner’s Sacrifice. Он появляется на 10:00 и снова через 5 минут после того, как его разбили; даёт около 330 душ и золотую урну с постоянным бафом.',
-      fix: ['На 10:00, 15:00 и 20:00 смотри, не стоит ли машина рядом с тобой: бить можно только ближним боем, это занимает несколько секунд.'],
+      text: 'С 8:00 до 20:00 ты ни разу не забрал Sinner’s Sacrifice. Он появляется на 8:00 и снова через 5 минут после того, как его сломали; даёт около 340 душ, а если поймать джекпот тяжёлым ударом — ещё 4 постоянных бафа.',
+      fix: [
+        'На 8:00 загляни к ближайшему Sinner’s Sacrifice: бить можно только ближним боем, лучше тяжёлым ударом.',
+        'До джекпота каждый удар стоит тебе 80 здоровья — не подходи к нему полуживым.',
+        'Когда загорятся все огни — добей тяжёлым ударом: это 4 постоянных бафа вместо одного.',
+      ],
       moments: [],
-      cost: { souls: 330 },
+      cost: { souls: 340 },
     });
   }
 
@@ -1231,15 +1242,24 @@ function gameLeaks(c) {
     }
     if (misses.length) {
       const top = misses.sort((a, b) => b.kills - a.kills || b.share - a.share)[0];
+      const what = [top.kills ? `убил тебя ${top.kills} ${plural(top.kills, 'раз', 'раза', 'раз')}` : '', top.share >= 0.3 ? `нанёс ${Math.round(top.share * 100)}% всего урона по тебе` : ''].filter(Boolean).join(' и ');
       out.push({
         key: 'counter_missing',
         area: 'Предметы',
         level: 'warn',
         score: 38 + top.kills * 5,
         title: `Не было ответа на ${heroName(top.hero)}`,
-        text: `${heroName(top.hero)} ${top.kills ? `убил тебя ${top.kills} ${plural(top.kills, 'раз', 'раза', 'раз')}` : ''}${top.kills && top.share >= 0.3 ? ' и ' : ''}${top.share >= 0.3 ? `нанёс ${Math.round(top.share * 100)}% всего урона по тебе` : ''}. ` +
-          `Против него топы заметно чаще берут: ${top.items.map((x) => `${itemName(x.id)} (в ${x.lift.toFixed(1).replace('.', ',')} раза чаще)`).join(', ')}. У тебя этого не было.`,
-        fix: [`Когда видишь ${heroName(top.hero)} у соперников — заранее впиши в сборку один из этих предметов.`],
+        groupTitle: 'Не собираешь ответ на героя, который тебя убивает',
+        text: `${heroName(top.hero)} ${what}. Против него топы заметно чаще берут: ${top.items.map((x) => `${itemName(x.id)} (в ${x.lift.toFixed(1).replace('.', ',')} раза чаще)`).join(', ')}. У тебя этого не было.`,
+        fix: [
+          `Видишь ${heroName(top.hero)} у соперников — заранее впиши в сборку ${top.items.length > 1 ? 'один из этих предметов' : 'этот предмет'}: ${top.items.map((x) => itemName(x.id)).join(', ')}.`,
+          'Ответ не обязательно брать первым: купи его, как только этот герой начал тебя убивать, — обычно к 15–20 минуте.',
+        ],
+        groupFix: [
+          'Посмотри в примерах ниже, кто тебя убивал и что против него берут топы. Видишь этого героя у соперников — впиши предмет в сборку заранее.',
+          'Ответ не обязательно брать первым: купи его, как только этот герой начал тебя убивать, — обычно к 15–20 минуте.',
+        ],
+        extra: { hero: top.hero, kills: top.kills, share: Math.round(top.share * 100) / 100, items: top.items },
         moments: [],
         cost: {},
         facts: misses,
@@ -1252,7 +1272,7 @@ function gameLeaks(c) {
 
 // Что топы чаще берут против каждого героя. records: [{ match, player }] — игры топового уровня.
 // lift = доля игр с предметом, когда герой у соперников / доля без него.
-function counterItems(records, { minBuys = 12, minRate = 0.1, minLift = 1.35, perHero = 4, isItem = () => true } = {}) {
+function counterItems(records, { minBuys = 12, minRate = 0.1, minLift = 1.5, perHero = 4, isItem = () => true } = {}) {
   const N0 = records.length;
   if (N0 < 200) return {};
   const total = new Map();
@@ -1295,14 +1315,14 @@ function leakProfile(games) {
     for (const l of g.leaks) {
       if (l.level === 'good') continue;
       let e = by.get(l.key);
-      if (!e) by.set(l.key, (e = { key: l.key, area: l.area, title: l.title, fix: l.fix, games: [], souls: 0, deaths: 0, allyDeaths: 0, statues: 0, score: 0 }));
-      e.games.push({ match_id: g.match_id, start_time: g.start_time, won: g.won, hero: g.hero, title: l.title, text: l.text, moments: (l.moments || []).slice(0, 4), score: l.score });
+      if (!e) by.set(l.key, (e = { key: l.key, area: l.area, title: l.groupTitle || l.title, fix: l.groupFix || l.fix, games: [], souls: 0, deaths: 0, allyDeaths: 0, statues: 0, score: 0 }));
+      e.games.push({ match_id: g.match_id, start_time: g.start_time, won: g.won, hero: g.hero, title: l.title, text: l.text, extra: l.extra || null, moments: (l.moments || []).slice(0, 4), score: l.score });
       e.souls += (l.cost && l.cost.souls) || 0;
       e.deaths += (l.cost && l.cost.deaths) || 0;
       e.allyDeaths += (l.cost && l.cost.allyDeaths) || 0;
       e.statues += (l.cost && l.cost.statues) || 0;
       e.score += l.score;
-      if (l.fix && l.fix.length > (e.fix || []).length) e.fix = l.fix;
+      if (!l.groupFix && l.fix && l.fix.length > (e.fix || []).length) e.fix = l.fix;
     }
   }
   const n = counted.length;
@@ -1339,4 +1359,333 @@ function winLink(key, value) {
 
 module.exports = { souls, gameLeaks, leakProfile, counterItems, findFights, lossPerDeath, unspentAt, winLink, benchFor, RANK_BENCH, WIN_LINKS, FIGHT_FAR, FIGHT_REACH, SPEED };
 
-}};window.DC={};for(const m of ["stats","timeline","tipkit","meta","extract","features","leaks"])window.DC[m]=req(m);return Object.keys(window.DC);})()
+}};M["portraits"]={mod:{exports:{}},fn:function(module,exports){const require=req;'use strict';
+// Распознавание героев по портретам на верхней панели Deadlock.
+// Работает с «сырыми» картинками: { w, h, data: RGBA (Uint8 / Buffer) }.
+// Ничего не знает про Electron — его можно проверить и в браузере, и в Node.
+//
+// 1) findSlots: под каждым портретом есть плашка душ цвета команды (янтарная или
+//    сапфировая) на одной высоте. Ищем эти плашки в верхней части экрана — они
+//    дают число игроков, центр каждого портрета и команду.
+// 2) slotFeature: вырезаем портрет над плашкой, берём центр (по краям значки «!»)
+//    и сжимаем в маленькую сетку цветов.
+// 3) Сравнение с образцами: картинки героев из справочника (с прозрачностью,
+//    подбираем масштаб и сдвиг) и портреты, которые пользователь подтвердил сам.
+
+const GW = 24; // сетка признаков
+const GH = 30;
+
+function px(img, x, y) {
+  const i = (y * img.w + x) * 4;
+  return [img.data[i], img.data[i + 1], img.data[i + 2], img.data[i + 3]];
+}
+
+// Цвета команд на плашках душ (на скриншотах 2560×1600 янтарь ≈ (212,135,12), сапфир ≈ (78,118,196)).
+// Плашки бывают полупрозрачными (соперники, которых ещё не видно, — например, в начале матча
+// с ботами): тогда цвет смешан с фоном — (106,71,33), (169,129,92), (146,110,87). Поэтому кроме
+// ярких цветов узнаём и тусклые по оттенку: янтарь — r > g > b, g посередине между r и b.
+function brightTeamColor(r, g, b) {
+  if (r > 185 && g > 95 && g < 180 && b < 80 && r - b > 130) return 'amber';
+  if (b > 165 && r < 140 && g > 85 && g < 175 && b - r > 60) return 'sapphire';
+  return null;
+}
+
+function teamColor(r, g, b) {
+  const bright = brightTeamColor(r, g, b);
+  if (bright) return bright;
+  const dimAmber = r >= 90 && r > g && g > b && r - b >= 50 && (r - b) / r >= 0.38 && (g - b) / (r - b) >= 0.3 && (g - b) / (r - b) <= 0.72;
+  if (dimAmber) return 'amber';
+  const dimSapphire = b >= 110 && b > g && g > r && b - r >= 45 && (b - r) / b >= 0.33 && (g - r) / (b - r) >= 0.25 && (g - r) / (b - r) <= 0.7;
+  if (dimSapphire) return 'sapphire';
+  return null;
+}
+
+// Поиск плашек: строки в полосе 8–13% высоты, отрезки одного цвета шириной ≈ 3% высоты.
+function findSlots(img) {
+  const H = img.h;
+  const W = img.w;
+  const minW = Math.round(H * 0.022);
+  const maxW = Math.round(H * 0.045);
+  const found = [];
+  for (let y = Math.round(H * 0.08); y <= Math.round(H * 0.13); y += Math.max(1, Math.round(H / 400))) {
+    let cur = null;
+    const segs = [];
+    for (let x = Math.round(W * 0.1); x < Math.round(W * 0.9); x++) {
+      const [r, g, b] = px(img, x, y);
+      const t = teamColor(r, g, b);
+      if (t && cur && cur.t === t && x - cur.b <= 2) cur.b = x;
+      else {
+        if (cur) segs.push(cur);
+        cur = t ? { t, a: x, b: x } : null;
+      }
+    }
+    if (cur) segs.push(cur);
+    for (const s of segs) {
+      const w = s.b - s.a + 1;
+      if (w >= minW && w <= maxW) found.push({ y, team: s.t, cx: (s.a + s.b) / 2, w });
+    }
+  }
+  // объединяем одинаковые плашки с разных строк
+  const slots = [];
+  for (const f of found) {
+    const s = slots.find((o) => o.team === f.team && Math.abs(o.cxSum / o.n - f.cx) < H * 0.012);
+    if (s) {
+      s.n += 1;
+      s.cxSum += f.cx;
+      s.yMin = Math.min(s.yMin, f.y);
+    } else slots.push({ team: f.team, cxSum: f.cx, n: 1, yMin: f.y });
+  }
+  const out = slots
+    .filter((s) => s.n >= 2)
+    .map((s) => ({ team: s.team, cx: s.cxSum / s.n, labelTop: s.yMin }));
+  return mirrorFill(out, W, H).sort((a, b) => a.cx - b.cx);
+}
+
+// Панель симметрична относительно центра экрана: портрет соперника стоит зеркально портрету
+// союзника. Если на одной стороне плашка не нашлась (тусклая, перекрыта фоном), а хотя бы две
+// там есть — достраиваем недостающие зеркально. Заодно выравниваем найденные неточно.
+function mirrorFill(slots, W, H) {
+  const mid = W / 2;
+  const left = slots.filter((s) => s.cx < mid);
+  const right = slots.filter((s) => s.cx >= mid);
+  const tol = H * 0.02;
+  const fill = (from, to) => {
+    if (from.length < 3 || to.length < 2 || to.length >= from.length) return to;
+    const team = to[0].team;
+    const top = Math.round(to.reduce((a, s) => a + s.labelTop, 0) / to.length);
+    return from.map((s) => {
+      const cx = 2 * mid - s.cx;
+      const hit = to.find((o) => Math.abs(o.cx - cx) < tol);
+      return hit ? { ...hit, cx } : { team, cx, labelTop: top, guessed: true };
+    });
+  };
+  if (left.length > right.length) return left.concat(fill(left, right));
+  if (right.length > left.length) return fill(right, left).concat(right);
+  return slots;
+}
+
+// Портреты стоят на фиксированных местах: 6 слева и 6 справа от центра экрана,
+// первый — в 0,137 высоты экрана от центра, шаг — 0,0813 высоты (измерено на скриншотах
+// 2560×1600 в матче и в паузе перед матчем). В паузе перед рейтинговой игрой плашек душ ещё нет
+// (вместо них значки линий), поэтому там места берём из этой раскладки.
+function layoutSlots(img) {
+  const H = img.h;
+  const mid = img.w / 2;
+  const out = [];
+  for (let i = 0; i < 6; i++) {
+    const d = H * (0.137 + 0.0813 * i);
+    out.push({ team: 'left', cx: mid - d, labelTop: Math.round(H * 0.09), layout: true });
+    out.push({ team: 'right', cx: mid + d, labelTop: Math.round(H * 0.09), layout: true });
+  }
+  return out.sort((a, b) => a.cx - b.cx);
+}
+
+// Прямоугольник портрета над плашкой.
+function slotBox(img, slot) {
+  const H = img.h;
+  const w = Math.round(H * 0.07);
+  const h = Math.round(Math.min(slot.labelTop, H * 0.088));
+  return { x: Math.round(slot.cx - w / 2), y: 0, w, h };
+}
+
+// Средний цвет области (x0..x1, y0..y1) в долях — для «моей» квадратной подложки.
+function meanColor(img, box, fx0, fy0, fx1, fy1) {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let n = 0;
+  for (let y = Math.round(box.y + box.h * fy0); y < Math.round(box.y + box.h * fy1); y++) {
+    for (let x = Math.round(box.x + box.w * fx0); x < Math.round(box.x + box.w * fx1); x++) {
+      if (x < 0 || y < 0 || x >= img.w || y >= img.h) continue;
+      const p = px(img, x, y);
+      r += p[0];
+      g += p[1];
+      b += p[2];
+      n += 1;
+    }
+  }
+  return n ? [r / n, g / n, b / n] : [0, 0, 0];
+}
+
+// Свой портрет стоит на квадратной подложке цвета команды: верхние углы окрашены.
+function isOwnSlot(img, slot) {
+  const box = slotBox(img, slot);
+  const tl = meanColor(img, box, 0.62, 0.02, 0.98, 0.12);
+  return !!brightTeamColor(...tl); // только яркий цвет: тусклые плашки соперников — не «я»
+}
+
+// Сетка GW×GH из центральной части портрета (по краям — значки «!»).
+const INNER = { x0: 0.22, x1: 0.78, y0: 0.1, y1: 0.98 };
+
+function gridFrom(img, box) {
+  const out = new Float32Array(GW * GH * 3);
+  const bx = box.x + box.w * INNER.x0;
+  const by = box.y + box.h * INNER.y0;
+  const bw = box.w * (INNER.x1 - INNER.x0);
+  const bh = box.h * (INNER.y1 - INNER.y0);
+  for (let gy = 0; gy < GH; gy++) {
+    for (let gx = 0; gx < GW; gx++) {
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let n = 0;
+      const x0 = Math.floor(bx + (gx * bw) / GW);
+      const x1 = Math.max(x0 + 1, Math.floor(bx + ((gx + 1) * bw) / GW));
+      const y0 = Math.floor(by + (gy * bh) / GH);
+      const y1 = Math.max(y0 + 1, Math.floor(by + ((gy + 1) * bh) / GH));
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          if (x < 0 || y < 0 || x >= img.w || y >= img.h) continue;
+          const i = (y * img.w + x) * 4;
+          r += img.data[i];
+          g += img.data[i + 1];
+          b += img.data[i + 2];
+          n += 1;
+        }
+      }
+      const k = (gy * GW + gx) * 3;
+      out[k] = n ? r / n : 0;
+      out[k + 1] = n ? g / n : 0;
+      out[k + 2] = n ? b / n : 0;
+    }
+  }
+  return out;
+}
+
+// Признаки слота: сетка цветов центральной части портрета.
+function slotFeature(img, slot) {
+  return gridFrom(img, slotBox(img, slot));
+}
+
+// Нормированная корреляция двух сеток (по маске, если она есть). 1 — одинаковые.
+function ncc(a, b, mask = null) {
+  let n = 0;
+  const ma = [0, 0, 0];
+  const mb = [0, 0, 0];
+  for (let i = 0; i < GW * GH; i++) {
+    if (mask && !mask[i]) continue;
+    n += 1;
+    for (let c = 0; c < 3; c++) {
+      ma[c] += a[i * 3 + c];
+      mb[c] += b[i * 3 + c];
+    }
+  }
+  if (n < GW * GH * 0.2) return -1;
+  for (let c = 0; c < 3; c++) {
+    ma[c] /= n;
+    mb[c] /= n;
+  }
+  let sab = 0;
+  let saa = 0;
+  let sbb = 0;
+  for (let i = 0; i < GW * GH; i++) {
+    if (mask && !mask[i]) continue;
+    for (let c = 0; c < 3; c++) {
+      const x = a[i * 3 + c] - ma[c];
+      const y = b[i * 3 + c] - mb[c];
+      sab += x * y;
+      saa += x * x;
+      sbb += y * y;
+    }
+  }
+  return saa > 0 && sbb > 0 ? sab / Math.sqrt(saa * sbb) : -1;
+}
+
+// Образцы из картинки справочника (RGBA с прозрачностью): набор вариантов
+// масштаба и сдвига, каждый — сетка + маска непрозрачных клеток.
+function refVariants(ref, { scales = [0.85, 1, 1.15, 1.3], shifts = [-0.08, 0, 0.08], vshifts = [-0.1, 0, 0.1] } = {}) {
+  const out = [];
+  // «виртуальный слот» с соотношением сторон как у портрета в игре (0.07 : 0.088)
+  const aspect = 0.07 / 0.088;
+  for (const s of scales) {
+    for (const dx of shifts) {
+      for (const dy of vshifts) {
+        // размер слота в пикселях картинки-образца: подгоняем ширину образца под s ширин слота
+        const bw = ref.w / s;
+        const bh = bw / aspect;
+        const box = { x: (ref.w - bw) / 2 + dx * bw, y: (ref.h - bh) / 2 + dy * bh, w: bw, h: bh };
+        const grid = new Float32Array(GW * GH * 3);
+        const mask = new Uint8Array(GW * GH);
+        const bx = box.x + box.w * INNER.x0;
+        const by = box.y + box.h * INNER.y0;
+        const iw = box.w * (INNER.x1 - INNER.x0);
+        const ih = box.h * (INNER.y1 - INNER.y0);
+        for (let gy = 0; gy < GH; gy++) {
+          for (let gx = 0; gx < GW; gx++) {
+            let r = 0;
+            let g = 0;
+            let b = 0;
+            let n = 0;
+            let opaque = 0;
+            const x0 = Math.floor(bx + (gx * iw) / GW);
+            const x1 = Math.max(x0 + 1, Math.floor(bx + ((gx + 1) * iw) / GW));
+            const y0 = Math.floor(by + (gy * ih) / GH);
+            const y1 = Math.max(y0 + 1, Math.floor(by + ((gy + 1) * ih) / GH));
+            for (let y = y0; y < y1; y++) {
+              for (let x = x0; x < x1; x++) {
+                n += 1;
+                if (x < 0 || y < 0 || x >= ref.w || y >= ref.h) continue;
+                const i = (y * ref.w + x) * 4;
+                if (ref.data[i + 3] < 200) continue;
+                r += ref.data[i];
+                g += ref.data[i + 1];
+                b += ref.data[i + 2];
+                opaque += 1;
+              }
+            }
+            const k = gy * GW + gx;
+            if (n && opaque / n > 0.8) {
+              mask[k] = 1;
+              grid[k * 3] = r / opaque;
+              grid[k * 3 + 1] = g / opaque;
+              grid[k * 3 + 2] = b / opaque;
+            }
+          }
+        }
+        out.push({ grid, mask });
+      }
+    }
+  }
+  return out;
+}
+
+// Сравнение признаков слота с героем: лучший из вариантов образцов справочника и выученных образцов.
+function scoreHero(feature, hero) {
+  let best = -1;
+  for (const v of hero.variants || []) best = Math.max(best, ncc(feature, v.grid, v.mask));
+  for (const l of hero.learned || []) best = Math.max(best, ncc(feature, l) + 0.05); // свои образцы чуть важнее
+  return best;
+}
+
+// Распределяем героев по слотам: каждый герой — не больше одного раза (жадно по уверенности).
+function assignHeroes(features, heroes) {
+  const cand = [];
+  features.forEach((f, si) => {
+    for (const h of heroes) cand.push({ si, id: h.id, s: scoreHero(f, h) });
+  });
+  const bySlot = features.map((_, si) => cand.filter((c) => c.si === si).sort((a, b) => b.s - a.s));
+  cand.sort((a, b) => b.s - a.s);
+  const usedS = new Set();
+  const usedH = new Set();
+  const res = features.map(() => null);
+  for (const c of cand) {
+    if (usedS.has(c.si) || usedH.has(c.id)) continue;
+    usedS.add(c.si);
+    usedH.add(c.id);
+    const top = bySlot[c.si];
+    const second = top.find((x) => x.id !== c.id);
+    res[c.si] = { id: c.id, score: c.s, margin: second ? c.s - second.s : 1, top3: top.slice(0, 3).map((x) => ({ id: x.id, s: Math.round(x.s * 1000) / 1000 })) };
+  }
+  return res;
+}
+
+// Уверенность: насколько похоже вообще и насколько выше второго варианта.
+// По проверке на реальных снимках: верный герой по картинке справочника ≈ 0,87
+// при отрыве ≥ 0,3; выученный образец ≈ 0,97+; «не тот» — до ~0,55 с отрывом ~0,03.
+function confident(r) {
+  return !!r && r.score >= 0.68 && r.margin >= 0.1;
+}
+
+module.exports = { GW, GH, teamColor, findSlots, layoutSlots, slotBox, isOwnSlot, slotFeature, gridFrom, ncc, refVariants, scoreHero, assignHeroes, confident };
+
+}};window.DC={};for(const m of ["stats","timeline","tipkit","meta","extract","features","leaks","portraits"])window.DC[m]=req(m);return Object.keys(window.DC);})()

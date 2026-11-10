@@ -1887,4 +1887,298 @@ function confident(r) {
 
 module.exports = { GW, GH, teamColor, findSlots, layoutSlots, slotBox, isOwnSlot, slotFeature, gridFrom, ncc, refVariants, scoreHero, assignHeroes, confident };
 
-}};window.DC={};for(const m of ["stats","timeline","tipkit","meta","extract","features","leaks","portraits"])window.DC[m]=req(m);return Object.keys(window.DC);})()
+}};M["pick"]={mod:{exports:{}},fn:function(module,exports){const require=req;'use strict';
+// Совет по пику в паузе перед игрой: из твоих героев выбираем лучших против
+// состава соперников, с учётом линии, союзников и того, кого не хватает команде.
+//
+// Оценка героя — это ожидаемый шанс победы:
+//   50%
+// + сила героя в патче (винрейт в матчах топового уровня, все игры deadlock-api)
+// + каждый соперник: насколько этот герой против него выигрывает чаще/реже ожидаемого
+//   (если соперник на твоей линии — берём цифры именно «на одной линии»)
+// + каждый союзник: связка (для напарника по линии — связка на одной линии)
+// + состав: команде без танка или с перебором стрелков выигрывать тяжелее
+// Вес данных: 80% — мета (все игры топового уровня), 20% — твои собственные игры.
+
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+
+const MY_SHARE = 0.2; // доля твоих игр в совете
+const META_SHARE = 1 - MY_SHARE;
+const PAIR_PRIOR = 150; // малые выборки пар стягиваем к нулю
+const BASE_PRIOR = 300;
+const VS_CAP = 0.08; // один соперник — не больше ±8% к шансу
+const ALLY_CAP = 0.05;
+const WEAK_WR = 0.48; // ниже — «слабый в патче»
+const STALE_DAYS = 30;
+
+// ---------- роли ----------
+// Из справочника героев: brawler — танк, без типа или с меткой Support — поддержка,
+// mystic — урон способностями, marksman/assassin — урон пулями.
+function heroRole(asset) {
+  if (!asset) return null;
+  const tags = (asset.tags || []).map((t) => String(t).toLowerCase());
+  if (asset.type === 'brawler') return 'tank';
+  if (!asset.type || tags.includes('support')) return 'support';
+  if (asset.type === 'mystic') return 'spirit';
+  return 'gun';
+}
+
+const ROLE_NAMES = { tank: 'танк', support: 'поддержка', spirit: 'урон способностями', gun: 'урон пулями' };
+
+// Состав команды и чего не хватает. Цифры — из 470 тыс. рейтинговых команд за неделю
+// (с поправкой на силу самих героев): без танка −2%, четыре и больше стрелков −1,5%.
+function teamComp(roles) {
+  const c = { tank: 0, support: 0, spirit: 0, gun: 0 };
+  for (const r of roles) if (r && r in c) c[r] += 1;
+  const missing = [];
+  if (!c.tank) missing.push('tank');
+  if (!c.support) missing.push('support');
+  return { counts: c, known: roles.filter(Boolean).length, missing, gunHeavy: c.gun >= 3 };
+}
+
+function compAdj(allyRoles, role) {
+  const known = allyRoles.filter(Boolean);
+  if (known.length < 3 || !role) return { d: 0, why: null };
+  const c = teamComp(known).counts;
+  if (!c.tank && role === 'tank') return { d: 0.02, why: 'tank' };
+  if (c.gun >= 3 && role === 'gun') return { d: -0.015, why: 'gunHeavy' };
+  return { d: 0, why: null };
+}
+
+// ---------- мета из deadlock-api ----------
+// Сжимаем ответы /v1/analytics в таблицы { герой: { другой: [побед, игр] } }.
+function buildPickMeta({ stats = [], counters = [], laneCounters = [], synergy = [], laneSynergy = [], badge = null, since = null } = {}) {
+  const base = {};
+  for (const r of stats) {
+    const n = Number(r.matches) || 0;
+    if (r.hero_id && n) base[r.hero_id] = [Number(r.wins) || 0, n];
+  }
+  const pairs = (rows) => {
+    const out = {};
+    for (const r of rows) {
+      const n = Number(r.matches_played) || 0;
+      if (!n) continue;
+      (out[r.hero_id] = out[r.hero_id] || {})[r.enemy_hero_id] = [Number(r.wins) || 0, n];
+    }
+    return out;
+  };
+  const duo = (rows) => {
+    const out = {};
+    for (const r of rows) {
+      const n = Number(r.matches_played) || 0;
+      if (!n) continue;
+      const v = [Number(r.wins) || 0, n];
+      (out[r.hero_id1] = out[r.hero_id1] || {})[r.hero_id2] = v;
+      (out[r.hero_id2] = out[r.hero_id2] || {})[r.hero_id1] = v;
+    }
+    return out;
+  };
+  const games = Object.values(base).reduce((s, x) => s + x[1], 0) / 12;
+  return { v: 1, badge, since, games: Math.round(games), base, vs: pairs(counters), lane: pairs(laneCounters), with: duo(synergy), duo: duo(laneSynergy) };
+}
+
+function baseWr(pm, id) {
+  const b = pm && pm.base && pm.base[id];
+  if (!b) return null;
+  return (b[0] + 0.5 * BASE_PRIOR) / (b[1] + BASE_PRIOR);
+}
+
+// Насколько пара отличается от ожидаемого по силе двух героев.
+// sign −1 — соперник (сильный соперник снижает ожидание), +1 — союзник.
+function pairDelta(pm, table, a, b, sign) {
+  const t = pm && pm[table] && pm[table][a];
+  const r = t && t[b];
+  if (!r) return null;
+  const ba = baseWr(pm, a);
+  const bb = baseWr(pm, b);
+  if (ba === null || bb === null) return null;
+  const exp = ba + sign * (bb - 0.5);
+  return { d: (r[0] - r[1] * exp) / (r[1] + PAIR_PRIOR), n: r[1] };
+}
+
+// Матчап против одного соперника: 80% мета + 20% твои игры.
+function mixMatchup(r) {
+  if (!r) return null;
+  const hasPro = typeof r.pro === 'number';
+  const hasMine = typeof r.mine === 'number';
+  if (hasPro && hasMine) return META_SHARE * r.pro + MY_SHARE * r.mine;
+  if (hasPro) return r.pro;
+  if (hasMine) return MY_SHARE * r.mine; // меты нет — твоим играм всё равно не больше 20%
+  return typeof r.delta === 'number' ? r.delta : null; // старые таблицы
+}
+
+// ---------- твои герои ----------
+// Рейтинг пускает на героев с 15 победами в обычном режиме. История из API неполная
+// (старые игры обрезаются), поэтому героя, на котором ты уже играл рейтинг, тоже считаем
+// доступным. Из доступных показываем тех, на ком ты играешь последние 2 месяца.
+const isRankedRow = (r) => r.match_mode === 4 || r.match_mode === 'Ranked';
+
+function heroPool(historyRows, { minWins = 15, manual = null, now = Date.now() / 1000, activeDays = 60 } = {}) {
+  const by = new Map();
+  for (const r of historyRows || []) {
+    const id = Number(r.hero_id);
+    if (!id) continue;
+    if (!by.has(id)) by.set(id, { hero_id: id, games: 0, wins: 0, stdWins: 0, ranked: 0, last: 0, recent: 0, recentWins: 0 });
+    const x = by.get(id);
+    x.games += 1;
+    const won = typeof r.won === 'boolean' ? r.won : typeof r.match_result === 'number' ? r.match_result === r.player_team : false;
+    if (won) x.wins += 1;
+    if (isRankedRow(r)) x.ranked += 1;
+    else if (won) x.stdWins += 1;
+    const t = r.start_time || 0;
+    x.last = Math.max(x.last, t);
+    if (now - t < activeDays * 86400) {
+      x.recent += 1;
+      if (won) x.recentWins += 1;
+    }
+  }
+  for (const x of by.values()) x.lastDays = x.last ? Math.floor((now - x.last) / 86400) : null;
+  const all = [...by.values()].sort((a, b) => b.recent - a.recent || b.games - a.games);
+  let pool;
+  let inactive = [];
+  if (Array.isArray(manual) && manual.length) {
+    pool = manual.map((id) => by.get(Number(id)) || { hero_id: Number(id), games: 0, wins: 0, recent: 0, recentWins: 0, last: 0, lastDays: null });
+  } else {
+    // старые записи без режима: считаем победы всех игр
+    const hasModes = all.some((x) => x.ranked > 0) || (historyRows || []).some((r) => r.match_mode !== undefined);
+    const eligible = all.filter((x) => (hasModes ? x.stdWins : x.wins) >= minWins || x.ranked > 0);
+    const active = eligible.filter((x) => x.recent > 0);
+    pool = active.length >= 3 ? active : eligible;
+    inactive = eligible.filter((x) => !pool.includes(x));
+    if (!pool.length) pool = all.filter((x) => x.games >= 5).slice(0, 8);
+  }
+  return { pool, all, inactive, manual: Array.isArray(manual) && manual.length > 0 };
+}
+
+// ---------- совет ----------
+// pool — твои герои; tables — твои матчапы ({ vs, with } из heroOutlook, оттуда берём «mine»);
+// pm — мета из buildPickMeta; roles — { heroId: роль }.
+function pickAdvice({ pool, tables = {}, pm = null, enemies = [], allies = [], laneEnemies = [], partner = null, current = null, roles = {}, meta = {}, take = 5 }) {
+  enemies = enemies.map(Number);
+  allies = allies.map(Number);
+  laneEnemies = laneEnemies.map(Number).filter((e) => enemies.includes(e));
+  partner = partner && allies.includes(Number(partner)) ? Number(partner) : null;
+  const taken = new Set([...enemies, ...allies]);
+  const totalGames = pool.reduce((s, p) => s + (p.recent || p.games || 0), 0);
+  const myBase = totalGames ? pool.reduce((s, p) => s + (p.recent ? p.recentWins : p.wins || 0), 0) / totalGames : 0.5;
+  const allyRoles = allies.map((a) => roles[a] || null);
+  const rows = [];
+  for (const p of pool) {
+    const hid = p.hero_id;
+    const t = tables && tables[hid];
+    // сила героя: мета 80% + твоя форма на нём 20%
+    let metaWr = baseWr(pm, hid);
+    if (metaWr === null && meta[hid] && meta[hid].games) metaWr = 0.5 + ((meta[hid].winrate - 0.5) * meta[hid].games) / (meta[hid].games + 30);
+    const strength = metaWr === null ? 0 : metaWr - 0.5;
+    const g = p.recent >= 5 ? p.recent : p.games || 0;
+    const w = p.recent >= 5 ? p.recentWins : p.wins || 0;
+    const comfort = g ? (w - g * myBase) / (g + 10) : -0.03;
+    const baseScore = META_SHARE * strength + MY_SHARE * comfort;
+    // соперники
+    const parts = enemies.map((e) => {
+      const onLane = laneEnemies.includes(e);
+      const m = (onLane && pairDelta(pm, 'lane', hid, e, -1)) || pairDelta(pm, 'vs', hid, e, -1);
+      const mine = t && t.vs && t.vs[e] ? t.vs[e].mine : null;
+      const old = t && t.vs ? t.vs[e] : null;
+      const d = m ? mixMatchup({ pro: m.d, mine }) : mixMatchup(old);
+      const lane = pairDelta(pm, 'lane', hid, e, -1);
+      return {
+        hero_id: e,
+        d: d === null ? 0 : clamp(d, -VS_CAP, VS_CAP),
+        known: d !== null,
+        lane: onLane,
+        laneD: lane ? clamp(lane.d, -VS_CAP, VS_CAP) : null,
+        evidence: m ? m.n : old ? old.evidence : 0,
+      };
+    });
+    const vsScore = parts.reduce((s, x) => s + x.d, 0);
+    // союзники
+    const mates = allies.filter((a) => a !== hid).map((a) => {
+      const isPartner = a === partner;
+      const m = (isPartner && pairDelta(pm, 'duo', hid, a, 1)) || pairDelta(pm, 'with', hid, a, 1);
+      const mine = t && t.with && t.with[a] ? t.with[a].mine : null;
+      const d = m ? mixMatchup({ pro: m.d, mine }) : t && t.with ? mixMatchup(t.with[a]) : null;
+      return { hero_id: a, d: d === null ? 0 : clamp(d, -ALLY_CAP, ALLY_CAP), known: d !== null, partner: isPartner };
+    });
+    const allyScore = mates.reduce((s, x) => s + x.d, 0);
+    const role = roles[hid] || null;
+    const comp = compAdj(allyRoles, role);
+    const score = baseScore + vsScore + allyScore + comp.d;
+    const chance = clamp(0.5 + score, 0.2, 0.8);
+    const sorted = parts.filter((x) => x.known && Math.abs(x.d) >= 0.01).sort((a, b) => b.d - a.d);
+    rows.push({
+      hero_id: hid,
+      score,
+      chance,
+      vsScore,
+      allyScore,
+      compD: comp.d,
+      compWhy: comp.why,
+      strength,
+      metaWr,
+      comfort,
+      role,
+      weak: metaWr !== null && metaWr < WEAK_WR,
+      stale: p.lastDays !== null && p.lastDays !== undefined && p.lastDays > STALE_DAYS ? p.lastDays : null,
+      games: p.games || 0,
+      wins: p.wins || 0,
+      recent: p.recent || 0,
+      taken: taken.has(hid),
+      known: parts.filter((x) => x.known).length,
+      parts,
+      mates: mates.filter((x) => x.known && x.d >= 0.01).sort((a, b) => b.d - a.d).slice(0, 2),
+      matesBad: mates.filter((x) => x.known && x.d <= -0.01).sort((a, b) => a.d - b.d).slice(0, 1),
+      pros: sorted.filter((x) => x.d > 0).slice(0, 2),
+      cons: sorted.filter((x) => x.d < 0).reverse().slice(0, 2),
+      noTable: !t && !pm,
+    });
+  }
+  rows.sort((a, b) => b.score - a.score);
+  const free = rows.filter((r) => !r.taken);
+  const best = free[0] || null;
+  let verdict = null;
+  const cur = current ? rows.find((r) => r.hero_id === Number(current)) : null;
+  if (best && cur) {
+    const gap = best.score - cur.score;
+    if (best.hero_id === cur.hero_id || gap < 0.02) verdict = { keep: true, hero_id: cur.hero_id, gap: Math.max(0, gap) };
+    else verdict = { keep: false, hero_id: best.hero_id, from: cur.hero_id, gap };
+  }
+  const comp = teamComp(allyRoles);
+  return { rows: free.slice(0, take), all: rows, verdict, enemies: enemies.length, myBase, comp, laneEnemies, partner };
+}
+
+// План на игру для выбранного героя: кого опасаться, кто удобен, линия, предметы, связки.
+// row — строка из pickAdvice; counters — { [enemyHeroId]: [{ id, lift }] }; leak — главная повторяющаяся ошибка.
+function gamePlan({ row, counters = {}, leak = null, laneEnemies = [] }) {
+  if (!row) return null;
+  const known = (row.parts || []).filter((x) => x.known);
+  const hard = known.filter((x) => x.d <= -0.02).sort((a, b) => a.d - b.d).slice(0, 2);
+  const easy = known.filter((x) => x.d >= 0.02).sort((a, b) => b.d - a.d).slice(0, 2);
+  // линия: если соперники по линии отмечены — про них; иначе — «если попадётся на линии»
+  const withLane = (row.parts || []).filter((x) => x.laneD !== null);
+  const laneSet = new Set(laneEnemies.map(Number));
+  const lane = laneSet.size
+    ? { known: true, list: withLane.filter((x) => laneSet.has(x.hero_id)).map((x) => ({ hero_id: x.hero_id, d: x.laneD })) }
+    : {
+        known: false,
+        hard: withLane.filter((x) => x.laneD <= -0.025).sort((a, b) => a.laneD - b.laneD).slice(0, 2).map((x) => ({ hero_id: x.hero_id, d: x.laneD })),
+        easy: withLane.filter((x) => x.laneD >= 0.025).sort((a, b) => b.laneD - a.laneD).slice(0, 2).map((x) => ({ hero_id: x.hero_id, d: x.laneD })),
+      };
+  // предметы-ответы: сначала против тяжёлых соперников, потом против остальных; без повторов
+  const items = [];
+  const seen = new Set();
+  const order = hard.concat(known.filter((x) => !hard.includes(x)).sort((a, b) => a.d - b.d));
+  for (const e of order) {
+    for (const it of counters[e.hero_id] || []) {
+      if (seen.has(it.id) || items.length >= 3) continue;
+      seen.add(it.id);
+      items.push({ id: it.id, lift: it.lift, vs: e.hero_id });
+      break; // по одному предмету на соперника
+    }
+  }
+  return { hero_id: row.hero_id, hard, easy, lane, items, mates: row.mates || [], matesBad: row.matesBad || [], leak };
+}
+
+module.exports = { heroPool, pickAdvice, gamePlan, mixMatchup, buildPickMeta, pairDelta, baseWr, heroRole, teamComp, compAdj, ROLE_NAMES, MY_SHARE };
+
+}};window.DC={};for(const m of ["stats","timeline","tipkit","meta","extract","features","leaks","portraits","pick"])window.DC[m]=req(m);return Object.keys(window.DC);})()

@@ -2182,11 +2182,11 @@
 
   const HABITS = {
     d10: { label: 'Смерти до 10:00', fmt: (v) => String(Math.round(v * 10) / 10).replace('.', ','), lower: true, why: 'На всех рангах в среднем одна. Но каждая лишняя смерть на линии отнимает около 3–4% шанса на победу.' },
-    neu9: { label: 'Души с леса к 9:00', fmt: (v) => F.num(v), why: 'Лесной лагерь у линии — бесплатные души, пока ждёшь волну.' },
-    brk9: { label: 'Души с коробок к 9:00', fmt: (v) => F.num(v), why: 'Коробки у линии ломаются за пару выстрелов и дают души без риска.' },
-    pu10: { label: 'Статуи к 10:00', fmt: (v) => String(Math.round(v)), why: 'Каждая статуя — постоянный баф: здоровье, урон, скорость стрельбы до конца игры.' },
+    neu9: { label: 'Души с леса к 9:00', fmt: (v) => F.num(v), why: 'Малый лагерь у линии появляется на 2:00 и восстанавливается через 1:25 — бесплатные души, пока ждёшь волну.' },
+    brk9: { label: 'Души с коробок к 9:00', fmt: (v) => F.num(v), why: 'Коробки появляются на 3:00 и восстанавливаются через 3 минуты после поломки.' },
+    pu10: { label: 'Постоянные бафы к 10:00', fmt: (v) => String(Math.round(v)), why: 'Из контейнеров с бафами (бывшие золотые статуи, с 3:00) и с джекпота Sinner’s. Здоровье, урон, скорость стрельбы — до конца игры.' },
     brk20: { label: 'Души с коробок к 20:00', fmt: (v) => F.num(v) },
-    pu20: { label: 'Статуи к 20:00', fmt: (v) => String(Math.round(v)) },
+    pu20: { label: 'Постоянные бафы к 20:00', fmt: (v) => String(Math.round(v)) },
   };
 
   // Моменты ошибки: чипы со временем. Клик — показать момент на мини-карте матча.
@@ -2201,6 +2201,9 @@
 
   function wrCompare(row) {
     if (row.wrWith === null || row.wrWithout === null) return null;
+    if (Math.abs(row.wrWith - row.wrWithout) < 0.05) {
+      return h('div.wr-same', `На победы в твоих играх пока заметно не влияет: ${F.pct(row.wrWith)} с этой ошибкой и ${F.pct(row.wrWithout)} без неё. Но исправить стоит — это то, что делают игроки рангом выше.`);
+    }
     const bar = (label, v, cls) => h('div.wr-line', h('span.wr-label', label), h('div.wr-track', h(`span.${cls}`, { style: { width: `${Math.max(3, Math.round(v * 100))}%` } })), h('b.num', F.pct(v)));
     return h('div.wr-compare', bar('с этой ошибкой', row.wrWith, 'bad'), bar('без неё', row.wrWithout, 'good'));
   }
@@ -2210,7 +2213,7 @@
     if (row.souls) parts.push(h('span.pill.bad', `≈ ${F.num(row.souls)} ${plural(row.souls, 'душа', 'души', 'душ')} мимо`));
     if (row.deaths) parts.push(h('span.pill.bad', `${row.deaths} ${plural(row.deaths, 'смерть', 'смерти', 'смертей')} на линии`));
     if (row.allyDeaths) parts.push(h('span.pill.bad', `${row.allyDeaths} ${plural(row.allyDeaths, 'смерть', 'смерти', 'смертей')} союзников`));
-    if (row.statues) parts.push(h('span.pill.warn', `${row.statues} ${plural(row.statues, 'статуя', 'статуи', 'статуй')} мимо`));
+    if (row.statues) parts.push(h('span.pill.warn', `${row.statues} ${plural(row.statues, 'баф', 'бафа', 'бафов')} мимо`));
     return parts.length ? h('div.leak-cost', parts) : null;
   }
 
@@ -2219,7 +2222,21 @@
       heroIcon(g.hero, '.sm'),
       h('div.grow',
         h('div.leak-ex-head', h('b', heroName(g.hero)), h(`span.res.${g.won ? 'win' : 'loss'}`, g.won ? 'победа' : 'поражение'), h('span.dim', F.ago(g.start_time))),
-        g.moments.length ? h('div.leak-ex-moments', g.moments.slice(0, 3).map((mo) => h('span', h('b.num', F.time(mo.t)), ' ', mo.text))) : h('div.dim.small', g.text.slice(0, 120) + (g.text.length > 120 ? '…' : ''))))));
+        exampleBody(g)))));
+  }
+
+  // Что показать в примере: моменты со временем, предметы-ответы или текст целиком.
+  function exampleBody(g) {
+    const x = g.extra;
+    if (x && x.items && x.items.length) {
+      const what = [x.kills ? `убил тебя ${x.kills} ${plural(x.kills, 'раз', 'раза', 'раз')}` : '', x.share >= 0.3 ? `${Math.round(x.share * 100)}% урона по тебе` : ''].filter(Boolean).join(' · ');
+      return h('div.leak-ex-counter',
+        h('div.small', h('b', heroName(x.hero)), what ? ` — ${what}` : ''),
+        h('div.counter-items', h('span.dim.small', 'Топы против него берут:'), x.items.map((it) => h('span.counter-item', { title: `${itemName(it.id)}: против ${heroName(x.hero)} берут в ${String(it.lift).replace('.', ',')} раза чаще, чем обычно` },
+          itemImg(it.id), h('span', itemName(it.id)), h('b.num', `×${String(Math.round(it.lift * 10) / 10).replace('.', ',')}`)))));
+    }
+    if (g.moments && g.moments.length) return h('div.leak-ex-moments', g.moments.slice(0, 3).map((mo) => h('span', h('b.num', F.time(mo.t)), ' ', mo.text)));
+    return h('div.leak-ex-text', g.text);
   }
 
   function renderGrowth() {
@@ -2241,8 +2258,8 @@
     const notes = [];
     if (d.fresh < d.total) {
       notes.push(h('div.note', Icon('info'), h('div', d.fresh
-        ? `Подробные данные (лес, коробки, статуи, драки по секундам) есть для ${d.fresh} из ${d.total} игр. Остальные скачаются заново при следующих проверках — разбор станет точнее.`
-        : 'Твои матчи сохранены старой версией программы — в них нет леса, коробок, статуй и драк по секундам. Нажми «Проверить новые игры»: программа перекачает их.')));
+        ? `Подробные данные (лес, коробки, постоянные бафы, драки по секундам) есть для ${d.fresh} из ${d.total} игр. Остальные скачаются заново при следующих проверках — разбор станет точнее.`
+        : 'Твои матчи сохранены старой версией программы — в них нет леса, коробок, постоянных бафов и драк по секундам. Нажми «Проверить новые игры»: программа перекачает их.')));
     }
     if (!n) return void v.replaceChildren(head, ...notes, h('div.empty', h('strong', 'Пока нечего разбирать'), 'Нужны матчи с подробными данными. Сыграй пару игр или нажми «Проверить новые игры».'));
 

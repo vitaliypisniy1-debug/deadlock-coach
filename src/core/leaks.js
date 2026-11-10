@@ -6,7 +6,12 @@
 //   - маршруты героев по 5 секунд: позиция, жив ли, с кем бился (1 герои, 2 крипы линии, 4 лес), здоровье;
 //   - урон между игроками по времени (раз в 3 минуты);
 //   - души по источникам: коробки, лес, казино (Sinner's Sacrifice), потери при смерти;
-//   - время подбора постоянных бафов со статуй.
+//   - время получения постоянных бафов (контейнеры с бафами — бывшие золотые статуи — и джекпот Sinner's).
+//
+// Тайминги карты (патч 30.10.2026, deadlockhandbook.com и senseos.gg; проверено по данным матчей):
+//   коробки и контейнеры с бафами — с 3:00, снова через 3 мин после поломки (в туннелях 5 мин);
+//   лес: малый лагерь 2:00 (снова через 1:25), средний 5:00 (4:50), большой 8:00 (5:35);
+//   Sinner's Sacrifice — с 8:00, снова через 5 мин после поломки; ~340 душ, джекпот тяжёлым ударом — 4 бафа.
 //
 // Цифры для сравнения: топы на твоём герое (ref) или, если их данных ещё нет,
 // медианы по рангам из 640 тыс. рейтинговых игр (RANK_BENCH, deadlock-api, ноябрь 2026).
@@ -18,7 +23,7 @@ const souls = (n) => `${N(n)} ${plural(n, 'душа', 'души', 'душ')}`;
 
 // Медианы по рангу (average_badge // 10). Рейтинг, игры от 25 минут, 2 дня, 640 тыс. игроко-игр.
 // d10 — смерти до 9–10 минуты (медиана 1 на всех рангах: высокие ранги умирают рано не реже),
-// brk — души с коробок, neu — души с леса, pu — статуи (постоянные бафы), nw — души всего.
+// brk — души с коробок, neu — души с леса, pu — постоянные бафы (контейнеры и джекпот Sinner's), nw — души всего.
 const RANK_BENCH = {
   1: { d10: 1, brk9: 161, brk20: 886, neu9: 144, neu20: 1239, pu10: 1, pu20: 6, nw9: 5671, nw20: 16825 },
   2: { d10: 1, brk9: 232, brk20: 1145, neu9: 232, neu20: 1556, pu10: 1, pu20: 7, nw9: 5805, nw20: 17079 },
@@ -172,6 +177,7 @@ function gameLeaks(c) {
           level: 'bad',
           score: 70 + laneDeaths.length * 8,
           title: hard ? `Тяжёлый матчап с ${heroName(worstFoe.hero_id)} — и ты пошёл в размены` : 'Размены на линии шли в пользу врага',
+          groupTitle: 'Размены на линии шли в пользу врага',
           text: `К ${T(tAt)} ты нанёс противникам по линии ${N(out9)} урона, а получил ${N(in9)} — в ${(in9 / Math.max(1, out9)).toFixed(1).replace('.', ',')} раза больше. ` +
             `Итог — ${laneDeaths.length} ${plural(laneDeaths.length, 'смерть', 'смерти', 'смертей')} на линии.` +
             (hard ? ` У топов ${heroName(me.hero_id)} против ${heroName(worstFoe.hero_id)} выигрывает на ${Math.round(-vs * 100)}% реже обычного — в такой линии размены не твоя сила.` : ''),
@@ -231,6 +237,7 @@ function gameLeaks(c) {
         level: lostOnes.length >= 3 ? 'bad' : 'warn',
         score: 55 + lostOnes.length * 10 + allyDeathsTotal * 2,
         title: jungle >= missed.length / 2 ? 'Бил лес, пока команда дралась' : 'Фармил, пока команда дралась',
+        groupTitle: 'Фармил, пока команда проигрывала драки',
         text: `${missed.length} ${plural(missed.length, 'раз', 'раза', 'раз')} после 10:00 команда проиграла драку без тебя, а ты в это время фармил ${jungle ? 'лес' : 'крипов'} в 10–28 секундах бега от неё. ` +
           `В этих драках погибло ${allyDeathsTotal} ${plural(allyDeathsTotal, 'союзник', 'союзника', 'союзников')}.`,
         fix: [
@@ -244,7 +251,7 @@ function gameLeaks(c) {
     }
   }
 
-  // ---------- 3. Тайминги карты: лес, коробки, статуи, казино ----------
+  // ---------- 3. Тайминги карты: лес, коробки, контейнеры с бафами, казино ----------
   const timing = [];
   if (f.neu9 !== null && f.neu9 !== undefined && endS >= 600) {
     const b = benchFor('neu9', c.ref, c.tier);
@@ -259,11 +266,11 @@ function gameLeaks(c) {
   }
   if (f.pu10 !== null && f.pu10 !== undefined) {
     const b = benchFor('pu10', c.ref, c.tier);
-    if (b.target && f.pu10 <= b.target - 4) timing.push({ k: 'pu10', what: 'статуй к 10:00', me: f.pu10, ...b, souls: 0, statues: b.target - f.pu10 });
+    if (b.target && f.pu10 <= b.target - 4) timing.push({ k: 'pu10', what: 'постоянных бафов к 10:00', me: f.pu10, ...b, souls: 0, statues: b.target - f.pu10 });
   }
   if (f.pu20 !== null && f.pu20 !== undefined) {
     const b = benchFor('pu20', c.ref, c.tier);
-    if (b.target && f.pu20 <= b.target - 6) timing.push({ k: 'pu20', what: 'статуй к 20:00', me: f.pu20, ...b, souls: 0, statues: b.target - f.pu20 });
+    if (b.target && f.pu20 <= b.target - 6) timing.push({ k: 'pu20', what: 'постоянных бафов к 20:00', me: f.pu20, ...b, souls: 0, statues: b.target - f.pu20 });
   }
   if (timing.length) {
     const lostSouls = timing.reduce((s, x) => s + x.souls, 0);
@@ -278,11 +285,11 @@ function gameLeaks(c) {
       title: 'Не забираешь то, что лежит на карте',
       text: timing.map((x) => fmt(x)).map((t, i) => (i === 0 ? t[0].toUpperCase() + t.slice(1) : t)).join('; ') + '.' +
         (lostSouls ? ` Это ${souls(lostSouls)}, которые просто остались на карте.` : '') +
-        (statues ? ` И ${statues} ${plural(statues, 'постоянный баф', 'постоянных бафа', 'постоянных бафов')} со статуй — это здоровье, урон и скорость стрельбы до конца игры.` : ''),
+        (statues ? ` И ${statues} ${plural(statues, 'постоянный баф', 'постоянных бафа', 'постоянных бафов')} мимо — это здоровье, урон и скорость стрельбы до конца игры.` : ''),
       fix: [
-        'Когда волна ушла к врагу и до следующей есть время — ломай коробки и статуи рядом с линией, а не стой у башни.',
-        'Лесной лагерь рядом с линией бери, как только он появился: пока ждёшь волну, это бесплатные души.',
-        'Идёшь с базы или на другую линию — веди маршрут через коробки и статуи по пути.',
+        'Коробки и контейнеры с бафами (бывшие золотые статуи) появляются на 3:00 и восстанавливаются через 3 минуты после поломки. Волна ушла к врагу — ломай те, что у твоей линии, и возвращайся к следующей волне.',
+        'Малый лесной лагерь появляется на 2:00 и восстанавливается через 1:25 — бери его каждый раз, пока ждёшь волну. Средний — с 5:00, большой — с 8:00.',
+        'Идёшь с базы или на другую линию — веди маршрут через коробки и контейнеры по пути.',
       ],
       moments: [],
       cost: { souls: lostSouls, statues },
@@ -296,10 +303,14 @@ function gameLeaks(c) {
       level: 'warn',
       score: 22,
       title: 'Не брал казино (Sinner’s Sacrifice)',
-      text: 'За первые 20 минут ты ни разу не забрал Sinner’s Sacrifice. Он появляется на 10:00 и снова через 5 минут после того, как его разбили; даёт около 330 душ и золотую урну с постоянным бафом.',
-      fix: ['На 10:00, 15:00 и 20:00 смотри, не стоит ли машина рядом с тобой: бить можно только ближним боем, это занимает несколько секунд.'],
+      text: 'С 8:00 до 20:00 ты ни разу не забрал Sinner’s Sacrifice. Он появляется на 8:00 и снова через 5 минут после того, как его сломали; даёт около 340 душ, а если поймать джекпот тяжёлым ударом — ещё 4 постоянных бафа.',
+      fix: [
+        'На 8:00 загляни к ближайшему Sinner’s Sacrifice: бить можно только ближним боем, лучше тяжёлым ударом.',
+        'До джекпота каждый удар стоит тебе 80 здоровья — не подходи к нему полуживым.',
+        'Когда загорятся все огни — добей тяжёлым ударом: это 4 постоянных бафа вместо одного.',
+      ],
       moments: [],
-      cost: { souls: 330 },
+      cost: { souls: 340 },
     });
   }
 
@@ -369,15 +380,24 @@ function gameLeaks(c) {
     }
     if (misses.length) {
       const top = misses.sort((a, b) => b.kills - a.kills || b.share - a.share)[0];
+      const what = [top.kills ? `убил тебя ${top.kills} ${plural(top.kills, 'раз', 'раза', 'раз')}` : '', top.share >= 0.3 ? `нанёс ${Math.round(top.share * 100)}% всего урона по тебе` : ''].filter(Boolean).join(' и ');
       out.push({
         key: 'counter_missing',
         area: 'Предметы',
         level: 'warn',
         score: 38 + top.kills * 5,
         title: `Не было ответа на ${heroName(top.hero)}`,
-        text: `${heroName(top.hero)} ${top.kills ? `убил тебя ${top.kills} ${plural(top.kills, 'раз', 'раза', 'раз')}` : ''}${top.kills && top.share >= 0.3 ? ' и ' : ''}${top.share >= 0.3 ? `нанёс ${Math.round(top.share * 100)}% всего урона по тебе` : ''}. ` +
-          `Против него топы заметно чаще берут: ${top.items.map((x) => `${itemName(x.id)} (в ${x.lift.toFixed(1).replace('.', ',')} раза чаще)`).join(', ')}. У тебя этого не было.`,
-        fix: [`Когда видишь ${heroName(top.hero)} у соперников — заранее впиши в сборку один из этих предметов.`],
+        groupTitle: 'Не собираешь ответ на героя, который тебя убивает',
+        text: `${heroName(top.hero)} ${what}. Против него топы заметно чаще берут: ${top.items.map((x) => `${itemName(x.id)} (в ${x.lift.toFixed(1).replace('.', ',')} раза чаще)`).join(', ')}. У тебя этого не было.`,
+        fix: [
+          `Видишь ${heroName(top.hero)} у соперников — заранее впиши в сборку ${top.items.length > 1 ? 'один из этих предметов' : 'этот предмет'}: ${top.items.map((x) => itemName(x.id)).join(', ')}.`,
+          'Ответ не обязательно брать первым: купи его, как только этот герой начал тебя убивать, — обычно к 15–20 минуте.',
+        ],
+        groupFix: [
+          'Посмотри в примерах ниже, кто тебя убивал и что против него берут топы. Видишь этого героя у соперников — впиши предмет в сборку заранее.',
+          'Ответ не обязательно брать первым: купи его, как только этот герой начал тебя убивать, — обычно к 15–20 минуте.',
+        ],
+        extra: { hero: top.hero, kills: top.kills, share: Math.round(top.share * 100) / 100, items: top.items },
         moments: [],
         cost: {},
         facts: misses,
@@ -390,7 +410,7 @@ function gameLeaks(c) {
 
 // Что топы чаще берут против каждого героя. records: [{ match, player }] — игры топового уровня.
 // lift = доля игр с предметом, когда герой у соперников / доля без него.
-function counterItems(records, { minBuys = 12, minRate = 0.1, minLift = 1.35, perHero = 4, isItem = () => true } = {}) {
+function counterItems(records, { minBuys = 12, minRate = 0.1, minLift = 1.5, perHero = 4, isItem = () => true } = {}) {
   const N0 = records.length;
   if (N0 < 200) return {};
   const total = new Map();
@@ -433,14 +453,14 @@ function leakProfile(games) {
     for (const l of g.leaks) {
       if (l.level === 'good') continue;
       let e = by.get(l.key);
-      if (!e) by.set(l.key, (e = { key: l.key, area: l.area, title: l.title, fix: l.fix, games: [], souls: 0, deaths: 0, allyDeaths: 0, statues: 0, score: 0 }));
-      e.games.push({ match_id: g.match_id, start_time: g.start_time, won: g.won, hero: g.hero, title: l.title, text: l.text, moments: (l.moments || []).slice(0, 4), score: l.score });
+      if (!e) by.set(l.key, (e = { key: l.key, area: l.area, title: l.groupTitle || l.title, fix: l.groupFix || l.fix, games: [], souls: 0, deaths: 0, allyDeaths: 0, statues: 0, score: 0 }));
+      e.games.push({ match_id: g.match_id, start_time: g.start_time, won: g.won, hero: g.hero, title: l.title, text: l.text, extra: l.extra || null, moments: (l.moments || []).slice(0, 4), score: l.score });
       e.souls += (l.cost && l.cost.souls) || 0;
       e.deaths += (l.cost && l.cost.deaths) || 0;
       e.allyDeaths += (l.cost && l.cost.allyDeaths) || 0;
       e.statues += (l.cost && l.cost.statues) || 0;
       e.score += l.score;
-      if (l.fix && l.fix.length > (e.fix || []).length) e.fix = l.fix;
+      if (!l.groupFix && l.fix && l.fix.length > (e.fix || []).length) e.fix = l.fix;
     }
   }
   const n = counted.length;

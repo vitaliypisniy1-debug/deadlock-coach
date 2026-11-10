@@ -1189,3 +1189,10 @@ body.gaming *, body.gaming *::before, body.gaming *::after {
   .leak-row-head { flex-wrap: wrap; }
   .leak-row-body { padding-left: 14px; }
 }
+.wr-same { margin-top: 12px; max-width: 560px; font-size: 13px; color: var(--muted); padding: 8px 12px; border-radius: 8px; background: var(--bg-2); border: 1px solid var(--line); }
+.leak-ex-text { font-size: 12.5px; color: var(--text-2); margin-top: 4px; line-height: 1.45; }
+.leak-ex-counter { margin-top: 4px; display: grid; gap: 6px; color: var(--text-2); }
+.counter-items { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.counter-item { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px 3px 3px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line-2); font-size: 12.5px; color: var(--text); }
+.counter-item img, .counter-item .ph { width: 22px; height: 22px; border-radius: 5px; }
+.counter-item b { color: var(--good); font-size: 12px; }

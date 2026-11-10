@@ -104,9 +104,9 @@ const CATALOG = [
   {
     key: 'pu10', family: 'statues', fmt: (v) => String(Math.round(v)), area: 'Тайминги', cmp: 'ge', heroSpecific: false,
     metric: (g) => g.f && g.f.pu10,
-    title: (t) => `Статуи к 10:00 — от ${t}`,
-    short: 'статуи к 10:00',
-    tip: 'Каждая статуя — постоянный баф до конца игры. Волна ушла к врагу — ломай статую рядом с линией и возвращайся к следующей волне.',
+    title: (t) => `Постоянных бафов к 10:00 — от ${t}`,
+    short: 'бафы к 10:00',
+    tip: 'Контейнеры с бафами (бывшие золотые статуи) появляются на 3:00 и снова через 3 минуты после поломки. Волна ушла к врагу — ломай ближайший и возвращайся к следующей волне.',
     make: (me, ref) => (me === null || ref === null || me >= ref - 1 ? null : { target: Math.max(Math.ceil(me) + 1, Math.round(me + (ref - me) * 0.6)), gap: ((ref - me) / Math.max(1, ref)) * 0.8 }),
     stretch: (me, ref) => (me === null || ref === null || me >= ref ? null : { target: Math.ceil(ref), gap: ((ref - me) / Math.max(1, ref)) * 0.4 }),
   },

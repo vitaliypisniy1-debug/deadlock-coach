@@ -38,6 +38,16 @@ setInterval(() => {
   }
 }, 500).unref();
 
+// Запросы окна, которым сохранённые матчи не нужны, — отвечают сразу.
+const NO_MATCHES = new Set(['app:init', 'auth:login', 'auth:manual', 'auth:logout', 'status:get', 'top:list', 'shell:open', 'game:mode', 'rec:run', 'rec:learn', 'rec:forget', 'rec:status',
+  'overlay:toggle', 'overlay:key', 'game:logCheck', 'update:check', 'update:download', 'update:install', 'update:skip', 'clipboard:write', 'lag:get']);
+
+function slowLog(text) {
+  try {
+    fs.appendFileSync(path.join(app.getPath('userData'), 'lag.log'), `${new Date().toISOString()} ${text}\n`);
+  } catch {}
+}
+
 function logCrash(where, e) {
   const text = `[${new Date().toISOString()}] ${where}: ${(e && e.stack) || e}\n`;
   try {
@@ -297,7 +307,7 @@ function autoRefresh() {
     return;
   }
   autoPending = false;
-  sync.refreshTop(store.settings(), { background: true }).then((r) => emit('meta:updated', r.meta)).catch((e) => emit('log', e.message));
+  store.ready.then(() => sync.refreshTop(store.settings(), { background: true }).then((r) => emit('meta:updated', r.meta)).catch((e) => emit('log', e.message)));
 }
 
 function scheduleAuto() {
@@ -314,7 +324,7 @@ function onGameMode(active) {
   if (active) {
     if (recognizer) recognizer.loadRefs().catch(() => {});
     const a = store.read('auth.json', null);
-    if (a && a.accountId) sync.pickTables(a.accountId).catch(() => {});
+    if (a && a.accountId) store.ready.then(() => sync.pickTables(a.accountId)).catch(() => {});
   } else if (autoPending) {
     setTimeout(() => {
       if (!inGameMode() && autoPending) autoRefresh();
@@ -324,9 +334,14 @@ function onGameMode(active) {
 
 function handle(channel, fn) {
   ipcMain.handle(channel, async (_e, ...args) => {
-    lastIpc = `${channel} (выполняется)`;
     try {
-      return { ok: true, data: await fn(...args) };
+      // запросы, которым нужны матчи, ждут, пока они дочитаются с диска (окно при этом живое)
+      if (!NO_MATCHES.has(channel)) await store.ready;
+      lastIpc = `${channel} (выполняется)`;
+      const t0 = Date.now();
+      const data = await fn(...args);
+      if (Date.now() - t0 > 3000) slowLog(`${channel} выполнялся ${((Date.now() - t0) / 1000).toFixed(1)} с`);
+      return { ok: true, data };
     } catch (e) {
       return { ok: false, error: e && e.message ? e.message : String(e) };
     } finally {
@@ -436,6 +451,13 @@ function registerIpc() {
     if (!auth) throw new Error('Сначала войди через Steam');
     return auth.accountId;
   };
+  handle('lag:get', async () => {
+    try {
+      return fs.readFileSync(path.join(app.getPath('userData'), 'lag.log'), 'utf8').trim().split('\n').slice(-40).join('\n');
+    } catch {
+      return '';
+    }
+  });
   handle('coach:get', async (opts) => sync.coach(authId(), opts || {}));
   handle('leaks:get', async () => sync.leaks(authId()));
   handle('mu:mine', async () => sync.matchups(authId()));
@@ -592,7 +614,12 @@ app.setAppUserModelId && app.setAppUserModelId('local.deadlock.coach');
 app.whenReady().then(() => {
   if (!gotLock) return;
   try {
-    store = new Store(path.join(app.getPath('userData'), 'data'));
+    store = new Store(path.join(app.getPath('userData'), 'data'), { lazy: true });
+    store.ready.then(() => {
+      try {
+        fs.appendFileSync(path.join(app.getPath('userData'), 'lag.log'), `${new Date().toISOString()} запуск ${app.getVersion()}: матчей на диске ${store.loadInfo.files}, прочитаны за ${(store.loadInfo.ms / 1000).toFixed(1)} с\n`);
+      } catch {}
+    });
     api = new Api({ getApiKey: () => store.settings().apiKey });
     sync = new Sync({ api, store, emit });
     registerIpc();

@@ -2603,7 +2603,15 @@
           h('div.hint', OV.key && OV.key.key ? `Работает: ${OV.key.key}. Нажми в поле и зажми новое сочетание; Backspace — выключить.` : 'Клавиша не активна — нажми в поле и зажми сочетание, например Ctrl+Shift+D.')),
         h('label', 'Мои герои для рейтинга'), h('div', poolBlock),
         h('label', 'Узнавать состав сам'), h('div', recSettings(logBlock)),
-        h('label', 'Игровой режим'), h('div', gameModeSettings())));
+        h('label', 'Игровой режим'), h('div', gameModeSettings()),
+        h('label', 'Журнал зависаний'), h('div',
+          h('button.btn.small', { onclick: async () => {
+            const t = await dc.lagLog().catch(() => '');
+            if (!t) return toast('Журнал пуст — зависаний не записано');
+            await dc.copy(t).catch(() => {});
+            toast('Журнал скопирован — вставь его в чат');
+          } }, Icon('copy'), 'Скопировать журнал'),
+          h('div.hint', { style: { margin: '6px 0 0' } }, 'Если программа подвисает, она записывает сюда, когда и на чём. Скопируй и пришли — по нему видно причину.'))));
   }
 
   // Игровой режим: фоновые загрузки ждут конца игры, оверлей работает.

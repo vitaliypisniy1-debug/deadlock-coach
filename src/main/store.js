@@ -27,12 +27,41 @@ const DEFAULT_SETTINGS = {
 };
 
 class Store {
-  constructor(dir) {
+  // lazy: матчи читаются с диска в фоне (тысячи файлов на Windows — это секунды, окно не должно
+  // на это время замирать). Тогда перед работой с матчами нужно дождаться store.ready.
+  constructor(dir, { lazy = false } = {}) {
     this.dir = dir;
     this.matchDir = path.join(dir, 'matches');
     fs.mkdirSync(this.matchDir, { recursive: true });
     this.matches = new Map();
-    this._loadMatches();
+    this.loadInfo = { files: 0, ms: 0 };
+    if (lazy) this.ready = this._loadMatchesAsync();
+    else {
+      this._loadMatches();
+      this.ready = Promise.resolve();
+    }
+  }
+
+  async _loadMatchesAsync() {
+    const t0 = Date.now();
+    let files = [];
+    try {
+      files = (await fs.promises.readdir(this.matchDir)).filter((f) => f.endsWith('.json'));
+    } catch {}
+    const BATCH = 24; // читаем пачками параллельно, между пачками отдаём управление окну
+    for (let i = 0; i < files.length; i += BATCH) {
+      const texts = await Promise.all(files.slice(i, i + BATCH).map((f) => fs.promises.readFile(path.join(this.matchDir, f), 'utf8').catch(() => null)));
+      for (const t of texts) {
+        if (!t) continue;
+        try {
+          const m = JSON.parse(t);
+          // матч, сохранённый уже после запуска, новее файла на диске — не затираем
+          if (m && m.match_id && !this.matches.has(m.match_id)) this.matches.set(m.match_id, m);
+        } catch {}
+      }
+      await new Promise((r) => setImmediate(r));
+    }
+    this.loadInfo = { files: files.length, ms: Date.now() - t0 };
   }
 
   _file(name) {

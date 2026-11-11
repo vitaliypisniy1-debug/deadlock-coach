@@ -4,6 +4,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const readline = require('readline');
 
 const DEFAULT_SETTINGS = {
   region: 'Europe',
@@ -62,26 +63,22 @@ class Store {
     const packed = new Set();
     let lines = 0;
     try {
-      const text = await fs.promises.readFile(this.packFile, 'utf8');
-      let pos = 0;
-      while (pos < text.length) {
-        for (let k = 0; k < 150 && pos < text.length; k++) {
-          let end = text.indexOf('\n', pos);
-          if (end < 0) end = text.length;
-          const line = text.slice(pos, end);
-          pos = end + 1;
-          if (!line) continue;
-          lines += 1;
-          try {
-            const m = JSON.parse(line);
-            if (m && m.match_id && onDisk.has(m.match_id) && !this._putEarly.has(m.match_id)) {
-              this.matches.set(m.match_id, m); // более поздняя строка новее
-              packed.add(m.match_id);
-            }
-          } catch {} // оборванная строка — возьмём матч из отдельного файла
-        }
-        await tick();
+      const input = fs.createReadStream(this.packFile, { encoding: 'utf8' });
+      const rl = readline.createInterface({ input, crlfDelay: Infinity });
+      let batch = 0;
+      for await (const line of rl) {
+        if (!line) continue;
+        lines += 1;
+        try {
+          const m = JSON.parse(line);
+          if (m && m.match_id && onDisk.has(m.match_id) && !this._putEarly.has(m.match_id)) {
+            this.matches.set(m.match_id, m); // более поздняя строка новее
+            packed.add(m.match_id);
+          }
+        } catch {} // оборванная строка — возьмём матч из отдельного файла
+        if (++batch >= 150) { batch = 0; await tick(); }
       }
+      rl.close();
     } catch {}
     const rest = names.filter((f) => !packed.has(Number(f.slice(0, -5))));
     const BATCH = 24;
@@ -180,13 +177,16 @@ class Store {
     return this.matches.get(Number(id)) || null;
   }
 
-  putMatch(m) {
+  async putMatch(m) {
     this.matches.set(m.match_id, m);
     const text = JSON.stringify(m);
-    fs.writeFileSync(path.join(this.matchDir, `${m.match_id}.json`), text);
+    await fs.promises.writeFile(path.join(this.matchDir, `${m.match_id}.json`), text);
     if (this._putEarly) this._putEarly.add(m.match_id);
     // дописываем в общий файл (если он ведётся) — по очереди, не мешая окну
-    if (this.packOn || this._putEarly) this._packQ = this._packQ.then(() => fs.promises.appendFile(this.packFile, text + '\n')).catch(() => {});
+    if (this.packOn || this._putEarly) {
+      this._packQ = this._packQ.then(() => fs.promises.appendFile(this.packFile, text + '\n'));
+      await this._packQ;
+    }
   }
 
   allMatches() {
@@ -225,3 +225,4 @@ class Store {
 }
 
 module.exports = { Store, DEFAULT_SETTINGS };
+

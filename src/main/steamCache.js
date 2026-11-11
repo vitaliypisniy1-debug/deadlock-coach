@@ -74,6 +74,7 @@ async function scanCache({ steamDir, sinceMs = Date.now() - 45 * 86400e3 } = {})
   const found = [];
   let checked = 0;
   for await (const f of walk(path.join(dir, 'appcache', 'httpcache'), state)) {
+    if (++checked % 100 === 0) await new Promise((resolve) => setImmediate(resolve));
     if (sinceMs) {
       try {
         if ((await fs.promises.stat(f)).mtimeMs < sinceMs) continue;
@@ -84,7 +85,6 @@ async function scanCache({ steamDir, sinceMs = Date.now() - 45 * 86400e3 } = {})
     const head = await readHead(f, 16384);
     if (!head.includes('1422450')) continue;
     found.push(...parseReplayUrls(head));
-    if (++checked % 100 === 0) await new Promise((resolve) => setImmediate(resolve));
   }
   return { steamDir: dir, records: toSaltRecords(found) };
 }

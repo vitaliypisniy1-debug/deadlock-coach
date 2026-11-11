@@ -94,6 +94,7 @@ function heroVs(records, assets, { minGames = 3 } = {}) {
       ci_lo: ci.lo,
       ci_hi: ci.hi,
       laneGames: r.laneGames,
+      laneSamples: r.laneDiff.length,
       laneDiff: r.laneDiff.length >= 2 ? median(r.laneDiff) : null,
       counters,
     };
@@ -120,11 +121,9 @@ function prepare({ myHero, enemies, laneFoe = null, topVs, mine, heroName, itemN
   if (lane) {
     if (lane.top && lane.top.laneDiff !== null) {
       tips.push({
-        kind: lane.top.laneDiff >= 0 ? 'good' : 'warn',
+        kind: 'info',
         title: `Линия против ${heroName(lane.hero_id)}`,
-        text: lane.top.laneDiff >= 0
-          ? `Топы на ${heroName(myHero)} обычно выигрывают эту линию: к 10:00 в среднем +${Math.round(lane.top.laneDiff)} душ. Можно играть агрессивно.`
-          : `Даже топы на ${heroName(myHero)} обычно проигрывают эту линию: к 10:00 в среднем ${Math.round(lane.top.laneDiff)} душ. Играй от башни и добивай безопасных крипов.`,
+        text: `К 10:00 типичная разница у топов на ${heroName(myHero)} — ${lane.top.laneDiff > 0 ? '+' : ''}${Math.round(lane.top.laneDiff)} душ. Сравнение по ${lane.top.laneSamples} матчам с данными по линии.`,
       });
     }
     if (lane.mine && lane.mine.games >= 2) {
@@ -140,9 +139,10 @@ function prepare({ myHero, enemies, laneFoe = null, topVs, mine, heroName, itemN
     tips.push({ kind: 'info', title: 'Что топы докупают против этого состава', text: counters.map((c) => `«${itemName(c.id)}» против ${heroName(c.vs)} (${Math.round(c.pick * 100)}% игр, обычно ${Math.round(c.base * 100)}%)`).join('; ') + '.' });
   }
   const hard = rows.filter((r) => r.top && r.top.games >= 4 && r.top.wr < 0.45);
-  if (hard.length) tips.push({ kind: 'warn', title: 'Неудобные соперники', text: `Против ${hard.map((r) => heroName(r.hero_id)).join(', ')} у топов на ${heroName(myHero)} винрейт ниже 45%. Не дерись с ними один на один без преимущества.` });
+  const observed = (entries) => entries.map((r) => `${heroName(r.hero_id)} (${r.top.wins} побед из ${r.top.games})`).join(', ');
+  if (hard.length) tips.push({ kind: 'warn', title: 'Меньше побед в сохранённых матчах', text: `На ${heroName(myHero)} топы выиграли менее 45% матчей с этими героями в составе соперника: ${observed(hard)}.` });
   const easy = rows.filter((r) => r.top && r.top.games >= 4 && r.top.wr > 0.58);
-  if (easy.length) tips.push({ kind: 'good', title: 'Удобные соперники', text: `Против ${easy.map((r) => heroName(r.hero_id)).join(', ')} топы на ${heroName(myHero)} выигрывают чаще — ищи драки с ними.` });
+  if (easy.length) tips.push({ kind: 'good', title: 'Больше побед в сохранённых матчах', text: `На ${heroName(myHero)} топы выиграли более 58% матчей с этими героями в составе соперника: ${observed(easy)}.` });
   return { rows, tips, counters };
 }
 

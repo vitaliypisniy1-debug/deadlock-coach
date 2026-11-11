@@ -27,7 +27,7 @@ contextBridge.exposeInMainWorld('dc', {
   favorites: () => call('favorites:list'),
   addFavorite: (accountId, name) => call('favorites:add', { accountId, name }),
   removeFavorite: (accountId) => call('favorites:remove', accountId),
-  myMatches: () => call('my:matches'),
+  myMatches: (cachedOnly) => call('my:matches', cachedOnly),
   freshMatches: () => call('my:freshMatches'),
   coach: (opts) => call('coach:get', opts),
   myMatchups: () => call('mu:mine'),
@@ -37,8 +37,9 @@ contextBridge.exposeInMainWorld('dc', {
   proCandidates: (matchId) => call('vs:candidates', matchId),
   versus: (opts) => call('vs:get', opts),
   overview: (days) => call('my:overview', days),
+  dashboard: (cachedOnly) => call('my:dashboard', cachedOnly),
   myHeroes: () => call('my:heroes'),
-  heroSummary: (heroId) => call('my:heroSummary', heroId),
+  heroSummary: (heroId, cachedOnly, mode) => call('my:heroSummary', heroId, cachedOnly, mode),
   scanCache: () => call('my:scanCache'),
   campTargets: (heroId) => call('camp:targets', heroId),
   analyze: (opts) => call('camp:analyze', opts),
@@ -67,7 +68,7 @@ contextBridge.exposeInMainWorld('dc', {
   buildPng: (rect, name) => call('build:png', { rect, name }),
   copyBuildImage: (rect) => call('build:copyImage', { rect }),
   on: (channel, fn) => {
-    const allowed = ['progress', 'log', 'meta:updated', 'overlay:shown', 'update:available', 'update:progress', 'overlay:recognized', 'game:event', 'game:mode'];
+    const allowed = ['progress', 'log', 'meta:updated', 'assets:updated', 'overlay:shown', 'update:available', 'update:progress', 'overlay:recognized', 'game:event', 'game:mode'];
     if (!allowed.includes(channel)) return () => {};
     const h = (_e, payload) => fn(payload);
     ipcRenderer.on(channel, h);

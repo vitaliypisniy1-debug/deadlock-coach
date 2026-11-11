@@ -53,6 +53,7 @@ const SPEED = 320; // средняя скорость героя, единиц �
 const FIGHT_FAR = 3000; // дальше этого — не участвовал в драке (≈10 секунд бега)
 const FIGHT_REACH = 9000; // дальше этого — не успел бы добежать (≈28 секунд)
 const LANE_END = 600; // до 10:00 — стадия линий
+const SOUL_LOSS_THRESHOLD = 1000;
 
 const clampTier = (t) => (t ? Math.max(1, Math.min(TOP_TIER, t)) : null);
 
@@ -81,9 +82,9 @@ function findFights(m) {
   const ev = [];
   for (const p of m.players) {
     for (const d of p.deaths || []) {
-      const [t, x, y] = d;
+      const [t, x, y, killer] = d;
       if (typeof t !== 'number') continue;
-      ev.push({ t, x, y, team: p.team, slot: p.slot, hero: p.hero_id });
+      ev.push({ t, x, y, killer, team: p.team, slot: p.slot, hero: p.hero_id });
     }
   }
   ev.sort((a, b) => a.t - b.t);
@@ -116,12 +117,20 @@ function lossPerDeath(me) {
     const dd = s.d - prev.d;
     const lost = s.g_lost - prev.g_lost;
     if (dd === 1) {
-      const t = (me.deaths_t || []).find((x) => x > prev.t && x <= s.t);
-      if (t !== undefined) out.push({ t, lost });
+      const events = (me.deaths_t || []).filter((x) => x > prev.t && x <= s.t);
+      if (events.length === 1 && Number.isFinite(lost) && lost >= 0) out.push({ t: events[0], lost });
     }
     prev = s;
   }
   return out;
+}
+
+function majorSoulLosses(me, endS, losses = lossPerDeath(me)) {
+  const last = me.stats?.at(-1);
+  if (!last || !Number.isFinite(endS) || last.t < endS - 65
+    || !me.stats.every((s, i) => Number.isFinite(s.g_lost) && s.g_lost >= (me.stats[i - 1]?.g_lost ?? 0))
+    || !Number.isInteger(me.d) || last.d !== me.d || losses.length !== me.d) return null;
+  return losses.filter((x) => x.lost >= SOUL_LOSS_THRESHOLD).length;
 }
 
 // Души в кармане в момент t: накопленные минус потраченные на предметы.
@@ -154,6 +163,7 @@ function gameLeaks(c) {
   const bySlot = new Map(m.players.map((p) => [p.slot, p]));
   const enemies = m.players.filter((p) => p.team !== me.team);
   const allies = m.players.filter((p) => p.team === me.team && p !== me);
+  const checked = (key) => c.checked?.add(key);
 
   // ---------- 1. Линия: размены в пользу врага ----------
   const foes = me.lane !== null && me.lane !== undefined ? enemies.filter((p) => p.lane === me.lane) : [];
@@ -169,6 +179,7 @@ function gameLeaks(c) {
       const foeSlots = new Set(foes.map((e) => e.slot));
       const laneDeaths = (me.deaths || []).filter((d) => d[0] <= LANE_END && foeSlots.has(d[3]));
       const tAt = m.dmg.t[idx];
+      if (tAt >= Math.min(endS, LANE_END) - 65 && Number.isFinite(me.d10 ?? f.d10)) checked('lane_trades');
       const worstFoe = foes.slice().sort((a, b) => ((m.dmg.d[`${b.slot}>${me.slot}`] || [])[idx] || 0) - ((m.dmg.d[`${a.slot}>${me.slot}`] || [])[idx] || 0))[0];
       const vs = c.laneVs && worstFoe ? c.laneVs[worstFoe.hero_id] : null;
       if (in9 >= out9 * 1.5 && in9 - out9 >= 800 && laneDeaths.length >= 1) {
@@ -178,16 +189,12 @@ function gameLeaks(c) {
           area: 'Линия',
           level: 'bad',
           score: 70 + laneDeaths.length * 8,
-          title: hard ? `Тяжёлый матчап с ${heroName(worstFoe.hero_id)} — и ты пошёл в размены` : 'Размены на линии шли в пользу врага',
+          title: 'Получил больше урона от соперников по линии',
           groupTitle: 'Размены на линии шли в пользу врага',
-          text: `К ${T(tAt)} ты нанёс противникам по линии ${N(out9)} урона, а получил ${N(in9)} — в ${(in9 / Math.max(1, out9)).toFixed(1).replace('.', ',')} раза больше. ` +
-            `Итог — ${laneDeaths.length} ${plural(laneDeaths.length, 'смерть', 'смерти', 'смертей')} на линии.` +
-            (hard ? ` У топов ${heroName(me.hero_id)} против ${heroName(worstFoe.hero_id)} выигрывает на ${Math.round(-vs * 100)}% реже обычного — в такой линии размены не твоя сила.` : ''),
-          fix: [
-            'В слабой линии играй от крипов: добивай волну у своей башни, а не на середине.',
-            'Разменивайся только когда враг потратил главную способность или пошёл добивать крипа.',
-            'Ушёл в минус по здоровью — не стой на линии: отойди, восстановись, вернись к следующей волне.',
-          ],
+          text: `К ${T(tAt)} ты нанёс соперникам по линии ${N(out9)} урона и получил от них ${N(in9)}. До ${T(LANE_END)} погибал от них ${laneDeaths.length} ${plural(laneDeaths.length, 'раз', 'раза', 'раз')}.`,
+          context: hard ? `В сохранённой выборке ${heroName(me.hero_id)} реже выигрывал против ${heroName(worstFoe.hero_id)}. Причину отдельной смерти лучше проверить по эпизоду.`
+            : 'Чтобы оценить решение, посмотри в эпизоде, с каким здоровьем и из какой позиции ты начал размен.',
+          fix: ['Если перед следующим разменом у тебя мало здоровья, отойди и восстановись.'],
           moments: laneDeaths.map((d) => ({ t: d[0], x: d[1], y: d[2], text: `умер от ${heroName((bySlot.get(d[3]) || {}).hero_id)}` })),
           cost: { deaths: laneDeaths.length },
           facts: { out9, in9, vs },
@@ -211,15 +218,27 @@ function gameLeaks(c) {
   // ---------- 2. Бил лес (или крипов), пока команда дралась ----------
   if (m.paths && m.paths.players && m.paths.players[me.slot]) {
     const missed = [];
+    let fightChecks = 0;
+    let incompleteFights = false;
     for (const fight of findFights(m)) {
-      if (fight.t0 < LANE_END || fight.x === null) continue;
+      if (fight.t0 < LANE_END) continue;
       const allyDeaths = fight.deaths.filter((d) => d.team === me.team).length;
       const enemyDeaths = fight.deaths.length - allyDeaths;
       // только настоящие драки, которые команда проиграла
       if (fight.deaths.length < 2 || allyDeaths <= enemyDeaths || fight.deaths.some((d) => d.slot === me.slot)) continue;
+      if (!fight.deaths.every((d) => Number.isFinite(d.x) && Number.isFinite(d.y))) {
+        incompleteFights = true;
+        continue;
+      }
       const pts = pathPoints(m, me.slot, fight.t0 - 15, fight.t1);
-      if (!pts || !pts.length) continue;
+      const step = m.paths.step || 5;
+      if (!pts?.length || pts.at(-1).t < fight.t1 - step || pts.some(({ p }) =>
+        !Number.isFinite(p?.[0]) || !Number.isFinite(p?.[1]) || !Number.isFinite(p?.[3]))) {
+        incompleteFights = true;
+        continue;
+      }
       if (pts.some((q) => !q.p[2])) continue; // был мёртв — не в счёт
+      fightChecks += 1;
       const mask = pts.reduce((s, q) => s | (q.p[3] || 0), 0);
       if (mask & 1) continue; // дрался с героями — значит, участвовал
       const start = pts[0].p;
@@ -230,24 +249,21 @@ function gameLeaks(c) {
       missed.push({ t: fight.t0, x: fight.x, y: fight.y, allyDeaths, enemyDeaths, far, jungle: !!(mask & 4), sec: Math.round(far / SPEED) });
     }
     const lostOnes = missed;
+    if (fightChecks && !incompleteFights) checked('farm_while_fight');
     const allyDeathsTotal = missed.reduce((s, x) => s + x.allyDeaths, 0);
     if (lostOnes.length >= 2) {
       const jungle = missed.filter((x) => x.jungle).length;
       out.push({
         key: 'farm_while_fight',
         area: 'Драки',
-        level: lostOnes.length >= 3 ? 'bad' : 'warn',
+        level: 'warn',
         score: 55 + lostOnes.length * 10 + allyDeathsTotal * 2,
         title: jungle >= missed.length / 2 ? 'Бил лес, пока команда дралась' : 'Фармил, пока команда дралась',
         groupTitle: 'Фармил, пока команда проигрывала драки',
-        text: `${missed.length} ${plural(missed.length, 'раз', 'раза', 'раз')} после 10:00 команда проиграла драку без тебя, а ты в это время фармил ${jungle ? 'лес' : 'крипов'} в 10–28 секундах бега от неё. ` +
-          `В этих драках погибло ${allyDeathsTotal} ${plural(allyDeathsTotal, 'союзник', 'союзника', 'союзников')}.`,
-        fix: [
-          'Каждые 5–10 секунд смотри на миникарту: союзники собираются вместе — иди к ним, лагерь подождёт.',
-          'Фарми лес на своей половине карты рядом с командой, а не на другом конце.',
-          'Драка уже началась далеко от тебя (больше 10 секунд бега) — не беги в неё по одному, а дави волну на другой линии.',
-        ],
-        moments: missed.map((x) => ({ t: x.t, x: x.x, y: x.y, text: `драка ${x.allyDeaths}:${x.enemyDeaths} (наши потери : их), ты в ${x.sec} с бега${x.jungle ? ', в лесу' : ''}` })),
+        text: `После 10:00 найдено ${missed.length} ${plural(missed.length, 'эпизод', 'эпизода', 'эпизодов')}, где ты фармил, а команда потеряла больше героев. Всего в этих эпизодах погибло ${allyDeathsTotal} ${plural(allyDeathsTotal, 'союзник', 'союзника', 'союзников')}.`,
+        context: 'Расстояние по карте даёт приблизительную оценку. Из этих данных нельзя понять, успевал ли ты подойти и что команда получала на другой стороне карты.',
+        fix: ['На карте проверь, когда можно было заметить драку и был ли безопасный путь к команде.'],
+        moments: missed.map((x) => ({ t: x.t, x: x.x, y: x.y, text: `потери ${x.allyDeaths}:${x.enemyDeaths} · около ${x.sec} с по прямой${x.jungle ? ' · ты в лесу' : ''}` })),
         cost: { allyDeaths: allyDeathsTotal, fightsLost: lostOnes.length },
       });
     }
@@ -255,16 +271,18 @@ function gameLeaks(c) {
 
   // ---------- 3. Тайминги карты: лес, коробки, контейнеры с бафами, казино ----------
   const timing = [];
+  if (endS >= 1200 && [f.neu9, f.brk20, f.pu10, f.pu20].every(Number.isFinite)) checked('map_timings');
   if (f.neu9 !== null && f.neu9 !== undefined && endS >= 600) {
     const b = benchFor('neu9', c.ref, c.tier);
     if (b.target && f.neu9 < b.target * 0.5 && b.target - f.neu9 >= 300) timing.push({ k: 'neu9', what: 'лес к 9:00', me: f.neu9, ...b, souls: b.target - f.neu9 });
   }
-  if (f.brk20 !== null && f.brk20 !== undefined) {
+  if (Number.isFinite(f.brk9) && endS >= 600) {
+    const b = benchFor('brk9', c.ref, c.tier);
+    if (b.target && f.brk9 < b.target * 0.5 && b.target - f.brk9 >= 250) timing.push({ k: 'brk9', what: 'души с коробок к 9:00', me: f.brk9, ...b, souls: b.target - f.brk9 });
+  }
+  if (!timing.some((x) => x.k === 'brk9') && Number.isFinite(f.brk20)) {
     const b = benchFor('brk20', c.ref, c.tier);
     if (b.target && f.brk20 < b.target * 0.65 && b.target - f.brk20 >= 600) timing.push({ k: 'brk20', what: 'коробки к 20:00', me: f.brk20, ...b, souls: b.target - f.brk20 });
-  } else if (f.brk9 !== null && f.brk9 !== undefined && endS >= 600) {
-    const b = benchFor('brk9', c.ref, c.tier);
-    if (b.target && f.brk9 < b.target * 0.5 && b.target - f.brk9 >= 250) timing.push({ k: 'brk9', what: 'коробки к 9:00', me: f.brk9, ...b, souls: b.target - f.brk9 });
   }
   if (f.pu10 !== null && f.pu10 !== undefined) {
     const b = benchFor('pu10', c.ref, c.tier);
@@ -277,24 +295,20 @@ function gameLeaks(c) {
   if (timing.length) {
     const lostSouls = timing.reduce((s, x) => s + x.souls, 0);
     const statues = Math.max(0, ...timing.map((x) => x.statues || 0));
-    const who = timing.some((x) => x.fromTops) ? 'у топов на этом герое' : 'у игроков Ascendant+';
-    const fmt = (x) => (x.k.startsWith('pu') ? `${x.what} — ${x.me}, ${who} — ${x.target}` : `${x.what} — ${souls(x.me)}, ${who} — ${N(x.target)}`);
+    const fmt = (x) => `${x.what} — ${N(x.me)}, ${x.fromTops ? 'у топов на этом герое' : 'у игроков Ascendant+'} — ${N(x.target)}`;
     out.push({
       key: 'map_timings',
       area: 'Тайминги',
       level: lostSouls >= 900 || statues >= 4 ? 'bad' : 'warn',
       score: 40 + Math.min(40, lostSouls / 40) + statues * 4,
-      title: 'Не забираешь то, что лежит на карте',
-      text: timing.map((x) => fmt(x)).map((t, i) => (i === 0 ? t[0].toUpperCase() + t.slice(1) : t)).join('; ') + '.' +
-        (lostSouls ? ` Это ${souls(lostSouls)}, которые просто остались на карте.` : '') +
-        (statues ? ` И ${statues} ${plural(statues, 'постоянный баф', 'постоянных бафа', 'постоянных бафов')} мимо — это здоровье, урон и скорость стрельбы до конца игры.` : ''),
+      title: 'Меньше ресурсов карты, чем в сравнении',
+      text: timing.map((x) => fmt(x)).map((t, i) => (i === 0 ? t[0].toUpperCase() + t.slice(1) : t)).join('; ') + '.',
+      context: 'Сравнение показывает разницу в собранных ресурсах. Доступность лагеря или контейнера в конкретный момент проверяется по карте.',
       fix: [
-        'Коробки и контейнеры с бафами (бывшие золотые статуи) появляются на 3:00 и восстанавливаются через 3 минуты после поломки. Волна ушла к врагу — ломай те, что у твоей линии, и возвращайся к следующей волне.',
-        'Малый лесной лагерь появляется на 2:00 и восстанавливается через 1:25 — бери его каждый раз, пока ждёшь волну. Средний — с 5:00, большой — с 8:00.',
-        'Идёшь с базы или на другую линию — веди маршрут через коробки и контейнеры по пути.',
+        'Посмотри свой маршрут между волнами и проверь, были ли рядом доступные ресурсы, которые можно забрать без риска пропустить волну.',
       ],
       moments: [],
-      cost: { souls: lostSouls, statues },
+      cost: {},
       facts: timing,
     });
   }
@@ -302,51 +316,50 @@ function gameLeaks(c) {
   // шесть игроков получают одинаковую сумму в одну минуту). Личной ошибкой «не взял» не считаем.
 
   // ---------- 4. Души, потерянные при смерти ----------
-  const losses = lossPerDeath(me).filter((x) => x.lost >= 600);
-  if (losses.length) {
-    const total = losses.reduce((s, x) => s + x.lost, 0);
+  const observedLosses = lossPerDeath(me);
+  if (majorSoulLosses(me, endS, observedLosses) !== null) checked('lost_souls');
+  const losses = observedLosses.filter((x) => x.lost >= 600);
+  const total = losses.reduce((s, x) => s + x.lost, 0);
+  if (total >= 1200 || losses.length >= 2 || losses.some((x) => x.lost >= SOUL_LOSS_THRESHOLD)) {
     const ref = c.ref && c.ref.lostPerDeath && c.ref.lostPerDeath.n >= 4 ? c.ref.lostPerDeath.med : null;
-    if (total >= 1200 || losses.length >= 2) {
-      out.push({
-        key: 'lost_souls',
-        area: 'Выживание',
-        level: total >= 2000 ? 'bad' : 'warn',
-        score: 35 + Math.min(40, total / 60),
-        title: 'Умирал с несохранёнными душами',
-        text: `${losses.length} ${plural(losses.length, 'смерть стоила', 'смерти стоили', 'смертей стоили')} тебе ${soulsAcc(total)} — их ты не успел сохранить.` +
-          (ref ? ` У топов на этом герое одна смерть в среднем стоит ${soulsAcc(ref)}.` : ''),
-        fix: [
-          'Свежие души сначала «несохранённые»: умрёшь — часть пропадёт. После крупного фарма не лезь сразу в рискованную драку.',
-          'Накопил на предмет — вернись и купи, а потом иди драться: потраченные души потерять нельзя.',
-          'Видишь, что драка проиграна, — отступай раньше: смерть с полным карманом стоит вдвое дороже.',
-        ],
-        moments: losses.map((x) => ({ t: x.t, text: `умер и потерял ${soulsAcc(x.lost)}` })),
-        cost: { souls: total },
-      });
-    }
+    out.push({
+      key: 'lost_souls',
+      area: 'Выживание',
+      level: total >= 2000 ? 'bad' : 'warn',
+      score: 35 + Math.min(40, total / 60),
+      title: 'Умирал с несохранёнными душами',
+      text: `${losses.length} ${plural(losses.length, 'смерть стоила', 'смерти стоили', 'смертей стоили')} тебе ${soulsAcc(total)}.` +
+        (ref ? ` У топов на этом герое медианная потеря за смерть — ${souls(ref)}.` : ''),
+      fix: ['Перед рискованным пушем Walker или дракой проверь размер мешка. Если можно безопасно купить полезный предмет или сохранить души, сравни этот вариант с продолжением пуша.'],
+      moments: losses.map((x) => ({ t: x.t, lost: x.lost, text: `умер и потерял ${soulsAcc(x.lost)}` })),
+      cost: { souls: total },
+    });
   }
 
   // ---------- 5. Смерть с непотраченными душами ----------
-  const rich = (me.deaths || [])
+  const lateDeaths = (me.deaths || [])
     .filter((d) => d[0] >= LANE_END)
-    .map((d) => ({ t: d[0], x: d[1], y: d[2], free: unspentAt(me, d[0], c.assets) }))
-    .filter((d) => d.free !== null && d.free >= 3000);
+    .map((d) => ({ t: d[0], x: d[1], y: d[2], free: unspentAt(me, d[0], c.assets) }));
+  if (lateDeaths.length && lateDeaths.every((d) => Number.isFinite(d.free))) checked('died_rich');
+  const rich = lateDeaths.filter((d) => Number.isFinite(d.free) && d.free >= 3000);
   if (rich.length) {
     out.push({
       key: 'died_rich',
       area: 'Предметы',
       level: rich.length >= 2 ? 'bad' : 'warn',
       score: 30 + rich.length * 10,
-      title: 'Умирал с душами на целый предмет',
-      text: `${rich.length} ${plural(rich.length, 'раз', 'раза', 'раз')} ты погиб, имея в кармане до ${souls(Math.max(...rich.map((d) => d.free)))} — это готовый предмет, который не участвовал в драке.`,
-      fix: ['Перед дракой или объектом проверь души: хватает на предмет — купи (магазин у линии ближе, чем кажется).'],
-      moments: rich.map((d) => ({ t: d.t, x: d.x, y: d.y, text: `умер с ${souls(d.free)} в кармане` })),
+      title: 'Возможна покупка перед дракой',
+      text: `По сохранённым покупкам и накопленным душам расчётный остаток перед смертью доходил до ${souls(Math.max(...rich.map((d) => d.free)))}.`,
+      context: 'Это оценка по доступным покупкам. Фактический остаток и возможность добраться до магазина нужно проверить в эпизоде.',
+      fix: ['Перед ближайшей дракой проверь, хватает ли на полезный предмет и можно ли безопасно купить его.'],
+      moments: rich.map((d) => ({ t: d.t, x: d.x, y: d.y, text: `расчётный остаток около ${souls(d.free)}` })),
       cost: { souls: 0 },
     });
   }
 
   // ---------- 6. Не собрал предмет против опасного героя ----------
   if (c.counters && endS >= 1200) {
+    if (me.items?.length && m.dmg?.t?.at(-1) >= endS - 65 && enemies.some((e) => c.counters[e.hero_id]?.length)) checked('counter_missing');
     const taken = {};
     if (m.dmg && m.dmg.d) {
       const last = m.dmg.t.length - 1;
@@ -586,12 +599,11 @@ function gameHighlights(c) {
   }
 
   // ---------- 8. Паверспайк использован ----------
-  if (f.spikeFights !== null && f.spikeFights !== undefined && f.spikeFights >= 0.99 && f.firstBigT) {
+  if (f.spikeFights === 1 && f.spikeWindows >= 2) {
     push({
       key: 'spike_used', area: 'Паверспайки', score: 28,
-      title: 'Каждый большой предмет сразу шёл в дело',
-      text: 'После каждой покупки предмета за 3000+ ты в течение 3 минут участвовал в убийстве.',
-      keep: 'Купил — используй, пока враг не докупился. Ты так и делал.',
+      title: 'Участие в убийствах после дорогих покупок',
+      text: `В проверенных окнах после покупки участие в убийстве за 3 минуты подтверждено в ${f.spikeWindows} из ${f.spikeWindows} случаев.`,
     });
   }
 
@@ -649,7 +661,7 @@ function leakProfile(games) {
       if (l.level === 'good') continue;
       let e = by.get(l.key);
       if (!e) by.set(l.key, (e = { key: l.key, area: l.area, title: l.groupTitle || l.title, fix: l.groupFix || l.fix, games: [], souls: 0, deaths: 0, allyDeaths: 0, statues: 0, score: 0 }));
-      e.games.push({ match_id: g.match_id, start_time: g.start_time, won: g.won, hero: g.hero, title: l.title, text: l.text, extra: l.extra || null, moments: (l.moments || []).slice(0, 4), score: l.score });
+      e.games.push({ match_id: g.match_id, start_time: g.start_time, won: g.won, hero: g.hero, title: l.title, text: l.text, context: l.context || null, extra: l.extra || null, moments: (l.moments || []).slice(0, 4), score: l.score });
       e.souls += (l.cost && l.cost.souls) || 0;
       e.deaths += (l.cost && l.cost.deaths) || 0;
       e.allyDeaths += (l.cost && l.cost.allyDeaths) || 0;
@@ -661,16 +673,19 @@ function leakProfile(games) {
   const n = counted.length;
   const wr = (list) => {
     const d = list.filter((g) => g.won === true || g.won === false);
-    return d.length ? d.filter((g) => g.won).length / d.length : null;
+    return d.length >= 3 ? d.filter((g) => g.won).length / d.length : null;
   };
   const rows = [...by.values()].map((e) => {
     const ids = new Set(e.games.map((g) => g.match_id));
     const withL = counted.filter((g) => ids.has(g.match_id));
-    const without = counted.filter((g) => !ids.has(g.match_id));
+    const without = counted.filter((g) => !ids.has(g.match_id) && (!g.checked || g.checked.includes(e.key)));
+    const eligible = withL.length + without.length;
     return {
       ...e,
       count: e.games.length,
-      share: n ? e.games.length / n : 0,
+      eligible,
+      unknown: n - eligible,
+      share: eligible ? e.games.length / eligible : 0,
       wrWith: withL.length >= 3 ? wr(withL) : null,
       wrWithout: without.length >= 3 ? wr(without) : null,
       // важность: как часто × насколько серьёзно × бьёт ли по победам именно в твоих играх
@@ -679,7 +694,25 @@ function leakProfile(games) {
       examples: e.games.slice().sort((a, b) => b.score - a.score).slice(0, 3),
     };
   });
-  return { games: n, rows: rows.sort((a, b) => b.impact - a.impact) };
+  rows.sort((a, b) => b.impact - a.impact);
+  const goals = {
+    lane_trades: { title: 'Не больше одной смерти до 10:00', action: 'После неудачного размена отойди и восстанови здоровье перед следующим.', check: 'После матча посчитай смерти до 10-й минуты.' },
+    lost_souls: { title: `Ни одной смерти с потерей ${N(SOUL_LOSS_THRESHOLD)} душ или больше`, action: 'Перед рискованной дракой или пушем Walker проверь, можно ли сохранить души или безопасно купить предмет.', check: 'После матча проверь потерю душ в эпизодах своих смертей, если для них есть данные.' },
+  };
+  let goal = null;
+  for (const row of rows) {
+    if (!Object.hasOwn(goals, row.key)) continue;
+    const evidence = row.games.flatMap((game) => {
+      const moment = game.moments.find((point) => Number.isFinite(point.t) && point.t >= 0
+        && (row.key !== 'lost_souls' || point.lost >= SOUL_LOSS_THRESHOLD));
+      return moment ? [{ matchId: game.match_id, startTime: game.start_time, title: game.title, context: game.context, ...moment }] : [];
+    });
+    if (new Set(evidence.map((episode) => episode.matchId)).size < 2) continue;
+    const episode = evidence.sort((a, b) => b.startTime - a.startTime)[0];
+    goal = { ...goals[row.key], key: row.key, reason: row.title, count: row.count, eligible: row.eligible, episode };
+    break;
+  }
+  return { games: n, rows, goal };
 }
 
 // Связь привычки с победой у игроков твоего уровня: значение → доля побед.
@@ -691,4 +724,4 @@ function winLink(key, value) {
   return { wr: cur[1], best: list[list.length - 1] };
 }
 
-module.exports = { souls, gameLeaks, gameHighlights, leakProfile, counterItems, findFights, lossPerDeath, unspentAt, winLink, benchFor, RANK_BENCH, WIN_LINKS, FIGHT_FAR, FIGHT_REACH, SPEED };
+module.exports = { souls, gameLeaks, gameHighlights, leakProfile, counterItems, findFights, lossPerDeath, majorSoulLosses, unspentAt, winLink, benchFor, RANK_BENCH, WIN_LINKS, FIGHT_FAR, FIGHT_REACH, SPEED, SOUL_LOSS_THRESHOLD };

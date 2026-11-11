@@ -7,6 +7,7 @@
 
 const { median, mean } = require('./stats');
 const { N, D1, P, T, plural } = require('./tipkit');
+const { majorSoulLosses, SOUL_LOSS_THRESHOLD } = require('./leaks');
 
 const DAY = 86400;
 const WEEK = 7 * DAY;
@@ -86,9 +87,9 @@ const CATALOG = [
   {
     key: 'spikeFights', family: 'spikeUse', fmt: P, area: 'Паверспайки', cmp: 'ge', heroSpecific: false,
     metric: (g) => g.f && g.f.spikeFights,
-    title: (t) => `Использовать паверспайк: драка в течение 3 минут после большого предмета — в ${P(t)} случаев`,
-    short: 'драка после паверспайка',
-    tip: 'Купил большой предмет — это твой момент силы. В ближайшие 3 минуты ищи драку или дави на линии, пока враг не докупился.',
+    title: (t) => `Участие в убийстве за 3 минуты после дорогой покупки — в ${P(t)} окон с доступными данными`,
+    short: 'убийство или помощь после покупки',
+    tip: 'При просмотре повтора проверь, была ли у команды безопасная возможность для драки после покупки.',
     make: (me, ref) => (me === null || ref === null || me >= ref - 0.1 ? null : { target: Math.round((me + (ref - me) * 0.7) * 20) / 20, gap: ((ref - me) / Math.max(0.2, ref)) * 0.9 }),
     stretch: (me, ref) => (me === null || ref === null || me >= ref - 0.02 ? null : { target: Math.round(ref * 20) / 20, gap: ((ref - me) / Math.max(0.2, ref)) * 0.5 }),
   },
@@ -124,9 +125,17 @@ const CATALOG = [
     metric: (g) => g.f && g.f.brk9,
     title: (t) => `Души с коробок к 9:00 — от ${N(t)}`,
     short: 'коробки к 9:00',
-    tip: 'Коробки у линии ломаются за пару выстрелов. Волна ушла — пройдись по ближайшим коробкам и обратно.',
+    tip: 'После 3:00 проверь, есть ли безопасный путь к ближайшим коробкам между волнами. Сравни доход и пропущенные добивания в повторе.',
     make: (me, ref) => (me === null || ref === null || me >= ref * 0.75 ? null : { target: round(me + (ref - me) * 0.6, 50), gap: ((ref - me) / Math.max(1, ref)) * 0.7 }),
     stretch: T_UP(50),
+  },
+  {
+    key: 'lost_souls', family: 'soulRisk', fmt: N, area: 'Выживание', cmp: 'le', heroSpecific: false,
+    metric: (g) => g.match && g.me ? majorSoulLosses(g.me, g.match.duration_s) : null,
+    title: () => `Ни одной смерти с потерей ${N(SOUL_LOSS_THRESHOLD)} душ или больше`,
+    short: 'смерти с крупной потерей душ',
+    tip: 'Перед рискованным пушем Walker проверь размер мешка и возможность безопасно отойти или купить предмет.',
+    make: () => null,
   },
   {
     key: 'kp', family: 'kp', fmt: P, area: 'Драки', cmp: 'ge', heroSpecific: false,
@@ -321,7 +330,7 @@ function checkGame(game, goals) {
     const value = cat ? cat.metric(game) : null;
     const target = targetFor(goal, game.hero);
     const pass = passOf(goal.cmp, value, target);
-    return { key: goal.key, short: goal.short, value, target, pass, text: value === null || value === undefined ? '—' : fmtOf(goal.key)(value), targetText: fmtOf(goal.key)(target) };
+    return { key: goal.key, short: goal.short, cmp: goal.cmp, value, target, pass, text: value === null || value === undefined ? '—' : fmtOf(goal.key)(value), targetText: fmtOf(goal.key)(target) };
   });
 }
 
@@ -330,9 +339,9 @@ function checkGame(game, goals) {
  * data  — { games (по возрастанию времени), topHero, lobby, extra, now, mainMistake(game) }.
  * Возвращает { state, view }.
  */
-function updateCoach(state, data, { forceNew = false } = {}) {
+function updateCoach(state, data, { forceNew = false, focusEvidence = null } = {}) {
   const now = data.now || Math.floor(Date.now() / 1000);
-  const games = data.games;
+  const games = [...new Map(data.games.map((g) => [g.match_id, g])).values()];
   const loaded = games.filter((g) => g.f);
   const st = { plan: null, archive: [], log: [], ...(state || {}) };
   const events = [];
@@ -361,6 +370,22 @@ function updateCoach(state, data, { forceNew = false } = {}) {
     return { state: st, view: { plan: null, cards: [], goals: [], events: st.log || [], need: Math.max(0, 5 - loaded.length) } };
   }
 
+  if (focusEvidence && (plan.focusEvidence?.matchId !== focusEvidence.matchId || plan.focusEvidence?.t !== focusEvidence.t
+    || plan.focusEvidence?.key !== focusEvidence.key)) {
+    const soulGoal = focusEvidence.key === 'lost_souls';
+    const key = soulGoal ? 'lost_souls' : 'd10';
+    const target = soulGoal ? 0 : 1;
+    const current = plan.goals.find((g) => g.key === key && g.status === 'active');
+    const catalog = CATALOG.find((g) => g.key === key);
+    const prior = loaded.filter((g) => g.start_time < now).slice(-20).map(catalog.metric).filter(Number.isFinite);
+    const focus = { ...current, key, family: catalog.family, area: catalog.area, short: catalog.short, cmp: catalog.cmp,
+      title: catalog.title(target), target, byHero: null, tip: soulGoal ? catalog.tip : 'После неудачного размена отойди и восстанови здоровье.',
+      baseline: prior.length ? median(prior) : null, status: 'active', startedAt: now, evidence: focusEvidence };
+    plan.goals = [focus, ...plan.goals.filter((g) => g.key !== key)];
+    plan.focusEvidence = focusEvidence;
+  }
+  const goalStart = (goal) => goal.startedAt - (goal.evidence ? 0 : 60);
+
   // Игры: до плана — «как было», после — проверка целей
   const after = loaded.filter((g) => g.start_time >= plan.createdAt - 60);
   const before = loaded.filter((g) => g.start_time < plan.createdAt - 60).slice(-10);
@@ -372,7 +397,7 @@ function updateCoach(state, data, { forceNew = false } = {}) {
     changed = false;
     for (const goal of plan.goals) {
       if (goal.status !== 'active') continue;
-      const res = after.filter((g) => g.start_time >= goal.startedAt - 60).map((g) => checkGame(g, [goal])[0]).filter((r) => r.pass !== null);
+      const res = after.filter((g) => g.start_time >= goalStart(goal)).map((g) => checkGame(g, [goal])[0]).filter((r) => r.pass !== null);
       const last = res.slice(-5);
       if (last.length >= 5 && last.filter((r) => r.pass).length >= 4) {
         goal.status = 'done';
@@ -399,9 +424,10 @@ function updateCoach(state, data, { forceNew = false } = {}) {
   const activeGoals = goalsAll.filter((g) => g.status === 'active');
 
   // Карточки игр (новые сверху)
-  const cardGames = (after.length ? after : before).slice(-15);
+  const playedAfter = games.filter((g) => g.start_time >= plan.createdAt - 60);
+  const cardGames = (playedAfter.length ? playedAfter : before).slice(-15);
   const cards = cardGames.map((g) => {
-    const checks = checkGame(g, goalsAll.filter((x) => x.startedAt - 60 <= g.start_time || !after.length));
+    const checks = checkGame(g, goalsAll.filter((x) => goalStart(x) <= g.start_time || !playedAfter.length));
     const passed = checks.filter((c) => c.pass === true).length;
     const counted = checks.filter((c) => c.pass !== null).length;
     return {
@@ -419,7 +445,7 @@ function updateCoach(state, data, { forceNew = false } = {}) {
       counted,
       mistake: data.mainMistake ? data.mainMistake(g) : null,
       good: data.mainGood ? data.mainGood(g) : null,
-      beforePlan: !after.length,
+      beforePlan: !playedAfter.length,
     };
   }).reverse();
 
@@ -427,7 +453,7 @@ function updateCoach(state, data, { forceNew = false } = {}) {
   const goals = goalsAll.map((goal) => {
     const rows = loaded.slice(-20).map((g) => {
       const c = checkGame(g, [goal])[0];
-      return { match_id: g.match_id, t: g.start_time, hero: g.hero, value: c.value, target: c.target, pass: c.pass, afterStart: g.start_time >= goal.startedAt - 60 };
+      return { match_id: g.match_id, t: g.start_time, hero: g.hero, value: c.value, target: c.target, pass: c.pass, afterStart: g.start_time >= goalStart(goal) };
     }).filter((r) => r.value !== null && r.value !== undefined);
     const since = rows.filter((r) => r.afterStart && r.pass !== null);
     const prior = rows.filter((r) => !r.afterStart && r.pass !== null);

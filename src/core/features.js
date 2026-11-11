@@ -5,6 +5,7 @@
 const { valueAt } = require('./timeline');
 const { median, quantile } = require('./stats');
 const { isUpgrade, itemFates } = require('./meta');
+const { WINDOW, participationAfter } = require('./spikes');
 
 const at = (stats, field, min) => valueAt(stats, field, min * 60);
 const lastOf = (stats) => (stats && stats.length ? stats[stats.length - 1] : null);
@@ -75,18 +76,16 @@ function playerFeatures(p, match, assets = null) {
     }
   }
 
-  // Паверспайки: после покупки большого предмета (3000+) — была ли драка за 3 минуты
-  // (выросли убийства + помощи) и насколько вырос урон по героям.
+  // Измеряем участие в убийствах после покупки дорогого предмета.
   const endS = match.duration_s || endMin * 60;
-  const spikeBuys = bought.filter(([id, t]) => (cost(id) || 0) >= 3000 && t + 180 <= endS);
+  const spikeBuys = bought.filter(([id, t]) => (cost(id) || 0) >= 3000 && t + WINDOW <= endS);
   let spikeN = 0;
   let spikeFought = 0;
   for (const [, t] of spikeBuys) {
-    const k0 = valueAt(st, 'ka', t);
-    const k1 = valueAt(st, 'ka', t + 180);
-    if (k0 === null || k1 === null) continue;
+    const participated = participationAfter(st, t);
+    if (participated === null) continue;
     spikeN += 1;
-    if (k1 > k0) spikeFought += 1;
+    if (participated) spikeFought += 1;
   }
   let spikeDmg = null; // урон по героям в минуту за 3 минуты после первого большого предмета
   if (big && big[1] + 180 <= endS) {
@@ -165,6 +164,7 @@ function playerFeatures(p, match, assets = null) {
     dLate: endMin > 22 ? rnd(sub(p.d, at(st, 'd', 20))) : null,
     deathTimes: dts,
     firstDeath: dts.length ? dts[0] : null,
+    firstDeathExact: Boolean(p.deaths_t && p.deaths_t.length),
     deathBurst: maxInWindow(dts, 300),
     lastMinutesDeaths: dts.filter((t) => t >= (match.duration_s || 0) - 180).length,
     acc: shots >= 80 ? last.hit / shots : null,
@@ -190,6 +190,7 @@ function playerFeatures(p, match, assets = null) {
     lost20: atS('g_lost', 1200),
     lostPerDeath: p.d >= 2 && last && has('g_lost') ? last.g_lost / p.d : null,
     spikeFights: spikeN ? spikeFought / spikeN : null,
+    spikeWindows: spikeN,
     spikeDmg,
     itemsSold: itemFates(p.items, assets).filter((f) => f.fate === 'sold').length,
     cheapLate: bought.filter(([id, t]) => t >= 1200 && (cost(id) || 9999) <= 800).length,

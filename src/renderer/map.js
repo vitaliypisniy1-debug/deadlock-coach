@@ -57,6 +57,7 @@
 
   function MapView(data, opts) {
     const { focusSlot = null, focusName = 'Ты', heroName, heroImg, mapAsset = null, myTeam = null, compact = false } = opts;
+    let moment = opts.moment || null;
     const R = (mapAsset && mapAsset.radius) || 10752;
     let cal = readCal();
     const hasPaths = !!(data.paths && data.paths.players && Object.keys(data.paths.players).length);
@@ -92,6 +93,7 @@
     const posAt = (slot, t) => {
       const pts = hasPaths ? data.paths.players[slot] : null;
       if (!pts || !pts.length) return null;
+      if (compact && t > (pts.length - 1) * step) return null;
       const i = Math.min(pts.length - 1, Math.max(0, Math.floor(t / step)));
       const a = pts[i];
       const b = pts[Math.min(pts.length - 1, i + 1)];
@@ -295,7 +297,13 @@
           gHeroes.appendChild(heroToken(p, x, y, { me: p.slot === focusSlot, dead: !pos[2] }));
         }
       }
-      if (compact) return;
+      if (compact) {
+        if (Number.isFinite(moment?.x) && Number.isFinite(moment?.y)) {
+          const [x, y] = toXY(moment.x, moment.y);
+          gHeroes.appendChild(el('circle', { cx: x, cy: y, r: 27, fill: 'none', stroke: 'var(--accent)', 'stroke-width': 4 }));
+        }
+        return;
+      }
       renderSide();
       renderLegend();
     }
@@ -481,11 +489,17 @@
     const noData = !hasPaths && !hasDeathPos ? F.h('div.map-note', 'В данных этого матча нет координат — карту построить нельзя. Табло и лента убийств работают.') : null;
 
     if (compact) {
-      st.mode = hasPaths ? 'replay' : 'all';
-      const box = F.h('div.map-compact', F.h('div.map-frame', svg), !hasPaths ? F.h('div.map-note', 'В этом матче нет маршрутов — показаны места смертей.') : null);
+      st.mode = hasPaths ? 'replay' : moment ? null : 'all';
+      if (moment) st.t = moment.t;
+      const box = F.h('div.map-compact', F.h('div.map-frame', svg), !hasPaths && !moment ? F.h('div.map-note', 'В этом матче нет маршрутов — показаны места смертей.') : null);
       box.setTime = (t) => {
         st.t = t;
         render();
+      };
+      box.setMoment = (t, point) => {
+        moment = point;
+        st.mode = hasPaths ? 'replay' : point ? null : 'all';
+        box.setTime(t);
       };
       drawRoads();
       drawBases();

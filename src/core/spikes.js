@@ -2,7 +2,7 @@
 // Паверспайки: после каких предметов игрок резко поднимает урон по героям.
 
 const { median } = require('./stats');
-const { valueAt, rate } = require('./timeline');
+const { rate } = require('./timeline');
 const { firstPurchases } = require('./meta');
 
 const WINDOW = 180; // 3 минуты до и после покупки
@@ -12,7 +12,7 @@ const WINDOW = 180; // 3 минуты до и после покупки
 function dmgRatio(stats, t) {
   const before = rate(stats, 'pdmg', t - WINDOW, t);
   const after = rate(stats, 'pdmg', t, t + WINDOW);
-  if (before === null || after === null) return null;
+  if (!Number.isFinite(before) || !Number.isFinite(after) || before < 0 || after < 0) return null;
   return (after + 50) / (before + 50);
 }
 
@@ -32,20 +32,30 @@ function localLift(stats, t) {
   return r / trend;
 }
 
+function participationAfter(stats, t) {
+  const end = t + WINDOW;
+  const innerStart = stats.find((s) => s.t >= t);
+  const innerEnd = stats.findLast((s) => s.t <= end);
+  const outerStart = stats.findLast((s) => s.t <= t);
+  const outerEnd = stats.find((s) => s.t >= end);
+  const delta = (a, b) => a && b && a.t <= b.t ? (b.k + b.a) - (a.k + a.a) : NaN;
+  // Только целые снимки подтверждают событие. Изменение на границе
+  // окна могло произойти с любой стороны границы.
+  if (delta(innerStart, innerEnd) > 0) return true;
+  return delta(outerStart, outerEnd) === 0 ? false : null;
+}
+
 // Что происходило у игрока вокруг покупки в момент t.
 function aroundPurchase(stats, t) {
-  if (t === null || t === undefined || t < WINDOW) return null;
+  if (!Number.isFinite(t) || t < WINDOW) return null;
   const before = rate(stats, 'pdmg', t - WINDOW, t);
   const after = rate(stats, 'pdmg', t, t + WINDOW);
-  if (before === null || after === null) return null;
-  const ka0 = valueAt(stats, 'ka', t);
-  const ka1 = valueAt(stats, 'ka', t + WINDOW);
+  if (!Number.isFinite(before) || !Number.isFinite(after) || before < 0 || after < 0) return null;
   return {
     before,
     after,
     lift: localLift(stats, t),
-    fought: ka0 !== null && ka1 !== null && ka1 > ka0,
-    kaAfter: ka0 !== null && ka1 !== null ? ka1 - ka0 : null,
+    participated: participationAfter(stats, t),
   };
 }
 
@@ -56,8 +66,8 @@ function findSpikes(players, coreItems, { minLift = 1.15, limit = 4 } = {}) {
     const lifts = [];
     const befores = [];
     const afters = [];
-    const kas = [];
-    let fights = 0;
+    let participated = 0;
+    let knownParticipation = 0;
     for (const b of players) {
       const first = firstPurchases(b.player, null).get(it.id);
       const a = aroundPurchase(b.player.stats, first);
@@ -65,18 +75,18 @@ function findSpikes(players, coreItems, { minLift = 1.15, limit = 4 } = {}) {
       lifts.push(a.lift);
       befores.push(a.before);
       afters.push(a.after);
-      if (a.kaAfter !== null) kas.push(a.kaAfter);
-      if (a.fought) fights += 1;
+      if (a.participated !== null) knownParticipation += 1;
+      if (a.participated === true) participated += 1;
     }
     if (lifts.length < 3) continue;
     spikes.push({
       id: it.id,
       lift: median(lifts),
       samples: lifts.length,
-      fightShare: fights / lifts.length,
+      participated,
+      knownParticipation,
       rateBefore: median(befores),
       rateAfter: median(afters),
-      kaAfter: median(kas),
       topT: it.medianT,
       pick: it.pick,
     });
@@ -84,4 +94,4 @@ function findSpikes(players, coreItems, { minLift = 1.15, limit = 4 } = {}) {
   return spikes.filter((s) => s.lift >= minLift).sort((a, b) => b.lift - a.lift).slice(0, limit);
 }
 
-module.exports = { WINDOW, dmgRatio, localLift, aroundPurchase, findSpikes };
+module.exports = { WINDOW, dmgRatio, localLift, participationAfter, aroundPurchase, findSpikes };

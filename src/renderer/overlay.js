@@ -41,7 +41,7 @@
   };
   const heroes = () =>
     Object.values((S.assets && S.assets.heroes) || {})
-      .filter((x) => !x.disabled && !x.inDev)
+      .filter((x) => x && !x.disabled && (x.selectable ?? !x.inDev))
       .sort((a, b) => a.name.localeCompare(b.name));
   const pts = (x) => `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(Math.round(x * 100))}`;
   const ochki = (x) => {
@@ -250,7 +250,7 @@
     $('grid').replaceChildren(...list.map((x, i) => {
       const w = where(x.id);
       return h(`button.gh${w ? '.' + w : ''}${q && i === 0 ? '.first' : ''}${pool.has(x.id) ? '.mine' : ''}`, {
-        title: `${x.name}${pool.has(x.id) ? ' · твой герой для рейтинга' : ''}`,
+        title: `${x.name}${pool.has(x.id) ? ' · в твоём списке' : ''}`,
         onclick: (e) => assign(x.id, e.shiftKey ? 'me' : S.mode),
         oncontextmenu: (e) => { e.preventDefault(); assign(x.id, 'allies'); },
       }, heroImg(x.id), h('span', x.name));
@@ -335,11 +335,12 @@
     }
     const parts = [];
     if (!a.poolSize) {
-      parts.push(h('div.ov-empty', h('b', 'Нет героев для рейтинга'), 'Показываю героев, доступных в рейтинге, на которых ты играл последние 2 месяца. Если список неверный — выбери своих героев в основном окне: Настройки → «Мои герои для рейтинга».'));
+      parts.push(h('div.ov-empty', h('b', 'Нет героев в списке'), 'Добавь своих героев в основном окне: Настройки → «Мои герои для рейтинга». Точный допуск смотри в игре.'));
       r.replaceChildren(...parts);
       return;
     }
     const best = a.rows[0];
+    const evidence = new Map(a.allHeroes.map((x) => [x.hero_id, x.rankedEvidence]));
     if (!S.enemies.length) {
       parts.push(h('div.verdict.idle', h('div.v-kicker', 'Жду состав соперников'), h('div.v-text', 'Отметь стартовых героев соперников — их видно в паузе перед игрой. Хватит и 2–3, совет обновляется сразу.')));
     } else if (best) {
@@ -375,6 +376,7 @@
           x.compWhy === 'gunHeavy' ? h('span.chip.bad.tag', { title: 'В команде уже 3 стрелка — с четвёртым выигрывают на 1,5% реже' }, 'много стрелков') : null,
           x.weak ? h('span.chip.bad.tag', { title: 'В матчах топового уровня за 2 недели этот герой выигрывает реже 48%' }, `слабый в патче ${(Math.round(x.metaWr * 1000) / 10).toFixed(1).replace('.', ',')}%`) : null,
           x.stale ? h('span.pk-warn', { title: 'Давно не играл на этом герое' }, `не играл ${x.stale} дн.`) : null,
+          evidence.get(x.hero_id) !== 'points' ? h('span.pk-warn', { title: 'Точный допуск смотри в игре' }, 'допуск уточнить') : null,
           h('span.pk-rec', { title: 'Твои игры на этом герое за 2 месяца / всего' }, x.games ? `ты ${x.wins}–${x.games - x.wins}${x.recent ? ` · ${x.recent} игр за 2 мес.` : ''}` : 'нет твоих игр'))),
       h(`b.pk-score${x.chance >= 0.52 ? '.pos' : x.chance <= 0.48 ? '.neg' : ''}`, { title: SCORE_TIP }, pct(x.chance))));
     parts.push(h('div.picks-head', h('span', 'Твои герои'), h('span', { title: SCORE_TIP }, 'шанс победы ⓘ')), h('div.picks', list));
@@ -458,6 +460,11 @@
     }
   });
   dc.on('overlay:recognized', (r) => applyRecognition(r));
+  dc.on('assets:updated', (assets) => {
+    S.assets = assets;
+    renderLeft();
+    renderRight();
+  });
   dc.on('overlay:shown', () => {
     // новый матч: если с последней правки прошло больше 4 минут — начинаем с чистого листа
     if (S.lastEdit && Date.now() - S.lastEdit > 4 * 60e3) reset();
@@ -468,7 +475,7 @@
   async function start() {
     try {
       const init = await dc.init();
-      S.assets = init.assets;
+      if (init.assets && (init.assets.fetchedAt || 0) >= (S.assets?.fetchedAt || 0)) S.assets = init.assets;
       S.auth = init.auth;
     } catch (e) {
       S.error = e.message;

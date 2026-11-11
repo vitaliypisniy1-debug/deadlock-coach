@@ -18,7 +18,7 @@
   }
 
   // series: { me:[], med:[], p25:[], p75:[], n:[] } — значения по минутам
-  function lineChart(series, { yFmt = (v) => F.k(v), unit = '', height = 280, markers = [], meLabel = 'Ты', topLabel = 'Топы' } = {}) {
+  function lineChart(series, { yFmt = (v) => F.k(v), unit = '', height = 280, markers = [], meLabel = 'Ты', topLabel = 'Топы', onSeek = null } = {}) {
     const W = 900;
     const H = height;
     const m = { l: 54, r: 18, t: 14, b: 28 };
@@ -102,6 +102,21 @@
     svg.appendChild(hit);
 
     const wrap = F.h('div.chart-wrap');
+    if (onSeek) {
+      const cursor = svgEl('line', { y1: m.t, y2: m.t + ih, class: 'review-cursor' });
+      svg.insertBefore(cursor, hit);
+      wrap.setTime = (t) => {
+        const minute = t / 60;
+        cursor.style.visibility = minute > maxX ? 'hidden' : 'visible';
+        cursor.setAttribute('x1', x(minute));
+        cursor.setAttribute('x2', x(minute));
+      };
+      hit.addEventListener('click', (ev) => {
+        const rect = svg.getBoundingClientRect();
+        const minute = ((ev.clientX - rect.left) / rect.width * W - m.l) / iw * maxX;
+        onSeek(Math.round(Math.max(0, Math.min(maxX, minute)) * 60));
+      });
+    }
     const tip = F.h('div.chart-tip');
     tip.hidden = true;
     wrap.append(svg, tip);

@@ -29,7 +29,7 @@ function compactStat(s) {
     g_player: num(s.gold_player) + num(s.gold_player_orbs),
     g_boss: num(s.gold_boss) + num(s.gold_boss_orb),
     g_treasure: num(s.gold_treasure),
-    g_lost: num(s.gold_death_loss),
+    g_lost: Number.isFinite(s.gold_death_loss) ? s.gold_death_loss : undefined,
     // источники душ из списка gold_sources: 12 — коробки (ломаемые ящики), 8 — командный бонус
     g_brk: goldSource(s, 12),
     g_bonus: goldSource(s, 8),

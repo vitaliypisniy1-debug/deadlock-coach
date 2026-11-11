@@ -4,7 +4,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const readline = require('readline');
+const { Readable } = require('stream');
+const { pipeline } = require('stream/promises');
 
 const DEFAULT_SETTINGS = {
   region: 'Europe',
@@ -19,7 +20,7 @@ const DEFAULT_SETTINGS = {
   manualTop: '',
   topSource: 'auto', // auto (ладдер текущего сезона) | list
   overlayKey: 'Ctrl+Shift+D', // горячая клавиша оверлея «Пик против состава»
-  pickPool: null, // свои герои для совета по пику; null — герои с 15+ победами
+  pickPool: null, // свои герои для совета по пику; null — автоматический список по истории
   gameMode: true, // пока идёт Deadlock — фоновые загрузки ждут, оверлей работает
   autoRecognize: true, // узнавать состав по портретам (пауза перед игрой и горячая клавиша)
   overlayAutoHide: true, // прятать оверлей через несколько секунд после начала игры
@@ -30,16 +31,18 @@ const DEFAULT_SETTINGS = {
 class Store {
   // lazy: матчи читаются с диска в фоне (тысячи файлов на Windows — это секунды, окно не должно
   // на это время замирать). Тогда перед работой с матчами нужно дождаться store.ready.
-  constructor(dir, { lazy = false } = {}) {
+  constructor(dir, { lazy = false, onPackError = () => {} } = {}) {
     this.dir = dir;
     this.matchDir = path.join(dir, 'matches');
     fs.mkdirSync(this.matchDir, { recursive: true });
     this.matches = new Map();
     this.loadInfo = { files: 0, ms: 0 };
     this.packFile = path.join(dir, 'matches.pack');
+    this.packStamp = path.join(dir, 'matches.pack.state.json');
     this.packOn = false;
-    this._packQ = Promise.resolve();
-    this._putEarly = null;
+    this._packClean = false;
+    this._matchQ = Promise.resolve();
+    this._onPackError = onPackError;
     if (lazy) this.ready = this._loadMatchesAsync();
     else {
       this._loadMatches();
@@ -54,7 +57,6 @@ class Store {
   async _loadMatchesAsync() {
     const t0 = Date.now();
     const tick = () => new Promise((r) => setImmediate(r));
-    this._putEarly = new Set(); // сохранённые, пока шла загрузка, — их не затираем старыми
     let names = [];
     try {
       names = (await fs.promises.readdir(this.matchDir)).filter((f) => f.endsWith('.json'));
@@ -62,24 +64,24 @@ class Store {
     const onDisk = new Set(names.map((f) => Number(f.slice(0, -5))));
     const packed = new Set();
     let lines = 0;
-    try {
-      const input = fs.createReadStream(this.packFile, { encoding: 'utf8' });
-      const rl = readline.createInterface({ input, crlfDelay: Infinity });
-      let batch = 0;
-      for await (const line of rl) {
-        if (!line) continue;
-        lines += 1;
-        try {
+    if (await this._canReadPack()) {
+      try {
+        for await (const line of this._packLines()) {
+          if (!line) continue;
           const m = JSON.parse(line);
-          if (m && m.match_id && onDisk.has(m.match_id) && !this._putEarly.has(m.match_id)) {
+          if (!m?.match_id) throw new Error('Некорректная запись в matches.pack');
+          if (onDisk.has(m.match_id)) {
             this.matches.set(m.match_id, m); // более поздняя строка новее
             packed.add(m.match_id);
           }
-        } catch {} // оборванная строка — возьмём матч из отдельного файла
-        if (++batch >= 150) { batch = 0; await tick(); }
+          if (++lines % 150 === 0) await tick();
+        }
+        this._packClean = true;
+      } catch {
+        this.matches.clear();
+        packed.clear();
       }
-      rl.close();
-    } catch {}
+    }
     const rest = names.filter((f) => !packed.has(Number(f.slice(0, -5))));
     const BATCH = 24;
     for (let i = 0; i < rest.length; i += BATCH) {
@@ -94,26 +96,73 @@ class Store {
       await tick();
     }
     this.loadInfo = { files: names.length, fromPack: packed.size, fromFiles: rest.length, ms: Date.now() - t0 };
-    this._putEarly = null;
     this.packOn = true;
     // общий файл устарел (много лишних строк или матчей вне его) — пересобираем в фоне
-    if (rest.length > 0 || lines > packed.size * 1.3 + 50) this._packQ = this._packQ.then(() => this._rewritePack()).catch(() => {});
+    if (!this._packClean || rest.length > 0 || lines > packed.size * 1.3 + 50) {
+      this._queueMatches(() => this._rewritePack()).catch(this._onPackError);
+    }
+  }
+
+  async *_packLines() {
+    let tail = '';
+    for await (const chunk of fs.createReadStream(this.packFile, { encoding: 'utf8' })) {
+      const lines = (tail + chunk).split('\n');
+      tail = lines.pop();
+      yield* lines;
+    }
+    if (tail) yield tail;
+  }
+
+  async _canReadPack() {
+    try {
+      const stamp = JSON.parse(await fs.promises.readFile(this.packStamp, 'utf8'));
+      const pack = await fs.promises.stat(this.packFile);
+      return stamp.version === 1 && pack.isFile() && stamp.size === pack.size && stamp.mtimeMs === pack.mtimeMs;
+    } catch { return false; }
+  }
+
+  _queueMatches(run) {
+    const result = this._matchQ.then(run);
+    this._matchQ = result.catch(() => {});
+    return result;
+  }
+
+  async _invalidatePack() {
+    this._packClean = false;
+    await fs.promises.unlink(this.packStamp).catch((err) => {
+      if (err.code !== 'ENOENT') throw err;
+    });
+  }
+
+  async _stampPack() {
+    const { size, mtimeMs } = await fs.promises.stat(this.packFile);
+    await this._writeAtomic(this.packStamp, JSON.stringify({ version: 1, size, mtimeMs }));
+    this._packClean = true;
+  }
+
+  async _writeAtomic(file, text) {
+    const tmp = file + '.tmp';
+    await fs.promises.writeFile(tmp, text, { flush: true });
+    await fs.promises.rename(tmp, file);
   }
 
   async _rewritePack() {
+    await this._invalidatePack();
     const tmp = this.packFile + '.tmp';
-    const out = fs.createWriteStream(tmp);
-    const all = [...this.matches.values()];
-    for (let i = 0; i < all.length; i += 100) {
-      const chunk = all.slice(i, i + 100).map((m) => JSON.stringify(m)).join('\n') + '\n';
-      if (!out.write(chunk)) await new Promise((r) => out.once('drain', r));
-      await new Promise((r) => setImmediate(r));
+    async function* chunks(matches) {
+      let batch = [];
+      for (const m of matches.values()) {
+        batch.push(JSON.stringify(m));
+        if (batch.length < 100) continue;
+        yield batch.join('\n') + '\n';
+        batch = [];
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      if (batch.length) yield batch.join('\n') + '\n';
     }
-    await new Promise((r, rej) => {
-      out.on('error', rej);
-      out.end(r);
-    });
+    await pipeline(Readable.from(chunks(this.matches)), fs.createWriteStream(tmp, { flush: true }));
     await fs.promises.rename(tmp, this.packFile);
+    await this._stampPack();
   }
 
   _file(name) {
@@ -139,6 +188,55 @@ class Store {
     try {
       fs.unlinkSync(this._file(name));
     } catch {}
+  }
+
+  _readProtection(name, fallback) {
+    try {
+      return JSON.parse(fs.readFileSync(this._file(name), 'utf8'));
+    } catch (err) {
+      if (err.code === 'ENOENT') return fallback;
+      throw new Error(`Не удалось прочитать защиту личных матчей: ${name}`, { cause: err });
+    }
+  }
+
+  _protectedIds(name) {
+    const ids = this._readProtection(name, []);
+    if (!Array.isArray(ids) || ids.some((id) => !Number.isSafeInteger(Number(id)) || Number(id) <= 0)) {
+      throw new Error(`Некорректный список защиты личных матчей: ${name}`);
+    }
+    return new Set(ids.map(Number));
+  }
+
+  _personalAccounts() {
+    const accounts = this._protectedIds('personal-accounts.json');
+    const auth = this._readProtection('auth.json', null);
+    if (auth !== null) {
+      const id = Number(auth.accountId);
+      if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Не удалось определить владельца личных матчей');
+      accounts.add(id);
+    }
+    // У предыдущих версий список аккаунтов отсутствует, но эти файлы создавались для личного профиля.
+    for (const name of fs.readdirSync(this.dir)) {
+      const match = /^(?:coach|leaks-top)-(\d+)\.json$/.exec(name);
+      if (match) accounts.add(Number(match[1]));
+    }
+    return accounts;
+  }
+
+  async saveAuth(auth) {
+    return this._queueMatches(() => {
+      const accounts = this._personalAccounts();
+      if (auth) accounts.add(Number(auth.accountId));
+      if (accounts.size) this.write('personal-accounts.json', [...accounts]);
+      if (auth) this.write('auth.json', auth);
+      else this.remove('auth.json');
+    });
+  }
+
+  markPersonalMatches(ids) {
+    const existing = this._protectedIds('mine.json');
+    for (const id of ids) existing.add(Number(id));
+    this.write('mine.json', [...existing]);
   }
 
   settings() {
@@ -178,49 +276,68 @@ class Store {
   }
 
   async putMatch(m) {
-    this.matches.set(m.match_id, m);
-    const text = JSON.stringify(m);
-    await fs.promises.writeFile(path.join(this.matchDir, `${m.match_id}.json`), text);
-    if (this._putEarly) this._putEarly.add(m.match_id);
-    // дописываем в общий файл (если он ведётся) — по очереди, не мешая окну
-    if (this.packOn || this._putEarly) {
-      this._packQ = this._packQ.then(() => fs.promises.appendFile(this.packFile, text + '\n'));
-      await this._packQ;
-    }
+    await this.ready;
+    return this._queueMatches(async () => {
+      const append = this.packOn && this._packClean;
+      const text = JSON.stringify(m);
+      // Сначала убираем разрешение читать старый пакет, затем сохраняем основной JSON.
+      await this._invalidatePack();
+      await this._writeAtomic(path.join(this.matchDir, `${m.match_id}.json`), text);
+      this.matches.set(m.match_id, m);
+      if (append) {
+        try {
+          await fs.promises.appendFile(this.packFile, text + '\n', { flush: true });
+          await this._stampPack();
+        } catch (error) {
+          // JSON уже сохранён. Без отметки при следующем запуске пакет пересоберётся.
+          this._onPackError(error);
+        }
+      }
+    });
   }
 
   allMatches() {
     return [...this.matches.values()];
   }
 
-  // Удаляет старые матчи топов, но никогда — твои собственные.
-  // Удалить матчи по условию (файлы — в фоне пачками, общий файл пересобирается).
-  async removeMatches(pred) {
-    const ids = [];
-    for (const [id, m] of this.matches) if (pred(m)) ids.push(id);
-    for (const id of ids) this.matches.delete(id);
-    for (let i = 0; i < ids.length; i += 50) {
-      await Promise.all(ids.slice(i, i + 50).map((id) => fs.promises.unlink(path.join(this.matchDir, `${id}.json`)).catch(() => {})));
-    }
-    if (this.packOn) {
-      this._packQ = this._packQ.then(() => this._rewritePack()).catch(() => {});
-      await this._packQ;
-    }
-    return ids.length;
+  async removeMatches(pred, { compact = true } = {}) {
+    await this.ready;
+    return this._queueMatches(async () => {
+      const accounts = this._personalAccounts();
+      const protectedIds = this._protectedIds('mine.json');
+      const candidates = [];
+      for (const [id, m] of this.matches) {
+        if (!pred(m) || protectedIds.has(id)) continue;
+        if (!Array.isArray(m.players) || !m.players.length) continue;
+        const players = m.players.map((p) => Number(p?.account_id));
+        if (players.some((id) => !Number.isSafeInteger(id) || id <= 0 || accounts.has(id))) continue;
+        candidates.push(id);
+      }
+      let removed = 0;
+      for (let i = 0; i < candidates.length; i += 50) {
+        await Promise.all(candidates.slice(i, i + 50).map(async (id) => {
+          // Личный список может пополниться, пока очищается предыдущая пачка.
+          if (protectedIds.has(id)) return;
+          try {
+            await fs.promises.unlink(path.join(this.matchDir, `${id}.json`));
+          } catch (err) {
+            if (err.code !== 'ENOENT') return;
+          }
+          this.matches.delete(id);
+          removed += 1;
+        }));
+        if (i + 50 < candidates.length) {
+          for (const id of this._protectedIds('mine.json')) protectedIds.add(id);
+        }
+      }
+      // Записи удалённых файлов при запуске отфильтровываются по списку файлов.
+      if (compact && removed && this.packOn) await this._rewritePack().catch(this._onPackError);
+      return removed;
+    });
   }
 
-  prune(keepSinceTs, protectedIds = new Set()) {
-    let removed = 0;
-    for (const [id, m] of this.matches) {
-      if (m.start_time < keepSinceTs && !protectedIds.has(id)) {
-        this.matches.delete(id);
-        try {
-          fs.unlinkSync(path.join(this.matchDir, `${id}.json`));
-        } catch {}
-        removed += 1;
-      }
-    }
-    return removed;
+  prune(keepSinceTs) {
+    return this.removeMatches((m) => m.start_time < keepSinceTs, { compact: false });
   }
 }
 

@@ -2,6 +2,8 @@
 /* global F, Charts, dc */
 (function () {
   const h = F.h;
+  const newPrep = () => ({ myHero: null, enemies: [], laneFoe: null, result: null, request: null, mu: null, muLoading: false, muError: null, outlook: {} });
+  const newDashboard = () => ({ data: null, loading: false, error: null, updated: 0, details: false });
   const S = {
     settings: { region: 'Europe', topN: 50, days: 7, winsOnly: false, benchmarkSource: 'top', autoRefreshHours: 3, keepDays: 14 },
     auth: null,
@@ -23,9 +25,10 @@
     top: null,
     busy: false,
     coach: { data: null, loading: false, error: null, for: null },
-    growth: { data: null, loading: false, error: null, for: null, open: null, moment: {} },
-    prep: { myHero: null, enemies: [], laneFoe: null, result: null, loading: false, mu: null, muLoading: false, muError: null, outlook: {} },
+    growth: { data: null, loading: false, error: null, for: null, open: null },
+    prep: newPrep(),
     heroMu: {},
+    dashboard: newDashboard(),
     ov: { days: 7, data: null, loading: false, error: null, mode: 'lobby', srcMode: 'top', for: null },
     my: { vs: null, vsChart: 'nw', mode: 'match', heroes: null, heroesLoading: false, hero: null, heroRep: null, heroRepLoading: false, heroRepError: null, list: null, loading: false, error: null, selected: null, analysis: null, analyzing: false, error2: null, target: { type: 'top' }, targets: [], chart: 'nw', winsOnly: null },
   };
@@ -131,7 +134,7 @@
       } else if (!S.my.list && !S.my.loading) loadMyMatches();
       else loadMyMatches(true);
     }
-    if (view === 'overview' && S.auth && !S.ov.loading && (!S.ov.data || S.ov.for !== S.auth.accountId)) loadOverview();
+    if (view === 'overview' && S.auth && Date.now() - S.dashboard.updated > 120000) loadOverview();
     if (view === 'coach' && S.auth && !S.coach.loading && (!S.coach.data || S.coach.for !== S.auth.accountId)) loadCoach(false);
     if (view === 'growth' && S.auth && !S.growth.loading && (!S.growth.data || S.growth.for !== S.auth.accountId)) loadGrowth();
     if (view === 'prep' && S.auth && !S.prep.mu && !S.prep.muLoading) loadMyMatchups();
@@ -171,6 +174,7 @@
       toast(`Привет, ${S.auth.name || 'игрок'}!`);
       S.my.list = null;
       S.ov.data = null;
+      S.dashboard = newDashboard();
       render();
       if (S.view === 'camp') loadMyMatches();
       if (S.view === 'overview') loadOverview();
@@ -183,6 +187,7 @@
       S.auth = await dc.loginManual(input);
       S.my.list = null;
       S.ov.data = null;
+      S.dashboard = newDashboard();
       render();
       if (S.view === 'overview') loadOverview();
       else loadMyMatches();
@@ -193,7 +198,11 @@
   async function logout() {
     await dc.logout();
     S.auth = null;
-    S.my = { ...S.my, list: null, selected: null, analysis: null };
+    S.prep = newPrep();
+    S.dashboard = newDashboard();
+    S.growth = { data: null, loading: false, error: null, for: null, open: null };
+    heroReportRequest++;
+    S.my = { ...S.my, list: null, selected: null, analysis: null, heroes: null, heroesLoading: false, hero: null, heroRep: null, heroRepLoading: false, heroRepRefreshing: false, heroRepError: null, loading: false, freshBusy: false, scanBusy: false, error: null, historyStatus: null, matchInput: '' };
     S.ov = { ...S.ov, data: null, for: null };
     render();
   }
@@ -219,6 +228,12 @@
   dc.on('game:mode', applyGameMode);
   dc.on('meta:updated', (meta) => {
     if (meta) S.meta = meta;
+    if (S.view === 'meta') renderMeta();
+  });
+  dc.on('assets:updated', (assets) => {
+    S.assets = assets;
+    if (S.view === 'overview' && !S.dashboard.details) renderOverview();
+    if (S.view === 'prep') renderPrep();
     if (S.view === 'meta') renderMeta();
   });
 
@@ -414,7 +429,7 @@
       for (const it of v.build.phases[k]) lines.push(`  ${F.time(it.medianT)}  ${itemName(it.id)} (берут ${F.pct(it.pick)})`);
     }
     if (v.spikes.length) {
-      lines.push('', 'Паверспайки (после них — идти драться):');
+      lines.push('', 'Урон за три минуты до и после покупки:');
       for (const s of v.spikes) lines.push(`  ${itemName(s.id)} ≈ ${F.time(s.topT)}: урон ${F.num(s.rateBefore)} → ${F.num(s.rateAfter)} в мин`);
     }
     if (v.build.situational.length) {
@@ -504,7 +519,7 @@
       spikeChart(s.rateBefore, s.rateAfter, `Урон по героям: ${F.num(s.rateBefore)} в минуту до покупки, ${F.num(s.rateAfter)} после`),
       h('div.spike-stats',
         h('div', h('b', { style: { color: 'var(--good)' } }, F.signedPct(s.lift - 1)), h('span', 'сверх обычного роста урона')),
-        h('div', h('b', F.pct(s.fightShare)), h('span', 'игр — драка в 3 минуты')),
+        h('div', h('b', s.knownParticipation ? `${s.participated} из ${s.knownParticipation}` : '—'), h('span', 'игр с убийством или помощью за 3 минуты среди игр с точными данными')),
         h('div', h('b', String(s.samples)), h('span', 'игр топов в расчёте'))),
       mine ? h('div.spike-mine', mine.content) : null);
   }
@@ -559,11 +574,11 @@
 
     // правая колонка: паверспайки, кто играет, забрать в игру
     const rightParts = [];
-    rightParts.push(h('section.panel', h('h2', 'Паверспайки'),
+    rightParts.push(h('section.panel', h('h2', 'Урон вокруг покупки предметов'),
       v.spikes.length
         ? h('div.spikes', v.spikes.slice(0, 2).map((s) => spikeCard(s)))
         : h('div.muted', 'Явных скачков урона не нашёл: мало игр или урон у топов растёт ровно.'),
-      v.spikes.length ? h('div.hint', { style: { marginTop: '10px' } }, 'Урон по героям за 3 минуты до и после покупки. Резкий рост сверх обычного — момент, когда топы идут драться.') : null));
+      v.spikes.length ? h('div.hint', { style: { marginTop: '10px' } }, 'Темп урона по героям за три минуты до и после покупки. На результат влияют и события матча.') : null));
     rightParts.push(heroMatchupPanel(d.heroId));
     if (d.players.length) {
       const max = d.players[0].games;
@@ -894,7 +909,7 @@
           spikeChart(j.before, j.after, `Урон по героям: ${F.num(j.before)} в минуту до покупки, ${F.num(j.after)} после`),
           h('div.spike-stats',
             h('div', h('b', { style: { color: 'var(--good)' } }, F.signedPct(j.lift - 1)), h('span', 'сверх обычного роста')),
-            h('div', h('b', j.fought ? 'да' : 'нет'), h('span', 'драка в 3 минуты'))))))));
+            h('div', h('b', j.participated === true ? 'да' : j.participated === false ? 'нет' : '—'), h('span', 'убийство или помощь за 3 минуты'))))))));
     }
 
     // источники душ
@@ -1036,13 +1051,13 @@
   }
 
   // ================= ТРЕНЕР =================
-  async function loadCoach(forceNew = false) {
+  async function loadCoach(forceNew = false, evidence = null) {
     if (!S.auth) return;
     S.coach.loading = true;
     S.coach.error = null;
     if (S.view === 'coach') renderCoach();
     try {
-      S.coach.data = await dc.coach({ forceNew });
+      S.coach.data = await dc.coach({ forceNew, evidence });
       S.coach.for = S.auth.accountId;
       if (forceNew) toast('Новый план готов');
     } catch (e) {
@@ -1064,7 +1079,8 @@
         h('span.goal-area', g.area, g.kind === 'stretch' ? h('span.goal-kind', { title: 'Явной проблемы тут нет, но ты чуть ниже топов на своих героях — цель дотянуться до их уровня.' }, ' · до уровня топов') : null),
         h('span.goal-state', g.status === 'done' ? Icon('trophy') : null, goalStatus[g.status] || g.status)),
       h('div.goal-title', g.title),
-      heroTargets.length > 1 ? h('div.goal-heroes', heroTargets.slice(0, 4).map(([hid, t]) => h('span.chip', heroIcon(Number(hid), '.sm'), String(g.key === 'firstBigT' || g.key === 'firstHugeT' ? F.time(t) : g.key === 'kp' || g.key === 'spikeFights' ? F.pct(t) : F.num(t))))) : null,
+      heroTargets.length ? h('div.goal-heroes', h('span.muted.small', 'Пороги по героям'),
+        heroTargets.slice(0, 4).map(([hid, t]) => h('span.chip', heroIcon(Number(hid), '.sm'), String(g.key === 'firstBigT' || g.key === 'firstHugeT' ? F.time(t) : g.key === 'kp' || g.key === 'spikeFights' ? F.pct(t) : F.num(t))))) : null,
       h('div.goal-stats',
         h('div', h('b.num', g.games ? `${g.passed}/${g.games}` : '—'), h('span', 'игр с выполнением')),
         h('div', h('b.num', g.streak ? `${g.streak}` : '0'), h('span', 'подряд')),
@@ -1074,14 +1090,16 @@
       g.tip ? h('div.tip', Icon('bulb'), h('span', g.tip)) : null);
   }
 
+  const coachTarget = (check) => `${check.cmp === 'ge' ? '≥' : '≤'} ${check.targetText}`;
+
   function gameCard(c) {
     return h(`button.gcard${c.won ? '.win' : c.won === false ? '.loss' : ''}`, { onclick: () => { setView('matches'); openMatch(c.match_id); }, title: 'Открыть разбор матча' },
       h('div.gcard-head', heroIcon(c.hero),
         h('div.grow', h('div.gcard-title', heroName(c.hero), h('span', { class: `res ${c.won ? 'win' : 'loss'}` }, c.won ? 'победа' : 'поражение')),
           h('div.gcard-sub', `${c.start_time ? F.ago(c.start_time + (c.duration_s || 0)) : ''} · ${F.time(c.duration_s)} · ${c.k}/${c.d}/${c.a}`)),
         c.counted ? h(`div.gcard-score${c.passed === c.counted ? '.full' : c.passed === 0 ? '.zero' : ''}`, h('b.num', `${c.passed}/${c.counted}`), h('span', 'цели')) : null),
-      c.checks.length ? h('div.gcard-checks', c.checks.map((x) => h(`span.check-chip${x.pass === true ? '.ok' : x.pass === false ? '.no' : ''}`, { title: `цель: ${x.targetText}` },
-        x.pass === true ? '✓' : x.pass === false ? '✕' : '·', ` ${x.short}: `, h('b', x.text)))) : null,
+      c.checks.length ? h('div.gcard-checks', c.checks.map((x) => h(`span.check-chip${x.pass === true ? '.ok' : x.pass === false ? '.no' : ''}`,
+        x.pass === true ? '✓' : x.pass === false ? '✕' : '·', ` ${x.short}: `, h('b', x.pass === null ? 'жду данные' : x.text), ` · цель ${coachTarget(x)}`))) : null,
       c.mistake ? h('div.gcard-mistake', h('b', c.mistake.title), c.mistake.tip ? h('div', c.mistake.tip) : null) : null,
       c.good ? h('div.gcard-good', '+ ', c.good.title) : null);
   }
@@ -1121,8 +1139,22 @@
       h('div.coach-hero-stats',
         h('div', h('b.num', String(d.done || 0)), h('span', 'целей закрыто')),
         h('div', h('b.num', String(d.loaded || 0)), h('span', 'игр разобрано'))));
-    const goals = h('section.panel', h('h2', 'Цели недели'),
-      h('div.goals', active.concat(done).map(goalCard)));
+    const focus = active[0];
+    const otherGoals = active.slice(1).concat(done);
+    const recentChecks = focus ? d.cards.filter((c) => !c.beforePlan && c.start_time >= focus.startedAt - (focus.evidence ? 0 : 60)).slice(0, 5).map((c) => {
+      const check = c.checks.find((entry) => entry.key === focus.key);
+      return h('button.coach-check-row', { onclick: () => { setView('matches'); openMatch(c.match_id); } },
+        heroIcon(c.hero, '.sm'), h('span', heroName(c.hero)), h('span.muted.small', dashboardDate(c.start_time)),
+        h(`strong.${check?.pass === true ? 'diff-pos' : check?.pass === false ? 'diff-neg' : 'muted'}`,
+          check?.pass === true ? `Выполнено · ${check.text} (цель ${coachTarget(check)})` : check?.pass === false ? `Не выполнено · ${check.text} (цель ${coachTarget(check)})` : 'Жду данные'));
+    }) : [];
+    const goals = h('section.panel.coach-focus',
+      h('h2', 'Главная цель'),
+      focus ? goalCard(focus) : h('div.muted', 'Активных целей сейчас нет.'),
+      focus?.evidence ? h('div.row', h('button.btn.small', { onclick: () => openGrowthEpisode(focus.evidence) }, `Основание цели · ${F.time(focus.evidence.t)}`),
+        focus.priorRate !== null && focus.priorRate !== undefined ? h('span.muted.small', `До начала цели: ${F.pct(focus.priorRate)} проверенных игр`) : null) : null,
+      recentChecks.length ? h('div.coach-check-list', recentChecks) : null,
+      otherGoals.length ? h('details.coach-other', h('summary', `Другие цели · ${otherGoals.length}`), h('div.goals', otherGoals.map(goalCard))) : null);
     const cards = h('section.panel', h('h2', d.cards.length && d.cards[0].beforePlan ? 'Последние игры (до плана)' : 'Проверка после каждой игры'),
       d.cards.length ? h('div.gcards', d.cards.map(gameCard)) : h('div.muted', 'Игр после начала плана пока нет.'));
     const feedIcon = { plan: 'bulb', done: 'trophy', game: 'zap', streak: 'flame' };
@@ -1136,45 +1168,56 @@
   }
 
   // ================= ПЕРЕД ИГРОЙ =================
-  const allHeroes = () => Object.values(S.assets.heroes).filter((x) => x && !x.disabled && !x.inDev).sort((a, b) => a.name.localeCompare(b.name));
+  const allHeroes = () => Object.values(S.assets.heroes).filter((x) => x && !x.disabled && (x.selectable ?? !x.inDev)).sort((a, b) => a.name.localeCompare(b.name));
 
   async function loadMyMatchups() {
-    if (!S.auth || S.prep.muLoading) return;
-    S.prep.muLoading = true;
+    const P = S.prep;
+    if (!S.auth || P.muLoading) return;
+    P.muLoading = true;
     try {
-      S.prep.mu = await dc.myMatchups();
-      if (!S.prep.myHero && S.prep.mu.myHeroes.length) S.prep.myHero = S.prep.mu.myHeroes[0].hero_id;
+      P.mu = await dc.myMatchups();
+      if (!P.myHero && P.mu.myHeroes.length) {
+        const suggested = P.mu.myHeroes[0].hero_id;
+        if (!P.enemies.includes(suggested)) P.myHero = suggested;
+      }
     } catch (e) {
-      S.prep.muError = e.message;
+      P.muError = e.message;
     } finally {
-      S.prep.muLoading = false;
-      if (S.view === 'prep') renderPrep();
+      P.muLoading = false;
+      if (S.view === 'prep' && S.prep === P) renderPrep();
     }
   }
 
   // Прогноз для выбранного героя: удобные/неудобные соперники и напарники по линии.
   async function loadOutlook(heroId) {
-    if (!heroId || S.prep.outlook[heroId] !== undefined) return;
-    S.prep.outlook[heroId] = null;
+    const P = S.prep;
+    if (!heroId || P.outlook[heroId] !== undefined) return;
+    P.outlook[heroId] = null;
     try {
-      S.prep.outlook[heroId] = await dc.heroOutlook(heroId);
+      P.outlook[heroId] = await dc.heroOutlook(heroId);
     } catch (e) {
-      S.prep.outlook[heroId] = { error: e.message };
+      P.outlook[heroId] = { error: e.message };
     }
-    if (S.view === 'prep' && S.prep.myHero === heroId) renderPrep();
+    if (S.view === 'prep' && S.prep === P && P.myHero === heroId) renderPrep();
   }
 
   async function runPrep() {
-    if (!S.prep.myHero || !S.prep.enemies.length) return;
-    S.prep.loading = true;
+    const P = S.prep;
+    if (!P.myHero || !P.enemies.length || P.request) return;
+    const request = { myHero: P.myHero, enemies: P.enemies, laneFoe: P.laneFoe };
+    const current = () => S.prep === P && P.request === request;
+    P.request = request;
     renderPrep();
     try {
-      S.prep.result = await dc.prepareGame({ myHero: S.prep.myHero, enemies: S.prep.enemies, laneFoe: S.prep.laneFoe });
+      const result = await dc.prepareGame(request);
+      if (current()) P.result = result;
     } catch (e) {
-      toast(e.message, true);
+      if (current()) toast(e.message, true);
     } finally {
-      S.prep.loading = false;
-      renderPrep();
+      if (current()) {
+        P.request = null;
+        if (S.view === 'prep') renderPrep();
+      }
     }
   }
 
@@ -1192,13 +1235,23 @@
     const v = $('view-prep');
     if (!v) return;
     const P = S.prep;
+    const selectionChanged = () => {
+      P.request = null;
+      P.result = null;
+      renderPrep();
+    };
     const head = h('div.page-head', h('div', h('div.crumbs', `Мета · топ-${S.settings.topN} / Перед игрой`), h('h1', 'Перед игрой'),
       h('div.sub', 'Выбери своего героя и героев соперников — покажу, как против них играют топы, что докупают и какой у тебя опыт против них.')),
       S.auth ? h('button.btn.primary', { onclick: () => dc.toggleOverlay(true), title: 'Окно поверх игры: отметь соперников в паузе перед рейтинговым матчем — получишь лучший пик из своих героев' }, Icon('zap'), `Оверлей пика${S.settings.overlayKey ? ' · ' + S.settings.overlayKey : ''}`) : null);
     if (!Object.keys(S.assets.heroes).length) return void v.replaceChildren(head, h('div.empty', h('strong', 'Нет списка героев'), 'Нажми «Обновить данные» в «Мете героев».'));
     const mine = (P.mu && P.mu.myHeroes) || [];
     const step1 = h('section.panel', h('div.step-head', h('span.step-n', '1'), h('h2', 'Твой герой')),
-      heroGrid(P.myHero, (id) => { P.myHero = id; P.enemies = P.enemies.filter((e) => e !== id); P.result = null; renderPrep(); }, { mine }));
+      heroGrid(P.myHero, (id) => {
+        P.myHero = id;
+        P.enemies = P.enemies.filter((e) => e !== id);
+        if (P.laneFoe === id) P.laneFoe = null;
+        selectionChanged();
+      }, { mine }));
     const step2 = h('section.panel', h('div.step-head', h('span.step-n', '2'), h('h2', 'Соперники'), h('span.muted.small', `${P.enemies.length} из 6 · повторный клик по выбранному — «он на моей линии»`)),
       heroGrid(P.enemies, (id) => {
         if (P.enemies.includes(id)) {
@@ -1208,27 +1261,29 @@
             P.enemies = P.enemies.filter((e) => e !== id);
           }
         } else if (P.enemies.length < 6) P.enemies = P.enemies.concat([id]);
-        P.result = null;
-        renderPrep();
+        selectionChanged();
       }, { multi: true, disabled: new Set([P.myHero]), lane: P.laneFoe }),
       h('div.row', { style: { marginTop: '14px' } },
-        h('button.btn.primary', { onclick: runPrep, disabled: !P.myHero || !P.enemies.length || P.loading || null }, P.loading ? h('span.spin') : Icon('zap'), 'Показать план'),
-        P.enemies.length ? h('button.btn', { onclick: () => { P.enemies = []; P.laneFoe = null; P.result = null; renderPrep(); } }, 'Сбросить') : null));
+        h('button.btn.primary', { onclick: runPrep, disabled: !P.myHero || !P.enemies.length || !!P.request || null }, P.request ? h('span.spin') : Icon('zap'), 'Показать план'),
+        P.enemies.length ? h('button.btn', { onclick: () => { P.enemies = []; P.laneFoe = null; selectionChanged(); } }, 'Сбросить') : null));
     const parts = [head, h('div.prep-steps', step1, step2)];
     const r = P.result;
     if (r) {
       const kindIcon = { good: 'trophy', warn: 'flame', info: 'bulb' };
+      const topDate = r.latestTopMatch ? ` · последний матч топов ${new Date(r.latestTopMatch * 1000).toLocaleDateString('ru-RU')}` : '';
+      const personalSample = S.auth ? `Твоих матчей на ${heroName(P.myHero)}: ${r.myGames}` : 'Войди через Steam, чтобы увидеть свои результаты';
       parts.push(h('section.panel.prep-plan', h('h2', `План: ${heroName(P.myHero)} против ${P.enemies.map(heroName).join(', ')}`),
-        r.topGames < 10 ? h('div.note', Icon('info'), h('div', `У топов всего ${r.topGames} ${plural(r.topGames, 'игра', 'игры', 'игр')} на ${heroName(P.myHero)} за период — выводы приблизительные. Увеличь период в настройках, чтобы данных было больше.`)) : null,
+        h('div.hint', `По сохранённым данным. ${personalSample} · матчей топов на этом герое: ${r.topGames}${topDate}`),
+        r.topGames < 10 ? h('div.note', Icon('info'), h('div', 'Сохранённых матчей топов мало. Выводы предварительные.')) : null,
         r.tips.length ? h('div.prep-tips', r.tips.map((t) => h(`div.prep-tip.${t.kind}`, Icon(kindIcon[t.kind] || 'info'), h('div', h('b', t.title), h('div', t.text))))) : h('div.muted', 'Для этих соперников у топов мало данных.'),
         h('table.table.prep-table', h('thead', h('tr', h('th', 'Соперник'), h('th.r', 'Топы против него'), h('th.r', 'Ты против него'), h('th.r', 'Линия к 10:00'), h('th', 'Топы докупают'))),
           h('tbody', r.rows.map((x) => h(`tr${x.isLane ? '.selected' : ''}`,
             h('td', h('div.hero-cell', heroIcon(x.hero_id, '.sm'), heroName(x.hero_id), x.isLane ? h('span.pill.hot', 'на линии') : null)),
             h('td.r.num', x.top ? h('span', { style: { color: x.top.wr >= 0.5 ? 'var(--good)' : 'var(--bad)' } }, F.pct(x.top.wr)) : '—', x.top ? h('div.dim.small', `${x.top.games} ${plural(x.top.games, 'игра', 'игры', 'игр')}`) : null),
-            h('td.r.num', x.mine ? `${x.mine.wins}–${x.mine.losses}` : '—'),
-            h('td.r.num', x.top && x.top.laneDiff !== null ? h('span', { style: { color: x.top.laneDiff >= 0 ? 'var(--good)' : 'var(--bad)' } }, `${x.top.laneDiff > 0 ? '+' : ''}${F.num(x.top.laneDiff)}`) : '—'),
+            h('td.r.num', x.mine ? `${x.mine.wins}–${x.mine.losses}` : '—', x.mine ? h('div.dim.small', `${x.mine.games} ${plural(x.mine.games, 'игра', 'игры', 'игр')}`) : null),
+            h('td.r.num', x.top && x.top.laneDiff !== null ? h('span', { style: { color: x.top.laneDiff >= 0 ? 'var(--good)' : 'var(--bad)' } }, `${x.top.laneDiff > 0 ? '+' : ''}${F.num(x.top.laneDiff)}`) : '—', x.top?.laneSamples ? h('div.dim.small', `${x.top.laneSamples} ${plural(x.top.laneSamples, 'игра', 'игры', 'игр')}`) : null),
             h('td', x.top && x.top.counters.length ? h('div.mini-items', x.top.counters.map((c) => h('span', { title: `${itemName(c.id)}: ${F.pct(c.pick)} игр против него (обычно ${F.pct(c.base)})` }, itemImg(c.id)))) : h('span.dim', '—')))))),
-        h('div.hint', '«Линия к 10:00» — на сколько душ топы на твоём герое обгоняют этого соперника на линии к 10-й минуте. «Топы докупают» — предметы, которые против него берут заметно чаще обычного.')));
+        h('div.hint', '«Ты против него» — победы и поражения на выбранном герое, когда указанный соперник был во вражеской команде. «Линия к 10:00» — типичная разница в душах по матчам с подтверждённой линией и замером на 10-й минуте. «Топы докупают» — предметы, которые против этого соперника брали заметно чаще обычного.')));
     }
     // прогноз по выбранному герою: твои игры + игры топового уровня
     if (P.myHero) {
@@ -1460,18 +1515,44 @@
   }
 
   async function loadOverview() {
-    if (!S.auth) return;
-    S.ov.loading = true;
-    S.ov.error = null;
+    const model = S.dashboard;
+    const current = () => S.dashboard === model;
+    if (!S.auth || model.loading) return;
+    model.loading = true;
+    model.error = null;
     renderOverview();
     try {
-      S.ov.data = await dc.overview(S.ov.days);
-      S.ov.for = S.auth.accountId;
+      if (!model.data) dc.dashboard(true).then((saved) => {
+        if (!current() || model.data?.source === 'api') return;
+        model.data = saved;
+        if (S.view === 'overview') renderOverview();
+      }).catch(() => {});
+      const incoming = await dc.dashboard(false);
+      if (current() && (incoming.source === 'api' || model.data?.source !== 'api')) model.data = incoming;
     } catch (e) {
-      S.ov.error = e.message;
+      model.error = e.message;
     } finally {
-      S.ov.loading = false;
-      if (S.view === 'overview') renderOverview();
+      model.loading = false;
+      model.updated = Date.now();
+      if (current() && S.view === 'overview') renderOverview();
+    }
+  }
+
+  async function loadOverviewDetails() {
+    const model = S.ov;
+    const account = S.auth;
+    if (!account || model.loading) return;
+    model.loading = true;
+    model.error = null;
+    renderOverview();
+    try {
+      model.data = await dc.overview(model.days);
+      model.for = account.accountId;
+    } catch (e) {
+      model.error = e.message;
+    } finally {
+      model.loading = false;
+      if (S.view === 'overview' && S.ov === model && S.dashboard.details) renderOverview();
     }
   }
 
@@ -1523,13 +1604,129 @@
       h('div.src-phases', cards));
   }
 
+  const dashboardDate = (ts) => new Date(ts * 1000).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+  const badgeLabel = (badge) => `${rankName(Math.floor(badge / 10))}${badge % 10 ? ' ' + badge % 10 : ''}`;
+  const openDashboardMatch = (id) => { setView('matches'); openMatch(id); };
+
+  function dashboardRank(points, season) {
+    if (!points.length) return h('div.muted.dash-empty', 'В доступной истории пока нет отметок личного ранга.');
+    const last = points.at(-1);
+    const header = h('div.dash-rank-head', rankImg(Math.floor(last.badge / 10), last.badge % 10),
+      h('div', h('strong', badgeLabel(last.badge)), h('div.muted.small', `Последняя отметка · ${dashboardDate(last.time)}`)));
+    if (points.length === 1) return h('div', header, h('div.hint', 'Для графика нужны хотя бы две отметки.'));
+    const levels = [...new Set(points.map((p) => p.badge))].sort((a, b) => a - b);
+    const from = points[0].time;
+    const end = last.time;
+    const width = 550;
+    const y = (badge) => levels.length === 1 ? 68 : 108 - 84 * levels.indexOf(badge) / (levels.length - 1);
+    const x = (time) => 110 + (time - from) / Math.max(1, end - from) * (width - 124);
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', `0 0 ${width} 140`);
+    svg.setAttribute('class', 'dash-rank-chart');
+    svg.setAttribute('aria-label', 'Ступенчатый график личного ранга');
+    const add = (tag, attrs, label) => {
+      const el = document.createElementNS(svg.namespaceURI, tag);
+      for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+      if (label) el.textContent = label;
+      svg.append(el);
+      return el;
+    };
+    const labels = levels.length <= 4 ? levels : [levels[0], levels[Math.floor(levels.length / 2)], levels.at(-1)];
+    for (const badge of labels) {
+      const row = y(badge);
+      add('line', { x1: 110, x2: width - 14, y1: row, y2: row, class: 'dash-grid-line' });
+      add('text', { x: 0, y: row + 4 }, badgeLabel(badge));
+    }
+    const path = points.map((point, i) => i === 0
+      ? `M ${x(point.time)} ${y(point.badge)}`
+      : `H ${x(point.time)} V ${y(point.badge)}`).join(' ');
+    add('path', { d: path, class: 'dash-rank-path' });
+    for (const point of points) {
+      const label = `${dashboardDate(point.time)} · ${hhmm(point.time)} · ${badgeLabel(point.badge)}`;
+      const dot = add('circle', { cx: x(point.time), cy: y(point.badge), r: 3, class: 'dash-rank-dot', tabindex: 0, role: 'button', 'aria-label': label });
+      const title = document.createElementNS(svg.namespaceURI, 'title');
+      title.textContent = label;
+      dot.append(title);
+      dot.addEventListener('click', () => openDashboardMatch(point.matchId));
+      dot.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openDashboardMatch(point.matchId);
+        }
+      });
+    }
+    add('text', { x: 110, y: 135 }, dashboardDate(from));
+    if (dashboardDate(from) !== dashboardDate(end)) add('text', { x: width - 14, y: 135, 'text-anchor': 'end' }, dashboardDate(end));
+    return h('div', header, svg, h('div.hint', `${points.length} отметок · ${season ? 'текущий сезон' : 'последние 30 дней'}`));
+  }
+
   function renderOverview() {
+    if (!S.auth || S.dashboard.details) return renderOverviewDetails();
     const v = $('view-overview');
-    const periodSeg = seg([[3, '3 дня'], [7, '7 дней'], [14, '14 дней']], S.ov.days, (d) => { S.ov.days = d; loadOverview(); });
+    const model = S.dashboard;
+    const d = model.data;
+    const latest = d?.latest;
+    const hero = latest && S.assets.heroes[latest.hero_id];
+    const localArt = { 7: 'assets/wraith-banner.jpg', 72: 'assets/billy-banner.jpg' }[latest?.hero_id];
+    const portrait = localArt || hero?.card || hero?.img;
+    const backdrop = !localArt && hero?.wide;
+    const banner = h(`section.dash-banner${localArt ? '.painted' : ''}`,
+      backdrop ? h('img.dash-hero-bg', { src: backdrop, alt: '', onerror: (e) => { e.currentTarget.hidden = true; } }) : null,
+      portrait ? h('img.dash-hero-art', { src: portrait, alt: '', onerror: (e) => { e.currentTarget.hidden = true; } }) : null,
+      h('div.dash-banner-copy', h('h1', `Привет, ${S.auth.name?.trim() || 'игрок'}`),
+        latest ? h('div.dash-latest', `Последний матч · ${heroName(latest.hero_id)} · ${dashboardDate(latest.start_time)}`) : null,
+        h('div.row.dash-banner-actions',
+          h('button.btn.primary', { onclick: () => setView('matches') }, 'История матчей', Icon('arrow')),
+          h('button.btn.small.icon', { onclick: loadOverview, disabled: model.loading, title: 'Обновить главную', 'aria-label': 'Обновить главную' }, model.loading ? h('span.spin') : Icon('refresh')))));
+    const knownColors = { 7: [148,77,120], 72: [164,60,135] };
+    const color = hero?.color || knownColors[latest?.hero_id];
+    if (color?.length === 3) banner.style.setProperty('--hero-glow', `rgb(${color.join(',')})`);
+    if (!d) {
+      v.replaceChildren(banner, model.error ? h('div.empty', model.error) : skeleton('Открываю сохранённые матчи'));
+      return;
+    }
+    const card = (title, action, ...children) => h('section.panel.dash-card',
+      h('div.dash-card-head', h('h2', title), action), children);
+    const maxGames = Math.max(1, ...d.days.map((x) => x.games));
+    const bars = h('div.dash-days', d.days.map((x) => {
+      const label = `${dashboardDate(x.start)} · побед: ${x.wins} · поражений: ${x.losses}${x.unknown ? ' · без результата: ' + x.unknown : ''}`;
+      const segment = (n, kind) => n ? h(`span.${kind}`, { style: { flex: String(n) } }) : null;
+      return h('div.dash-day', { title: label, 'aria-label': label },
+        h('strong.num', x.games || '—'), h('div.dash-track',
+          x.games ? h('div.dash-stack', { style: { height: `${x.games / maxGames * 100}%` } }, segment(x.wins, 'win'), segment(x.losses, 'loss'), segment(x.unknown, 'unknown')) : null),
+        h('span.muted', dashboardDate(x.start)));
+    }));
+    const legend = h('div.dash-legend', h('span.win', 'Победы'), h('span.loss', 'Поражения'),
+      d.week.unknown ? h('span.unknown', 'Без результата') : null);
+    const rate = (value, label) => h('div.dash-rate', h('strong.num', F.pct(value.wr)), h('span', label),
+      h('span.muted.small', `${value.wins + value.losses} с результатом из ${value.games} матчей`));
+    const delta = d.week.wr === null || d.baseline.wr === null ? null : 100 * (d.week.wr - d.baseline.wr);
+    const deltaText = delta === null ? 'Для сравнения нужно больше матчей с результатом.'
+      : `${delta > 0 ? '+' : ''}${delta.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} п. п. к обычному винрейту`;
+    const heroRows = h('div.dash-heroes', d.heroes.slice(0, 5).map((x) =>
+      h('button.dash-hero-row', { onclick: () => { setView('myheroes'); openHeroSummary(x.heroId); } },
+        heroIcon(x.heroId), h('div', h('strong', heroName(x.heroId)), h('div.dash-hero-track', h('span', { style: { width: `${x.games / d.heroes[0].games * 100}%` } }))),
+        h('span.muted.small', `${x.games} ${plural(x.games, 'матч', 'матча', 'матчей')} · ${x.wins}–${x.losses}${x.unknown ? ' · без результата: ' + x.unknown : ''}`),
+        h('span.num', x.wins + x.losses >= 3 ? F.pct(x.wr) : '—'))));
+    v.replaceChildren(banner, h('div.dash-grid',
+      card('Игры за неделю', h('span.muted.small', `${d.week.games} ${plural(d.week.games, 'матч', 'матча', 'матчей')}`), bars, legend),
+      card('Форма за 7 дней', null, h('div.dash-rates', rate(d.week, 'Последние 7 дней'), rate(d.baseline, 'Предыдущие 30 дней')), h('div.hint', deltaText)),
+      card('Мои герои за неделю', h('button.btn.small', { onclick: () => setView('myheroes') }, 'Все герои', Icon('arrow')),
+        d.heroes.length ? heroRows : h('div.muted.dash-empty', 'За неделю пока нет матчей.')),
+      card('Изменения рейтинга', null, dashboardRank(d.rank, d.season))),
+      h('div.dash-footer', h('span.muted.small', model.error ? `История недоступна · ${model.error}`
+        : model.loading ? 'Проверяю свежие матчи…' : d.source === 'saved' ? 'Показаны сохранённые матчи' : 'По доступной истории Deadlock API'),
+      h('button.btn.small', { onclick: () => { model.details = true; if (!S.ov.data) loadOverviewDetails(); else renderOverview(); } }, 'Подробная статистика', Icon('arrow'))));
+  }
+
+  function renderOverviewDetails() {
+    const v = $('view-overview');
+    const periodSeg = seg([[3, '3 дня'], [7, '7 дней'], [14, '14 дней']], S.ov.days, (d) => { S.ov.days = d; loadOverviewDetails(); });
     const head = h('div.page-head',
       h('div', h('div.crumbs', 'Моя игра / Главная'), h('h1', S.auth && S.auth.name ? `Привет, ${S.auth.name.trim() || 'игрок'}` : 'Главная'), h('div.sub', 'Твоя форма за последние дни, цифры против игроков твоего уровня, задачи тренера и над чем работать.')),
-      h('div.row', S.ov.loading ? h('span.muted.row', h('span.spin'), 'Считаю…') : null, periodSeg,
-        h('button.btn.small.icon', { onclick: loadOverview, title: 'Обновить', 'aria-label': 'Обновить', disabled: S.ov.loading }, Icon('refresh'))));
+      h('div.row', S.auth ? h('button.btn.small', { onclick: () => { S.dashboard.details = false; renderOverview(); } }, 'На главную') : null,
+        S.ov.loading ? h('span.muted.row', h('span.spin'), 'Считаю…') : null, periodSeg,
+        h('button.btn.small.icon', { onclick: loadOverviewDetails, title: 'Обновить', 'aria-label': 'Обновить', disabled: S.ov.loading }, Icon('refresh'))));
     if (!S.auth) {
       const input = h('input.input', { placeholder: 'или ссылка на профиль Steam: …/id/ник или …/profiles/7656…', style: { flex: '1' } });
       const metaReady = S.meta && S.meta.totalRecords;
@@ -1704,23 +1901,59 @@
   }
 
   // ================= ЛАГЕРЬ =================
-  async function loadMyMatches(silent = false) {
-    if (!silent) {
-      S.my.loading = true;
-      S.my.error = null;
-      renderCamp();
+  let matchHistoryRequest = null;
+  const showingMatches = () => S.view === 'camp' && S.my.mode === 'match';
+
+  function mergeMatchList(incoming, previous = []) {
+    const byId = new Map(previous.filter((m) => !m.pending).map((m) => [m.match_id, m]));
+    for (const m of incoming) {
+      if (!m.pending || !byId.has(m.match_id)) byId.set(m.match_id, m);
     }
+    return [...byId.values()].sort((x, y) => (y.pending ? 2e9 : y.start_time || 0) - (x.pending ? 2e9 : x.start_time || 0)).slice(0, 60);
+  }
+
+  function loadMyMatches(silent = false) {
+    return updateMatchHistory({ silent });
+  }
+
+  async function updateMatchHistory({ silent = false, fresh = false } = {}) {
+    const model = S.my;
+    const account = S.auth;
+    if (!account || (matchHistoryRequest?.model === model && (!fresh || matchHistoryRequest.fresh))) return;
+    const request = { model, fresh };
+    matchHistoryRequest = request;
+    const current = () => matchHistoryRequest === request && S.my === model && S.auth === account;
+    const updateView = () => { if (showingMatches()) renderCamp(); };
+    model.loading = true;
+    model.freshBusy = fresh;
+    model.error = null;
+    updateView();
     try {
-      const before = S.my.list ? new Set(S.my.list.map((m) => m.match_id)) : null;
-      S.my.list = await dc.myMatches();
-      const fresh = before ? S.my.list.filter((m) => !m.pending && !before.has(m.match_id)) : [];
-      if (silent && fresh.length) toast(`Появился новый матч: ${heroName(fresh[0].hero_id)}`);
+      if (!model.list) {
+        const saved = await dc.myMatches(true);
+        if (!current()) return;
+        model.list = saved.list;
+        model.historyStatus = saved;
+        updateView();
+      }
+      const before = new Set(model.list.filter((m) => !m.pending).map((m) => m.match_id));
+      const result = await (fresh ? dc.freshMatches() : dc.myMatches());
+      if (!current()) return;
+      model.list = mergeMatchList(result.list, model.list);
+      model.historyStatus = result;
+      const added = result.list.find((m) => !m.pending && !before.has(m.match_id));
+      if (fresh && result.fresh?.ok) toast('Запрос к Steam выполнен');
+      else if (silent && added && showingMatches()) toast(`Появился новый матч: ${heroName(added.hero_id)}`);
     } catch (e) {
-      if (!silent) S.my.error = e.message;
+      if (current()) model.error = e.message;
     } finally {
-      S.my.loading = false;
-      if (S.view === 'camp') renderCamp();
-      schedulePoll();
+      if (current()) {
+        matchHistoryRequest = null;
+        model.loading = false;
+        model.freshBusy = false;
+        updateView();
+        schedulePoll();
+      }
     }
   }
 
@@ -1734,75 +1967,89 @@
   function schedulePoll() {
     clearTimeout(pollTimer);
     const stale = Date.now() / 1000 - lastFinished() > 20 * 60;
-    if (S.view !== 'camp' || !S.auth || !stale || pollCount >= 10) return;
+    if (!showingMatches() || !S.auth || !stale || pollCount >= 10) return;
     if (S.gameMode && S.gameMode.active && S.gameMode.enabled) return; // пока играешь — новых матчей не будет
     pollTimer = setTimeout(() => {
       pollCount += 1;
-      if (S.view === 'camp') loadMyMatches(true);
+      if (showingMatches()) loadMyMatches(true);
     }, 3 * 60e3);
   }
 
-  async function freshMatches() {
-    S.my.freshBusy = true;
-    renderCamp();
-    try {
-      const r = await dc.freshMatches();
-      S.my.list = r.list;
-      if (r.fresh && r.fresh.ok) toast('История обновлена прямо из Steam');
-      else if (r.fresh && r.fresh.limited) toast('Запросить историю у Steam можно примерно раз в час. Пока попробуй «Найти в кэше Steam» или открыть матч по ID.', true);
-      else toast(`Steam не ответил: ${(r.fresh && r.fresh.error) || 'ошибка'}. Попробуй позже.`, true);
-    } catch (e) {
-      toast(e.message, true);
-    } finally {
-      S.my.freshBusy = false;
-      renderCamp();
-    }
+  function freshMatches() {
+    return updateMatchHistory({ fresh: true });
   }
 
   async function scanCache() {
+    const model = S.my;
+    const account = S.auth;
     try {
       S.my.scanBusy = true;
       renderCamp();
       const r = await dc.scanCache();
+      if (S.my !== model || S.auth !== account) return;
       if (!r.steamDir) toast('Не нашёл папку Steam. Укажи её в настройках.', true);
       else if (r.added) toast(`Нашёл новых матчей: ${r.added}. Они уже в списке — если матч ещё обрабатывается, нажми на него через пару минут.`);
       else toast(r.found ? `В кэше ${r.found} ${plural(r.found, 'матч', 'матча', 'матчей')}, новых нет. Если сыгранного матча нет — открой его в игре: «Профиль» → «История матчей», потом нажми эту кнопку ещё раз.` : 'В кэше Steam матчей нет. Открой матч в игре: «Профиль» → «История матчей» → нужный матч, потом нажми эту кнопку ещё раз.');
+      const saved = await dc.myMatches(true);
+      if (S.my !== model || S.auth !== account) return;
+      model.list = mergeMatchList(saved.list, model.list || []);
+      if (showingMatches()) renderCamp();
       await loadMyMatches(true);
     } catch (e) {
       toast(e.message, true);
     } finally {
-      S.my.scanBusy = false;
-      renderCamp();
+      if (S.my === model && S.auth === account) {
+        S.my.scanBusy = false;
+        if (showingMatches()) renderCamp();
+      }
     }
   }
 
-  async function openMatch(matchId) {
+  async function openMatch(matchId, episode = null) {
     S.my.selected = Number(matchId);
     S.my.leakMoment = null;
+    S.my.reviewTime = episode ? { t: episode.t, point: episode } : null;
+    S.my.growthEpisode = episode;
     S.my.vs = null;
     S.my.analysis = null;
     S.my.error2 = null;
     S.my.target = { type: 'top' };
     await runAnalysis(true);
+    if (episode && showingMatches() && S.my.growthEpisode === episode) {
+      $('growth-episode')?.scrollIntoView({ block: 'nearest' });
+    }
   }
 
   async function runAnalysis(loadTargets = false) {
-    S.my.analyzing = true;
+    const model = S.my;
+    const matchId = model.selected;
+    const request = {};
+    const current = () => S.my === model && model.analysisRequest === request;
+    model.analysisRequest = request;
+    model.analyzing = true;
     renderCamp();
     try {
-      const winsOnly = S.my.winsOnly === null ? S.settings.winsOnly : S.my.winsOnly;
-      S.my.analysis = await dc.analyze({ matchId: S.my.selected, target: S.my.target, winsOnly });
-      if (loadTargets) S.my.targets = await dc.campTargets(S.my.analysis.match.hero_id);
-      const row = S.my.list && S.my.list.find((x) => x.match_id === S.my.selected);
+      const winsOnly = model.winsOnly === null ? S.settings.winsOnly : model.winsOnly;
+      const analysis = await dc.analyze({ matchId, target: model.target, winsOnly, preferSaved: !!model.growthEpisode });
+      if (!current()) return;
+      model.analysis = analysis;
+      if (loadTargets) {
+        const targets = await dc.campTargets(analysis.match.hero_id);
+        if (!current()) return;
+        model.targets = targets;
+      }
+      const row = model.list && model.list.find((x) => x.match_id === matchId);
       if (row) {
         row.loaded = true;
-        row.won = S.my.analysis.match.won;
+        row.won = analysis.match.won;
       }
     } catch (e) {
-      S.my.error2 = e.message;
+      if (current()) model.error2 = e.message;
     } finally {
-      S.my.analyzing = false;
-      renderCamp();
+      if (current()) {
+        model.analyzing = false;
+        if (showingMatches()) renderCamp();
+      }
     }
   }
 
@@ -1827,35 +2074,60 @@
   }
 
   // ---------- сводка по герою ----------
+  let heroReportRequest = 0;
+
   async function loadMyHeroes() {
+    const account = S.auth?.accountId;
     S.my.heroesLoading = true;
     renderCamp();
     try {
-      S.my.heroes = await dc.myHeroes();
+      const heroes = await dc.myHeroes();
+      if (S.auth?.accountId !== account) return;
+      S.my.heroes = heroes;
       if (!S.my.hero && S.my.heroes.length) openHeroSummary(S.my.heroes[0].hero_id);
     } catch (e) {
-      toast(e.message, true);
-      S.my.heroes = [];
+      if (S.auth?.accountId === account) {
+        toast(e.message, true);
+        S.my.heroes = [];
+      }
     } finally {
-      S.my.heroesLoading = false;
-      renderCamp();
+      if (S.auth?.accountId === account) {
+        S.my.heroesLoading = false;
+        if (S.view === 'camp' && S.my.mode === 'hero') renderCamp();
+      }
     }
   }
 
-  async function openHeroSummary(heroId) {
+  async function openHeroSummary(heroId, mode = S.my.heroMatchMode ?? null) {
+    if (S.my.hero === heroId && mode === (S.my.heroMatchMode ?? null) && (S.my.heroRepLoading || S.my.heroRepRefreshing)) return;
+    const request = ++heroReportRequest;
+    const account = S.auth?.accountId;
+    const isCurrent = () => request === heroReportRequest && S.auth?.accountId === account;
+    const updateView = () => { if (S.view === 'camp' && S.my.mode === 'hero') renderCamp(); };
     S.my.hero = heroId;
+    S.my.heroMatchMode = mode;
     S.my.heroRep = null;
     S.my.heroRepError = null;
     S.my.heroRepLoading = true;
-    renderCamp();
+    S.my.heroRepRefreshing = false;
+    updateView();
     try {
-      const rep = await dc.heroSummary(heroId);
-      if (S.my.hero === heroId) S.my.heroRep = rep;
-    } catch (e) {
-      S.my.heroRepError = e.message;
-    } finally {
+      const saved = await dc.heroSummary(heroId, true, mode);
+      if (!isCurrent()) return;
+      S.my.heroRep = saved;
       S.my.heroRepLoading = false;
-      if (S.view === 'camp') renderCamp();
+      S.my.heroRepRefreshing = true;
+      updateView();
+      const rep = await dc.heroSummary(heroId, false, mode);
+      if (isCurrent() && (!rep.partial || rep.loaded >= saved.loaded)) S.my.heroRep = rep;
+    } catch (e) {
+      if (isCurrent()) S.my.heroRepError = e.message;
+    } finally {
+      if (isCurrent()) {
+        S.my.heroRepLoading = false;
+        S.my.heroRepRefreshing = false;
+        updateView();
+      }
     }
   }
 
@@ -1866,15 +2138,18 @@
       heroIcon(x.hero_id),
       h('span.hero-pick-name', heroName(x.hero_id)),
       h('span.hero-pick-meta.num', `${x.games} · ${x.games ? Math.round((x.wins / x.games) * 100) : 0}%`))));
-    return h('div', picker, heroReportView());
+    return h('div', picker, S.my.hero ? seg([[null, 'Все'], [4, 'Рейтинг'], [1, 'Обычные']], S.my.heroMatchMode ?? null,
+      (mode) => openHeroSummary(S.my.hero, mode)) : null, heroReportView());
   }
 
   function heroReportView() {
-    if (S.my.heroRepLoading) return skeleton(`Скачиваю твои игры на ${heroName(S.my.hero)} и сравниваю с топами`);
-    if (S.my.heroRepError) return h('div.empty', h('strong', 'Не получилось'), S.my.heroRepError);
+    if (S.my.heroRepLoading) return skeleton(`Открываю сохранённые игры на ${heroName(S.my.hero)}`);
     const r = S.my.heroRep;
-    if (!r) return null;
+    if (!r) return S.my.heroRepError ? h('div.empty', h('strong', 'Не получилось'), S.my.heroRepError) : null;
     const hero = heroName(r.heroId);
+    const status = S.my.heroRepRefreshing ? (r.games ? 'Показаны сохранённые игры. Проверяю свежие данные…' : 'Сохранённых игр пока нет. Проверяю историю…')
+      : S.my.heroRepError ? `Обновление не удалось. ${S.my.heroRepError}`
+        : r.partial ? 'Сводка по доступным данным. Нажми на героя, чтобы проверить снова.' : '';
 
     const head = h('div.panel.hero-sum.hero-banner', { style: heroCardStyle(r.heroId) },
       h('div.hero-sum-main',
@@ -1888,7 +2163,9 @@
         h('div', h('dt', 'Винрейт'), h('dd.num', F.pct(r.wr))),
         h('div', h('dt', 'KDA'), h('dd.num', r.kda === null ? '—' : r.kda.toFixed(1).replace('.', ','))),
         h('div', h('dt', 'Игр топов для сравнения'), h('dd.num', r.benchN))),
-      r.loaded < r.games ? h('div.hint', `Подробности есть для ${r.loaded} из ${r.games} игр — сравнение по ним.`) : null);
+      r.loaded < r.games ? h('div.hint', `Подробности есть для ${r.loaded} из ${r.games} игр — сравнение по ним.`) : null,
+      r.benchModes?.length ? h('div.hint', `Режимы выборки топов · ${r.benchModes.map((mode) => mode === 4 ? 'рейтинговый' : 'обычный').join(', ')}`) : null,
+      status ? h('div.hint', status) : null);
 
     const good = h('div.panel.verdict-col.good',
       h('h2', 'Что получается'),
@@ -1967,27 +2244,51 @@
   }
 
   function matchListPanel() {
-    const idInput = h('input.input', { placeholder: 'ID матча', style: { flex: '1' } });
+    const idInput = h('input.input', { placeholder: 'ID матча', value: S.my.matchInput || '', oninput: (e) => { S.my.matchInput = e.target.value; }, style: { flex: '1' } });
     const items = [];
-    if (S.my.loading) items.push(h('div.row.muted', h('span.spin'), 'Загружаю историю…'));
-    else if (S.my.error) items.push(h('div.muted', S.my.error));
-    else if (S.my.list && !S.my.list.length) items.push(h('div.muted', 'Матчей не найдено. Если ты недавно играл, нажми «Найти в кэше Steam».'));
-    else if (S.my.list) items.push(...matchRows(S.my.list, { selected: S.my.selected, onOpen: openMatch }));
-    const savedHistory = S.my.list?.some((match) => match.source === 'saved-history');
+    if (S.my.list?.length) items.push(...matchRows(S.my.list, { selected: S.my.selected, onOpen: openMatch }));
+    else if (!S.my.loading && S.my.list) items.push(h('div.muted', 'Матчей не найдено. Если ты недавно играл, нажми «Найти в кэше Steam».'));
+    const result = S.my.historyStatus;
+    const time = result?.checkedAt ? new Date(result.checkedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
+    let historyStatus = '';
+    if (S.my.loading) historyStatus = S.my.list?.length ? 'Матчи доступны. Проверяю новые игры…' : 'Проверяю историю матчей…';
+    else if (S.my.error) historyStatus = `Не удалось проверить историю. ${S.my.error}`;
+    else if (result?.fresh?.limited) historyStatus = 'Steam ограничил частоту запросов. Можно поискать матч в кэше Steam.';
+    else if (result?.fresh && !result.fresh.ok) historyStatus = result.source === 'api' ? `Steam не ответил. История из Deadlock API проверена в ${time}.` : 'Steam не ответил. Показаны доступные сохранённые матчи.';
+    else if (result?.source === 'steam') historyStatus = `Запрос к Steam выполнен в ${time}. Новая игра может ещё обрабатываться.`;
+    else if (result?.source === 'api') historyStatus = `История Deadlock API проверена в ${time}.`;
+    else if (result?.source === 'saved') historyStatus = 'Показаны доступные сохранённые матчи. Свежая история пока недоступна.';
     return h('div.panel',
       h('div.row', { style: { marginBottom: '12px' } }, h('h2', { style: { margin: 0 } }, 'Твои матчи'), h('div.grow'),
-        h('button.btn.small.icon', { onclick: loadMyMatches, title: 'Обновить список', 'aria-label': 'Обновить список' }, Icon('refresh'))),
+        h('button.btn.small.icon', { onclick: () => loadMyMatches(), disabled: S.my.loading || null, title: 'Обновить список', 'aria-label': 'Обновить список' }, Icon('refresh'))),
       h('div.row.nowrap', { style: { marginBottom: '10px' } }, idInput, h('button.btn.small', { onclick: () => idInput.value.trim() && openMatch(idInput.value.trim()) }, 'Открыть')),
       h('div.find-row',
         h('button.btn.small', { onclick: scanCache, disabled: S.my.scanBusy || null, title: 'Ищет твои матчи в кэше Steam и отправляет их в deadlock-api на обработку' }, S.my.scanBusy ? h('span.spin') : Icon('search'), 'Найти в кэше Steam'),
         h('button.btn.small', { onclick: freshMatches, disabled: S.my.freshBusy || null, title: 'Просит deadlock-api взять свежую историю прямо из Steam. Можно примерно раз в час.' }, S.my.freshBusy ? h('span.spin') : Icon('download'), 'Запросить у Steam')),
       missingHint(),
-      savedHistory ? h('div.hint', 'Показываю сохранённые матчи. Свежая история пока недоступна.') : null,
+      historyStatus ? h('div.hint', { role: 'status' }, S.my.loading ? h('span.spin') : null, historyStatus) : null,
       h('div.match-list', items));
   }
 
   // Ошибки этой игры с моментами; момент можно посмотреть на мини-карте (повтор позиций).
-  function matchLeaksPanel(A) {
+  function macroReviewPanel(rows, seek) {
+    if (!rows?.length) return null;
+    return h('section.panel#macro-review', h('h2', 'Решения по карте'),
+      h('div.mleak-list', rows.map((row) => h('div.mleak.info',
+        h('div.mleak-head', h('b', row.title)),
+        h('div.mleak-text', row.text),
+        momentChips(row, (_i, moment) => {
+          seek(moment.t);
+          $('match-review')?.scrollIntoView({ block: 'nearest' });
+        }),
+        h('div.tip', Icon('bulb'), h('span', row.tip)),
+        row.evidence ? h('button.btn.small', { onclick: () => {
+          loadCoach(false, row.evidence);
+          setView('coach');
+        } }, 'Отслеживать в тренере') : null))));
+  }
+
+  function matchLeaksPanel(A, onSeek) {
     const leaks = (A.leaks || []).filter((l) => l.level !== 'good');
     const good = (A.highlights || []).concat((A.leaks || []).filter((l) => l.level === 'good'));
     if (!leaks.length && !good.length) {
@@ -2002,7 +2303,14 @@
     const card = (l, li) => h(`div.mleak.${l.level}`,
       h('div.mleak-head', h('span.leak-area', l.area), h('b', l.title)),
       l.text ? h('div.mleak-text', l.text) : null,
-      momentChips(l, mini ? (i, mo) => { S.my.leakMoment = { li, i, t: mo.t }; mini.setTime(mo.t); renderMomentSel(); } : null, pick && pick.li === li ? pick.i : null),
+      l.context ? h('div.hint.analysis-context', l.context) : null,
+      momentChips(l, (i, mo) => {
+        S.my.leakMoment = { li, i, t: mo.t };
+        mini?.setTime(mo.t);
+        renderMomentSel();
+        onSeek(mo.t, mo);
+        $('match-review')?.scrollIntoView({ block: 'nearest' });
+      }, pick && pick.li === li ? pick.i : null),
       l.level === 'good'
         ? (l.keep ? h('div.tip.keep', Icon('trophy'), h('span', l.keep)) : null)
         : (l.fix && l.fix.length ? h('div.tip', Icon('bulb'), h('span', l.fix[0])) : null));
@@ -2032,6 +2340,81 @@
     return panel;
   }
 
+  function growthEpisodePanel(A) {
+    const episode = S.my.growthEpisode;
+    if (!episode || episode.matchId !== A.match.match_id) return null;
+    const hasCoords = (point) => Number.isFinite(point?.x) && Number.isFinite(point?.y);
+    const death = A.map?.kills.find((k) => k.t === episode.t && k.victim === A.mySlot && hasCoords(k));
+    const location = hasCoords(episode) ? episode : death;
+    const path = A.map?.paths?.players?.[A.mySlot];
+    const hasRoute = path?.length && episode.t <= (path.length - 1) * (A.map.paths.step || 5);
+    const mini = A.map && (location || hasRoute) ? MapView(hasRoute ? A.map : { ...A.map, paths: null }, {
+      focusSlot: A.mySlot, heroName, heroImg: heroImgSrc, mapAsset: S.assets.map || null,
+      compact: true, moment: { t: episode.t, x: location?.x, y: location?.y },
+    }) : null;
+    return h('section.panel', { id: 'growth-episode' },
+      h('h2', `Эпизод на ${F.time(episode.t)}`), h('div', h('b', episode.title), h('p', episode.text)),
+      episode.context ? h('div.hint.analysis-context', episode.context) : null,
+      mini ? h('div', { style: { maxWidth: '360px' } }, mini, h('div.hint', location ? 'Круг отмечает место события.' : 'На карте показаны доступные позиции героев в этот момент.'))
+        : h('div.hint', 'В сохранённых данных нет координат для этого эпизода. Время события доступно.'));
+  }
+
+  function matchReview(A) {
+    const { map, result: r, mySlot } = A;
+    const duration = A.match.duration_s || 0;
+    const coords = (p) => Number.isFinite(p?.x) && Number.isFinite(p?.y);
+    const deaths = (map?.kills || []).filter((k) => k.victim === mySlot);
+    const nameBySlot = new Map((map?.players || []).map((p) => [p.slot, heroName(p.hero)]));
+    const events = deaths.map((p) => ({ ...p, label: nameBySlot.has(p.killer) ? 'Смерть от ' + nameBySlot.get(p.killer) : 'Смерть' }))
+      .concat((A.purchases || []).map((p) => ({ t: p.t, label: 'Покупка · ' + itemName(p.id) })))
+      .filter((p) => Number.isFinite(p.t) && p.t >= 0 && p.t <= duration).sort((a, b) => a.t - b.t);
+    const mapView = map && (map.hasPos || events.some(coords)) ? MapView(map, {
+      focusSlot: mySlot, heroName, heroImg: heroImgSrc, mapAsset: S.assets.map, compact: true,
+    }) : null;
+    const key = S.my.chart;
+    const curve = r.curves[key];
+    const chart = Charts.lineChart(curve, { onSeek: (t) => seek(t) });
+    const clock = h('output.num', { for: 'review-time' });
+    const slider = h('input#review-time', { type: 'range', min: 0, max: duration, step: 1, oninput: (ev) => seek(Number(ev.target.value)) });
+    const note = h('div.hint');
+    const values = h('div.hint.review-values');
+    const eventSelect = events.length ? h('select.select', { 'aria-label': 'События матча', onchange: (e) => {
+      if (e.target.value === '') return;
+      const p = events[Number(e.target.value)];
+      seek(p.t, p);
+    } }, h('option', { value: '' }, 'Перейти к событию…'),
+    events.map((p, i) => h('option', { value: String(i) }, `${F.time(p.t)} · ${p.label}`))) : null;
+    function seek(t, point = null) {
+      if (!Number.isFinite(t)) return;
+      t = Math.max(0, Math.min(duration, Math.round(t)));
+      const selected = point ? (coords(point) ? point : null) : deaths.find((p) => p.t === t && coords(p));
+      S.my.reviewTime = { t, point: point || selected || null };
+      slider.value = t;
+      clock.value = F.time(t);
+      chart.setTime(t);
+      mapView?.setMoment(t, selected || null);
+      if (eventSelect) {
+        const index = events.findIndex((p) => p.t === t && (!point?.label || p.label === point.label));
+        eventSelect.value = index === -1 ? '' : String(index);
+      }
+      const minute = Math.floor(t / 60);
+      const own = curve.me[minute];
+      const median = curve.med[minute];
+      values.textContent = `На ${minute}:00 · Ты ${F.num(own)}${Number.isFinite(median) ? ` · медиана ${F.num(median)} · выборка ${curve.n[minute]}` : ' · данных для сравнения на этой минуте нет'}`;
+      const route = map?.paths?.players?.[mySlot];
+      note.textContent = selected ? 'Круг отмечает место события.'
+        : route?.length && t <= (route.length - 1) * (map.paths.step || 5) ? 'Позиции из сохранённых маршрутов.' : 'Координаты на выбранное время недоступны.';
+    }
+    seek(S.my.reviewTime?.t ?? 0, S.my.reviewTime?.point);
+    const tabs = [['nw', 'Души'], ['pdmg', 'Урон'], ['farm', 'Крипы'], ['d', 'Смерти'], ['ka', 'Убийства + помощь']];
+    return { seek, panel: h('section.panel#match-review',
+      h('h2', 'Хронология матча'),
+      h('div.review-body', h('div',
+        h('div.tabs', tabs.map(([k, label]) => h(`button.tab${key === k ? '.active' : ''}`, { onclick: () => { S.my.chart = k; renderCamp(); } }, label))),
+        chart, values), h('div.review-map', mapView, note)),
+      h('div.review-controls', h('label', { for: 'review-time' }, 'Время матча'), slider, clock, eventSelect)) };
+  }
+
   function analysisArea() {
     if (!S.my.selected) return h('div.empty', h('strong', 'Выбери матч слева'), 'Покажу поминутно: души, урон по героям, источники фарма, тайминги предметов и после каких покупок топы идут драться.');
     if (S.my.analyzing && !S.my.analysis) return skeleton('Загружаю матч и сравниваю с топами');
@@ -2040,6 +2423,8 @@
     if (!A) return h('div');
     const r = A.result;
     const m = A.match;
+    const episode = growthEpisodePanel(A);
+    const review = matchReview(A);
 
     const head = h('div.row', { style: { marginBottom: '14px' } }, heroIcon(m.hero_id),
       h('div.grow', h('h2', { style: { margin: 0 } }, `${heroName(m.hero_id)} — ${m.won ? 'победа' : 'поражение'}`),
@@ -2058,11 +2443,12 @@
     S.my.targets.map((t) => h('option', { value: t.accountId, selected: S.my.target.accountId === t.accountId }, `#${t.rank} ${t.name} — ${t.games} ${plural(t.games, 'игра', 'игры', 'игр')} на герое`)));
     const wins = h('input', { type: 'checkbox', checked: (S.my.winsOnly ?? S.settings.winsOnly) || null, onchange: (e) => { S.my.winsOnly = e.target.checked; runAnalysis(); } });
     const bar = h('div.compare-bar', h('span.muted', 'Сравнить с:'), sel, h('label.check', wins, 'только победы'), h('div.grow'),
-      h('span.muted', r.benchN ? `в сравнении ${r.benchN} ${plural(r.benchN, 'игра', 'игры', 'игр')} (${A.targetLabel}) за ${A.benchDays} дн.` : ''));
+      h('span.muted', r.benchN ? `${r.benchN} ${plural(r.benchN, 'игра', 'игры', 'игр')} · ${A.targetLabel} · ${A.benchMode === 4 ? 'рейтинговые' : A.benchMode === 1 ? 'обычные' : 'доступные режимы'} · до ${A.benchDays} дн. назад` : ''));
 
     if (!r.benchN) {
-      return h('div', h('div.panel', head, bar, h('div.empty', h('strong', 'Не с кем сравнить'),
-        'В сохранённых матчах топов нет игр на этом герое. Обнови мету кнопкой «Обновить данные» в «Мете героев», увеличь период в настройках или включи сравнение со «всеми игроками в матчах топов».')));
+      return h('div', h('div.panel', head, bar, h('div.empty', h('strong', 'Нет матчей для сравнения'),
+        'В выборке нет игр на этом герое для выбранного режима и настроек сравнения. Данные самого матча доступны ниже.')),
+        episode, review.panel, macroReviewPanel(A.macro, review.seek), matchLeaksPanel(A, review.seek), A.map ? mapPanel(A.map, A.mySlot ?? null, 'Карта матча') : null);
     }
 
     const sc = r.scores;
@@ -2081,7 +2467,8 @@
       scoreCard('Предметы', sc.items, sc.items.value !== null ? `${sc.items.value > 0 ? '+' : ''}${F.time(sc.items.value)}` : '—', `средняя задержка · ${levelText[sc.items.level]}`, 'delay'));
 
     // Главное — 3 приоритета
-    const mainPanel = h('div.panel', h('h2', 'Главное в этой игре'),
+    const mainPanel = h('div.panel', h('h2', 'Наблюдения по матчу'),
+      h('div.hint', 'Сравнение показывает различия в цифрах. Открой эпизод на карте, чтобы оценить игровое решение.'),
       r.priorities.length
         ? h('ol.priorities', r.priorities.map((i) => h(`li.${i.level}`, h('div', h('div.prio-title', i.title || i.area), h('div', i.text), i.tip ? h('div.tip', Icon('bulb'), h('span', i.tip)) : null))))
         : h('div.muted', 'Явных отставаний от топов не видно — игра на их уровне. Ниже детали по минутам.'));
@@ -2118,29 +2505,18 @@
       h('div.hint', 'Сколько ты набрал именно за эту часть игры. Жирное — ты, после черты — медиана топов.')) : null;
 
     // Паверспайки
-    const spikePanel = r.spikes.length ? h('div.panel', h('h2', 'Паверспайки твоей сборки'),
-      h('div.hint', { style: { marginBottom: '10px' } }, 'После этих предметов топы резко поднимают урон и идут драться. Ниже — как это было у тебя.'),
+    const spikePanel = r.spikes.length ? h('div.panel', h('h2', 'Урон вокруг покупки предметов'),
+      h('div.hint', { style: { marginBottom: '10px' } }, 'Сравнение темпа урона по героям за три минуты до и после покупки. На результат влияют и события матча.'),
       h('div.spikes', r.spikes.map((s) => spikeCard(s, {
         level: s.verdict.level,
         content: [h('b', 'У тебя: '), s.myT === null ? 'не куплен. ' : `куплен на ${F.time(s.myT)}${s.myT - s.topT > 60 ? ` (позже на ${F.time(s.myT - s.topT)})` : ''}. `,
-          s.my ? `Урон ${F.num(s.my.before)} → ${F.num(s.my.after)}/мин${s.my.fought ? ', была драка' : ', драк не было'}. ` : '', s.verdict.text],
+          s.my ? `Урон ${F.num(s.my.before)} → ${F.num(s.my.after)}/мин. ` : '', s.verdict.text],
       })))) : null;
 
     const insights = h('div.panel', h('h2', 'Все выводы'),
       r.insights.length ? h('div.insights', r.insights.map((i) => h(`div.insight.${i.level}`, h('div.insight-area', i.area), h('div', h('div', i.text), i.tip ? h('div.tip', Icon('bulb'), h('span', i.tip)) : null))))
         : h('div.muted', 'Явных отставаний не видно — игра на уровне топов.'));
 
-    // графики
-    const tabs = [['nw', 'Души'], ['pdmg', 'Урон по героям'], ['farm', 'Убитые крипы'], ['d', 'Смерти'], ['ka', 'Убийства + помощь']];
-    const curve = r.curves[S.my.chart];
-    const markers = [];
-    if (S.my.chart === 'pdmg') for (const s of r.spikes) markers.push({ minute: s.topT / 60, color: 'var(--top)' });
-    const chartPanel = h('div.panel',
-      h('div.row', h('h2', { style: { margin: 0 } }, 'Поминутно'), h('div.grow'),
-        h('div.legend', h('span', h('i', { style: { background: 'var(--you)' } }), 'Ты'), h('span', h('i', { style: { background: 'var(--top)' } }), 'Топы (медиана)'), h('span', h('i', { style: { background: 'var(--top)', opacity: 0.3, height: '8px' } }), 'обычный разброс топов'))),
-      h('div.tabs', { style: { marginTop: '10px' } }, tabs.map(([k, label]) => h('button.tab' + (S.my.chart === k ? '.active' : ''), { onclick: () => { S.my.chart = k; renderCamp(); } }, label))),
-      Charts.lineChart(curve, { yFmt: S.my.chart === 'd' || S.my.chart === 'ka' ? (v) => String(Math.round(v)) : (v) => F.k(v), markers }),
-      S.my.chart === 'pdmg' && r.spikes.length ? h('div.hint', 'Пунктирные вертикали — моменты, когда топы обычно покупают предмет-паверспайк.') : null);
 
     // источники душ по фазам
     const sourcesPanel = r.sourcePhases && r.sourcePhases.some((p) => p.rows)
@@ -2186,30 +2562,32 @@
         }))),
       h('div.hint', 'Слева твоё значение, справа — медиана топов. Зелёный — не хуже топов.'));
 
-    return h('div', h('div.panel', head, bar, scores), mainPanel, matchLeaksPanel(A), variantPanel, phasePanel, sourcesPanel, spikePanel, chartPanel, A.map ? mapPanel(A.map, A.mySlot ?? null, 'Карта матча') : null, itemsPanel, insights, cpTable);
+    return h('div', h('div.panel', head, bar, scores), episode, review.panel, mainPanel, macroReviewPanel(A.macro, review.seek), matchLeaksPanel(A, review.seek), variantPanel, phasePanel, sourcesPanel, spikePanel, A.map ? mapPanel(A.map, A.mySlot ?? null, 'Карта матча') : null, itemsPanel, insights, cpTable);
   }
 
 
   // ================= РАЗБОР ОШИБОК =================
   // Что мешает расти: повторяющиеся ошибки по последним играм, их цена и как исправить.
   async function loadGrowth() {
-    if (!S.auth) return;
-    S.growth.loading = true;
-    S.growth.error = null;
+    const account = S.auth;
+    const G = S.growth;
+    if (!account || G.loading) return;
+    G.loading = true;
+    G.error = null;
     if (S.view === 'growth') renderGrowth();
     try {
-      S.growth.data = await dc.leaks();
-      S.growth.for = S.auth.accountId;
+      G.data = await dc.leaks();
+      G.for = account.accountId;
     } catch (e) {
-      S.growth.error = e.message;
+      G.error = e.message;
     } finally {
-      S.growth.loading = false;
-      if (S.view === 'growth') renderGrowth();
+      G.loading = false;
+      if (S.view === 'growth' && S.growth === G) renderGrowth();
     }
   }
 
   const HABITS = {
-    d10: { label: 'Смерти до 10:00', fmt: (v) => String(Math.round(v * 10) / 10).replace('.', ','), lower: true, why: 'На всех рангах в среднем одна. Но каждая лишняя смерть на линии отнимает около 3–4% шанса на победу.' },
+    d10: { label: 'Смерти до 10:00', fmt: (v) => String(Math.round(v * 10) / 10).replace('.', ','), lower: true },
     neu9: { label: 'Души с леса к 9:00', fmt: (v) => F.num(v), why: 'Малый лагерь у линии появляется на 2:00 и восстанавливается через 1:25 — бесплатные души, пока ждёшь волну.' },
     brk9: { label: 'Души с коробок к 9:00', fmt: (v) => F.num(v), why: 'Коробки появляются на 3:00 и восстанавливаются через 3 минуты после поломки.' },
     pu10: { label: 'Постоянные бафы к 10:00', fmt: (v) => String(Math.round(v)), why: 'Из контейнеров с бафами (бывшие золотые статуи, с 3:00) и с джекпота Sinner’s. Здоровье, урон, скорость стрельбы — до конца игры.' },
@@ -2230,10 +2608,10 @@
   function wrCompare(row) {
     if (row.wrWith === null || row.wrWithout === null) return null;
     if (Math.abs(row.wrWith - row.wrWithout) < 0.05) {
-      return h('div.wr-same', `На победы в твоих играх пока заметно не влияет: ${F.pct(row.wrWith)} с этой ошибкой и ${F.pct(row.wrWithout)} без неё. Но исправить стоит — это то, что делают игроки рангом выше.`);
+      return h('div.wr-same', `В разобранных матчах доля побед близкая — ${F.pct(row.wrWith)} с этим эпизодом и ${F.pct(row.wrWithout)} без него.`);
     }
     const bar = (label, v, cls) => h('div.wr-line', h('span.wr-label', label), h('div.wr-track', h(`span.${cls}`, { style: { width: `${Math.max(3, Math.round(v * 100))}%` } })), h('b.num', F.pct(v)));
-    return h('div.wr-compare', bar('с этой ошибкой', row.wrWith, 'bad'), bar('без неё', row.wrWithout, 'good'));
+    return h('div.wr-compare', h('div.hint', 'Доля побед в разобранных матчах'), bar('с замечанием', row.wrWith, 'bad'), bar('без замечания', row.wrWithout, 'good'));
   }
 
   function leakCost(row) {
@@ -2245,12 +2623,23 @@
     return parts.length ? h('div.leak-cost', parts) : null;
   }
 
+  function openGrowthEpisode(episode) {
+    setView('matches');
+    return openMatch(episode.matchId, episode);
+  }
+
   function leakExamples(row) {
-    return h('div.leak-examples', row.examples.map((g) => h('button.leak-ex', { onclick: () => { setView('matches'); openMatch(g.match_id); }, title: 'Открыть разбор этого матча' },
-      heroIcon(g.hero, '.sm'),
-      h('div.grow',
-        h('div.leak-ex-head', h('b', heroName(g.hero)), h(`span.res.${g.won ? 'win' : 'loss'}`, g.won ? 'победа' : 'поражение'), h('span.dim', F.ago(g.start_time))),
-        exampleBody(g)))));
+    return h('div.leak-examples', row.examples.map((g) => {
+      const moments = (g.moments || []).filter((mo) => Number.isFinite(mo.t) && mo.t >= 0).slice(0, 3);
+      return h('div.leak-example',
+        h('button.leak-ex', { onclick: () => { setView('matches'); openMatch(g.match_id); }, title: 'Открыть разбор этого матча' },
+          heroIcon(g.hero, '.sm'),
+          h('div.grow',
+            h('div.leak-ex-head', h('b', heroName(g.hero)), h(`span.res.${g.won ? 'win' : 'loss'}`, g.won ? 'победа' : 'поражение'), h('span.dim', F.ago(g.start_time))),
+            moments.length ? null : exampleBody(g))),
+        moments.length ? momentChips({ moments }, (_i, mo) => openGrowthEpisode({ ...mo, matchId: g.match_id, title: g.title, context: g.context })) : null,
+        g.context ? h('div.hint.analysis-context', g.context) : null);
+    }));
   }
 
   // Что показать в примере: моменты со временем, предметы-ответы или текст целиком.
@@ -2263,7 +2652,6 @@
         h('div.counter-items', h('span.dim.small', 'Топы против него берут:'), x.items.map((it) => h('span.counter-item', { title: `${itemName(it.id)}: против ${heroName(x.hero)} берут в ${String(it.lift).replace('.', ',')} раза чаще, чем обычно` },
           itemImg(it.id), h('span', itemName(it.id)), h('b.num', `×${String(Math.round(it.lift * 10) / 10).replace('.', ',')}`)))));
     }
-    if (g.moments && g.moments.length) return h('div.leak-ex-moments', g.moments.slice(0, 3).map((mo) => h('span', h('b.num', F.time(mo.t)), ' ', mo.text)));
     return h('div.leak-ex-text', g.text);
   }
 
@@ -2293,18 +2681,29 @@
 
     // ---------- главное сейчас ----------
     const top = rows[0];
+    const goal = d.profile.goal;
+    const nextGoal = goal ? h('section.panel', h('h2', 'Цель на следующий матч'), h('b', goal.title),
+      h('p', goal.action), h('div.hint', goal.check),
+      h('div.hint', `Основание — «${goal.reason}» в ${goal.count} из ${goal.eligible} матчей, которые можно было проверить.`),
+      h('div.row',
+        h('button.btn.small', { onclick: () => openGrowthEpisode(goal.episode) }, `Открыть эпизод · ${F.time(goal.episode.t)}`),
+        ['lane_trades', 'lost_souls'].includes(goal.key) ? h('button.btn.small', { disabled: S.coach.loading || null, onclick: () => {
+          loadCoach(false, { ...goal.episode, key: goal.key === 'lost_souls' ? goal.key : undefined });
+          setView('coach');
+        } }, 'Отслеживать в тренере') : null)) : null;
     const focus = top ? h('section.leak-focus',
       h('div.leak-focus-main',
         h('div.leak-kicker', Icon('flame'), 'Главное сейчас'),
         h('h2.leak-focus-title', top.title),
-        h('div.leak-focus-freq', h('b.num', `${top.count} из ${n}`), ` ${plural(n, 'игры', 'игр', 'игр')} — `, top.share >= 0.5 ? 'это происходит почти каждую игру' : top.share >= 0.3 ? 'это повторяется постоянно' : 'это повторяется'),
+        h('div.leak-focus-freq', h('b.num', `${top.count} из ${top.eligible}`), ' проверяемых матчей'),
+        top.unknown ? h('div.hint', `Для проверки этого замечания не хватило данных в ${top.unknown} из ${n} разобранных матчей.`) : null,
         leakCost(top),
         wrCompare(top),
-        h('div.leak-fix', h('div.leak-fix-title', 'Что делать в следующей игре'), h('ol', (top.fix || []).map((x) => h('li', x))))),
+        h('div.leak-fix', h('div.leak-fix-title', 'Как исправить'), h('ol', (top.fix || []).map((x) => h('li', x))))),
       h('div.leak-focus-side', h('div.leak-side-title', 'Где это было'), leakExamples(top))) : h('div.empty', h('strong', 'Повторяющихся ошибок не нашёл'), 'В последних играх нет ошибки, которая повторялась бы. Продолжай — и смотри разбор каждой игры в «Моих матчах».');
 
     // ---------- все ошибки ----------
-    const list = rows.length > 1 ? h('section.panel', h('h2', 'Всё, что повторяется'),
+    const list = rows.length > 1 ? h('section.panel', h('h2', 'Все замечания'),
       h('div.hint', { style: { marginBottom: '12px' } }, 'По важности: как часто случается и насколько дорого обходится. Нажми, чтобы раскрыть.'),
       h('div.leak-list', rows.map((r, i) => {
         const open = G.open === r.key;
@@ -2312,9 +2711,9 @@
           h('button.leak-row-head', { onclick: () => { G.open = open ? null : r.key; renderGrowth(); }, 'aria-expanded': open ? 'true' : 'false' },
             h('span.leak-rank.num', String(i + 1)),
             h('div.grow', h('div.leak-area', r.area), h('div.leak-title', r.title)),
-            h('div.leak-freq', h('div.leak-freq-bar', h('span', { style: { width: `${Math.round(r.share * 100)}%` } })), h('span.num', `${r.count} из ${n}`)),
+            h('div.leak-freq', { title: 'Из матчей, которые можно было проверить' }, h('div.leak-freq-bar', h('span', { style: { width: `${Math.round(r.share * 100)}%` } })), h('span.num', `${r.count} из ${r.eligible}`)),
             r.wrWith !== null && r.wrWithout !== null ? h(`span.pill.${r.wrWith < r.wrWithout - 0.05 ? 'bad' : ''}`, { title: 'Доля побед в играх с этой ошибкой и без неё' }, `${F.pct(r.wrWith)} / ${F.pct(r.wrWithout)}`) : null),
-          open ? h('div.leak-row-body', leakCost(r), wrCompare(r),
+          open ? h('div.leak-row-body', r.unknown ? h('div.hint', `Пропущено матчей из-за нехватки данных: ${r.unknown} из ${n}.`) : null, leakCost(r), wrCompare(r),
             h('div.leak-fix', h('div.leak-fix-title', 'Как исправить'), h('ol', (r.fix || []).map((x) => h('li', x)))),
             h('div.leak-side-title', 'Примеры'), leakExamples(r)) : null);
       }))) : null;
@@ -2322,9 +2721,9 @@
     // ---------- привычки первых минут ----------
     const rankLabel = d.rank ? rankName(d.rank.tier) : 'твой ранг';
     const habits = h('section.panel', h('h2', 'Первые 10 минут: ты, твой ранг и высокий ранг'),
-      h('div.hint', { style: { marginBottom: '14px' } }, `Медианы по 640 тыс. рейтинговых игр (deadlock-api). «Шанс победы» — как часто выигрывают игроки рангов Arcanist–Emissary с таким же показателем.`),
+      h('div.hint', { style: { marginBottom: '14px' } }, 'Сравнение с сохранённой выборкой рейтинговых игр. В последней колонке показана доля побед игроков Arcanist–Emissary с таким показателем.'),
       h('div.habit-grid',
-        h('div.habit-head', h('span', ''), h('span', 'Ты'), h('span', rankLabel), h('span', 'Ascendant+'), h('span', 'Шанс победы')),
+        h('div.habit-head', h('span', ''), h('span', 'Ты'), h('span', rankLabel), h('span', 'Ascendant+'), h('span', 'Доля побед')),
         d.habits.filter((x) => HABITS[x.key]).map((x) => {
           const H = HABITS[x.key];
           // красный — хуже твоего ранга, зелёный — на уровне Ascendant+, без цвета — между ними
@@ -2339,7 +2738,7 @@
             h('span.num.habit-link', { title: x.link ? `С твоим показателем — ${link.split(' → ')[0]}, с лучшим — ${link.split(' → ')[1] || '—'}` : null }, link));
         })));
 
-    v.replaceChildren(head, ...notes, focus, list, habits);
+    v.replaceChildren(head, ...notes, nextGoal, focus, list, habits);
   }
 
   // ================= НАСТРОЙКИ =================
@@ -2601,11 +3000,15 @@
           toast(e.message, true);
         }
       };
-      const list = d.allHeroes.filter((x) => x.games >= 1).slice(0, 40);
+      const list = d.allHeroes.filter((x) => x.games >= 1 || inPool.has(x.hero_id));
+      const rankedText = (x) => x.rankedEvidence === 'points' ? 'По истории набран порог' : x.rankedEvidence === 'played' ? 'Есть матчи в рейтинге' : 'Недостаточно данных о допуске';
       poolBlock = h('div',
-        h('div.hint', { style: { marginBottom: '8px' } }, d.manual ? 'Список задан вручную.' : 'Сейчас — герои, доступные в рейтинге (15+ побед в обычных играх или уже играл в рейтинге), на которых ты играл хотя бы 3 раза за 2 месяца. Нажми на героя, чтобы добавить или убрать.'),
-        h('div.pool-grid', list.map((x) => h(`button.pool-hero${inPool.has(x.hero_id) ? '.on' : ''}`, { onclick: () => toggle(x.hero_id), title: `${x.games} игр, ${x.wins} побед` },
-          heroIcon(x.hero_id, '.sm'), h('span', heroName(x.hero_id)), h('span.num.dim', `${x.wins}п`)))),
+        h('div.hint', { style: { marginBottom: '8px' } }, `${d.manual ? 'Список задан вручную. ' : ''}Бета-сезон 2: ${d.rankedThreshold} очков на герое в Standard. Победа — 2, поражение — 1. Здесь очки по доступным матчам сезона. Точный допуск смотри в игре.`),
+        h('div.pool-grid', list.map((x) => {
+          const label = `${heroName(x.hero_id)}. Очков по истории: ${x.unlockPoints}. ${rankedText(x)}.`;
+          return h(`button.pool-hero${inPool.has(x.hero_id) ? '.on' : ''}`, { onclick: () => toggle(x.hero_id), title: label, 'aria-label': label },
+            heroIcon(x.hero_id, '.sm'), h('span', heroName(x.hero_id)), h('span.num.dim', `${x.unlockPoints} очк.${x.rankedEvidence === 'unknown' ? ' · ?' : ''}`));
+        })),
         d.manual ? h('button.btn.small', { style: { marginTop: '10px' }, onclick: async () => { const r = await dc.saveSettings({ pickPool: null }); S.settings = r.settings; OV.data = null; loadOverlayData(); } }, 'Вернуть автоматический список') : null,
         h('div.hint', { style: { marginTop: '8px' } }, d.metaInfo ? `Совет считается по ${d.metaInfo.games.toLocaleString('ru-RU')} матчам ${d.metaInfo.badge >= 91 ? 'Фантом и выше' : 'Оракул и выше'} за 2 недели (статистика deadlock-api) и твоим играм.` : `Статистика deadlock-api пока не загрузилась (${d.metaError || 'нет связи'}) — совет считается по скачанным матчам.`));
     }
@@ -2718,7 +3121,7 @@
       S.meta = init.meta;
       S.status = init.status;
       S.version = init.version;
-      if (init.assets) S.assets = init.assets;
+      if (init.assets && (init.assets.fetchedAt || 0) >= (S.assets.fetchedAt || 0)) S.assets = init.assets;
       S.favs = await dc.favorites().catch(() => []);
       dc.gameModeStatus().then(applyGameMode).catch(() => {});
     } catch (e) {

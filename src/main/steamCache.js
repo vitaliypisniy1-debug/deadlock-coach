@@ -33,62 +33,61 @@ async function findSteamDir(custom) {
   return null;
 }
 
-function walk(dir, out, limit = 200000) {
+async function* walk(dir, state, limit = 200000) {
+  if (state.count >= limit) return;
   let entries;
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const e of entries) {
-    if (out.length >= limit) return;
+  try { entries = await fs.promises.opendir(dir); } catch { return; }
+  for await (const e of entries) {
+    if (state.count >= limit) return;
     const p = path.join(dir, e.name);
-    if (e.isDirectory()) walk(p, out, limit);
-    else if (e.isFile()) out.push(p);
+    if (e.isDirectory()) yield* walk(p, state, limit);
+    else if (e.isFile()) { state.count += 1; yield p; }
   }
 }
 
 // Читаем начало файла (адрес запроса обычно в заголовке записи кэша),
 // а небольшие файлы — целиком: у части записей адрес лежит дальше.
-function readHead(file, bytes = 1024) {
+async function readHead(file, bytes = 1024) {
   try {
-    const size = fs.statSync(file).size;
-    if (size <= 256 * 1024) return fs.readFileSync(file).toString('latin1');
+    const stat = await fs.promises.stat(file);
+    if (stat.size <= 256 * 1024) return await fs.promises.readFile(file, { encoding: 'latin1' });
   } catch {
     return '';
   }
   let fd;
   try {
-    fd = fs.openSync(file, 'r');
+    fd = await fs.promises.open(file, 'r');
     const buf = Buffer.alloc(bytes);
-    const n = fs.readSync(fd, buf, 0, bytes, 0);
+    const { bytesRead: n } = await fd.read(buf, 0, bytes, 0);
     return buf.subarray(0, n).toString('latin1');
   } catch {
     return '';
   } finally {
-    if (fd !== undefined) fs.closeSync(fd);
+    if (fd) await fd.close().catch(() => {});
   }
 }
 
 async function scanCache({ steamDir, sinceMs = Date.now() - 45 * 86400e3 } = {}) {
   const dir = await findSteamDir(steamDir);
   if (!dir) return { steamDir: null, records: [] };
-  const files = [];
-  walk(path.join(dir, 'appcache', 'httpcache'), files);
+  const state = { count: 0 };
   const found = [];
-  for (const f of files) {
+  let checked = 0;
+  for await (const f of walk(path.join(dir, 'appcache', 'httpcache'), state)) {
     if (sinceMs) {
       try {
-        if (fs.statSync(f).mtimeMs < sinceMs) continue;
+        if ((await fs.promises.stat(f)).mtimeMs < sinceMs) continue;
       } catch {
         continue;
       }
     }
-    const head = readHead(f, 16384);
+    const head = await readHead(f, 16384);
     if (!head.includes('1422450')) continue;
     found.push(...parseReplayUrls(head));
+    if (++checked % 100 === 0) await new Promise((resolve) => setImmediate(resolve));
   }
   return { steamDir: dir, records: toSaltRecords(found) };
 }
 
 module.exports = { scanCache, findSteamDir };
+

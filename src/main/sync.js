@@ -115,8 +115,30 @@ class Sync {
 
   // Твоя история для анализа: только обычные и рейтинговые матчи. Street Brawl, боты, лобби —
   // другие режимы с другими цифрами, в тренера, ошибки, сводку и матчапы они попадать не должны.
-  async myHistory(accountId, ttlMs = 60e3) {
-    const hist = await this.api.matchHistory(Number(accountId), ttlMs);
+  async historyWithCache(accountId, ttlMs, signal = AbortSignal.timeout(8000)) {
+    const id = Number(accountId);
+    try {
+      return await this.api.matchHistory(id, ttlMs, { signal });
+    } catch (error) {
+      const rows = [];
+      for (const match of this.store.allMatches()) {
+        const p = match.players.find((player) => player.account_id === id);
+        if (!p) continue;
+        rows.push({ match_id: match.match_id, hero_id: p.hero_id, start_time: match.start_time,
+          match_duration_s: match.duration_s, player_kills: p.k, player_deaths: p.d, player_assists: p.a,
+          net_worth: p.nw, player_team: p.team, match_result: p.won === true ? p.team : p.won === false ? 1 - p.team : null,
+          game_mode: match.game_mode, match_mode: match.match_mode, source: 'saved-history' });
+      }
+      if (!rows.length) {
+        if (signal.aborted) throw new Error('История матчей не загрузилась вовремя. Попробуй ещё раз.');
+        throw error;
+      }
+      return rows;
+    }
+  }
+
+  async myHistory(accountId, ttlMs = 60e3, signal) {
+    const hist = await this.historyWithCache(accountId, ttlMs, signal);
     return (hist || []).filter((m) => isStandardMatch({ game_mode: m.game_mode, match_mode: m.match_mode }));
   }
 
@@ -132,10 +154,11 @@ class Sync {
   }
 
   // Скачать свой матч (с маршрутами). Не вышло, но есть старая копия — отдаём её.
-  async fetchMine(id) {
+  async fetchMine(id, signal) {
     try {
-      return extractMatch(await this.api.matchMetadata(Number(id)), { paths: true });
+      return extractMatch(await this.api.matchMetadata(Number(id), { signal }), { paths: true });
     } catch (e) {
+      signal?.throwIfAborted();
       const stored = this.store.getMatch(Number(id));
       if (stored) {
         stored.upgradeTried = true;
@@ -921,13 +944,13 @@ class Sync {
     let freshInfo = null;
     if (fresh) {
       try {
-        h = await this.api.matchHistoryFresh(accountId);
+        h = await this.api.matchHistoryFresh(accountId, { signal: AbortSignal.timeout(8000) });
         freshInfo = { ok: true };
       } catch (e) {
         freshInfo = { ok: false, limited: e.code === 429, error: e.message };
       }
     }
-    if (!h) h = await this.api.matchHistory(accountId, 60e3);
+    if (!h) h = await this.historyWithCache(accountId, 60e3);
     const rows = h.map((m) => {
       const stored = this.store.getMatch(m.match_id);
       const me = stored && stored.players.find((p) => p.account_id === accountId);
@@ -943,16 +966,19 @@ class Sync {
         won: me ? me.won : typeof m.match_result === 'number' && typeof m.player_team === 'number' ? m.match_result === m.player_team : null,
         loaded: !!stored,
         match_mode: m.match_mode,
+        source: m.source,
       };
     });
     // Матчи, найденные в кэше Steam, которых ещё нет в истории deadlock-api
     const known = new Set(rows.map((r) => r.match_id));
     let pending = this.store.read('pending.json', []).filter((p) => !known.has(p.match_id) && Date.now() - p.at < 3 * 86400e3);
     const tryNow = pending.filter((p) => !this.store.getMatch(p.match_id) && (!p.tried || Date.now() - p.tried > 5 * 60e3)).sort((x, y) => y.match_id - x.match_id).slice(0, 2);
+    const pendingSignal = AbortSignal.timeout(3000);
     for (const p of tryNow) {
+      if (pendingSignal.aborted) break;
       p.tried = Date.now();
       try {
-        const m = extractMatch(await this.api.matchMetadataOnce(p.match_id), { paths: true });
+        const m = extractMatch(await this.api.matchMetadataOnce(p.match_id, { signal: pendingSignal }), { paths: true });
         m.pathsTried = true;
         await this.store.putMatch(m);
       } catch (e) {
@@ -982,7 +1008,8 @@ class Sync {
   async overview(accountId, days = 7) {
     const id = Number(accountId);
     const d = Math.max(1, Math.min(30, Number(days) || 7));
-    const hist = await this.myHistory(id, 2 * 60e3);
+    const signal = AbortSignal.timeout(8000);
+    const hist = await this.myHistory(id, 2 * 60e3, signal);
     const since = nowSec() - d * DAY;
     const inPeriod = hist.filter((m) => (Number(m.start_time) || 0) >= since);
     // Скачиваем подробные данные своих матчей за период (уже скачанные — из памяти).
@@ -992,9 +1019,10 @@ class Sync {
     const mine = new Set(this.store.read('mine.json', []));
     for (let i = 0; i < need.length; i++) {
       const mid = Number(need[i].match_id);
+      if (signal.aborted) { failed += need.length - i; break; }
       this.progress('overview', i, need.length, `Скачиваю твои матчи: ${i + 1} из ${need.length}`);
       try {
-        const m = await this.fetchMine(mid);
+        const m = await this.fetchMine(mid, signal);
         m.pathsTried = true;
         await this.store.putMatch(m);
         mine.add(mid);
@@ -1156,27 +1184,42 @@ class Sync {
     if (this._pickRunning) return this._pickRunning;
     const id = Number(accountId);
     const cached = this.store.read('picktables.json', null);
-    const { pool } = await this.pickPool(id);
-    const fresh = cached && cached.accountId === id && cached.v === 3 && Date.now() - cached.at < maxAgeH * 3600e3;
-    const missing = pool.filter((p) => !cached || !cached.tables || !cached.tables[p.hero_id]);
-    if (!force && fresh && !missing.length) return cached;
     this._pickRunning = (async () => {
-      await this.loadAssets().catch(() => {});
-      const tables = fresh && !force ? { ...cached.tables } : {};
+      const usableCache = cached?.accountId === id && cached.v === 3 ? cached : null;
+      const signal = AbortSignal.timeout(20000);
+      const historySignal = AbortSignal.any([signal, AbortSignal.timeout(8000)]);
+      let history;
+      try {
+        history = await this.myHistory(id, 5 * 60e3, historySignal);
+      } catch (error) {
+        if (usableCache) return usableCache;
+        throw error;
+      }
+      const { pool } = heroPool(history, { manual: this.store.settings().pickPool });
+      const maxAge = usableCache?.partial ? Math.min(maxAgeH * 3600e3, 5 * 60e3) : maxAgeH * 3600e3;
+      const fresh = usableCache && Date.now() - usableCache.at < maxAge;
+      const missing = pool.filter((p) => !usableCache?.tables?.[p.hero_id]);
+      if (!force && fresh && !missing.length) return usableCache;
+      let partial = history.some((row) => row.source === 'saved-history');
+      const tables = { ...usableCache?.tables };
       const todo = force || !fresh ? pool : missing;
       for (let i = 0; i < todo.length; i++) {
         const hid = todo[i].hero_id;
         const name = this.assets && this.assets.heroes[hid] ? this.assets.heroes[hid].name : String(hid);
-        this.progress('pick', i, todo.length, `Готовлю советы по пикам: ${name} (${i + 1} из ${todo.length})`);
+        const label = `${name} (${i + 1} из ${todo.length})`;
+        this.progress('pick', i, todo.length, `Готовлю советы по пикам: ${label}`);
         try {
-          const o = await this.heroOutlook(id, hid, { download: 15, quiet: true });
-          tables[hid] = { vs: o.vs, with: o.with, myGames: o.myGames, proGames: o.proGames };
+          const o = await this.heroOutlook(id, hid, { history, signal, download: 15, quiet: true,
+            onDownload: (done, total) => this.progress('pick', i, todo.length, `Загружаю матчи для ${label}: ${done} из ${total}`) });
+          partial ||= o.partial;
+          if (!o.partial || !tables[hid]) tables[hid] = { vs: o.vs, with: o.with, myGames: o.myGames, proGames: o.proGames };
         } catch (e) {
-          tables[hid] = { vs: {}, myGames: 0, proGames: 0, error: e.message };
+          partial = true;
+          this.emit('log', `Советы по пикам (${name}): ${e.message}`);
         }
       }
-      this.progress('done', 1, 1, 'Советы по пикам готовы');
-      const out = { v: 3, at: Date.now(), accountId: id, tables };
+      this.progress('done', 1, 1, partial ? 'Советы по пикам готовы по сохранённым матчам' : 'Советы по пикам готовы');
+      const out = { v: 3, at: Date.now(), accountId: id, tables, partial };
       this.store.write('picktables.json', out);
       return out;
     })();
@@ -1444,13 +1487,15 @@ class Sync {
   // Твои последние матчи с подробностями (докачивает недостающие).
   async myLoadedGames(accountId, { limit = 30, download = 25, label = 'Скачиваю твои матчи' } = {}) {
     const id = Number(accountId);
-    const hist = await this.myHistory(id, 60e3);
+    const signal = AbortSignal.timeout(8000);
+    const hist = await this.myHistory(id, 60e3, signal);
     const rows = hist.slice().sort((a, b) => (Number(b.start_time) || 0) - (Number(a.start_time) || 0)).slice(0, limit);
     const need = rows.filter((m) => this.needsDownload(m.match_id)).slice(0, download);
     for (let i = 0; i < need.length; i++) {
+      if (signal.aborted) break;
       this.progress('coach', i, need.length, `${label}: ${i + 1} из ${need.length}`);
       try {
-        const m = await this.fetchMine(need[i].match_id);
+        const m = await this.fetchMine(need[i].match_id, signal);
         m.pathsTried = true;
         await this.store.putMatch(m);
       } catch (e) {
@@ -1579,7 +1624,7 @@ class Sync {
   }
 
   // Прогноз для героя в «Перед игрой»: твои игры на нём + игры топового уровня.
-  async heroOutlook(accountId, heroId, { download = 20, quiet = false } = {}) {
+  async heroOutlook(accountId, heroId, { download = 20, quiet = false, history, signal = AbortSignal.timeout(8000), onDownload } = {}) {
     const hid = Number(heroId);
     const id = accountId ? Number(accountId) : null;
     const mineIds = new Set(this.store.read('mine.json', []));
@@ -1597,21 +1642,26 @@ class Sync {
       }
     }
     let mine = [];
+    let partial = false;
     if (id) {
-      let hist = [];
-      try {
-        hist = await this.myHistory(id, 2 * 60e3);
-      } catch {}
+      let hist = history;
+      if (!hist) {
+        try { hist = await this.myHistory(id, 2 * 60e3, signal); }
+        catch { hist = []; partial = true; }
+      }
+      partial ||= hist.some((row) => row.source === 'saved-history');
       const rows = hist.filter((m) => Number(m.hero_id) === hid).sort((a, b) => (b.start_time || 0) - (a.start_time || 0)).slice(0, 60);
       const need = rows.filter((m) => this.needsDownload(m.match_id)).slice(0, download);
       const name = this.assets && this.assets.heroes[hid] ? this.assets.heroes[hid].name : 'герое';
       for (let i = 0; i < need.length; i++) {
+        if (signal.aborted) { partial = true; break; }
+        onDownload?.(i + 1, need.length);
         if (!quiet) this.progress('hero', i, need.length, `Скачиваю твои игры на ${name}: ${i + 1} из ${need.length}`);
         try {
-          const m = await this.fetchMine(need[i].match_id);
+          const m = await this.fetchMine(need[i].match_id, signal);
           m.pathsTried = true;
           await this.store.putMatch(m);
-        } catch {}
+        } catch (error) { if (!(error instanceof NotFoundError)) partial = true; }
       }
       if (need.length && !quiet) this.progress('done', 1, 1, 'Готово');
       for (const r of rows) {
@@ -1628,6 +1678,7 @@ class Sync {
     const res = heroOutlook({ pro, mine, counters });
     res.topsGames = topsN;
     res.heroId = hid;
+    res.partial = partial;
     return res;
   }
 
@@ -1683,7 +1734,7 @@ class Sync {
     if (!m || (!m.paths && !m.pathsTried) || this.needsUpgrade(m)) {
       const stored = m;
       try {
-        m = extractMatch(await this.api.matchMetadata(id), { paths: true });
+        m = extractMatch(await this.api.matchMetadata(id, { signal: AbortSignal.timeout(8000) }), { paths: true });
         m.pathsTried = true;
       } catch (e) {
         if (stored) {
@@ -1824,4 +1875,3 @@ class Sync {
 }
 
 module.exports = { Sync };
-

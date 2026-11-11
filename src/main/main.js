@@ -39,7 +39,7 @@ setInterval(() => {
 }, 500).unref();
 
 // Запросы окна, которым сохранённые матчи не нужны, — отвечают сразу.
-const NO_MATCHES = new Set(['app:init', 'auth:login', 'auth:manual', 'auth:logout', 'status:get', 'top:list', 'shell:open', 'game:mode', 'rec:run', 'rec:learn', 'rec:forget', 'rec:status',
+const NO_MATCHES = new Set(['app:init', 'favorites:list', 'auth:login', 'auth:manual', 'auth:logout', 'status:get', 'top:list', 'shell:open', 'game:mode', 'rec:run', 'rec:learn', 'rec:forget', 'rec:status',
   'overlay:toggle', 'overlay:key', 'game:logCheck', 'update:check', 'update:download', 'update:install', 'update:skip', 'clipboard:write', 'lag:get']);
 
 function slowLog(text) {
@@ -78,6 +78,7 @@ let store;
 let api;
 let sync;
 let autoTimer = null;
+let startupAssets = null;
 
 function emit(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
@@ -341,7 +342,7 @@ function handle(channel, fn) {
   ipcMain.handle(channel, async (_e, ...args) => {
     try {
       // запросы, которым нужны матчи, ждут, пока они дочитаются с диска (окно при этом живое)
-      if (!NO_MATCHES.has(channel)) await store.ready;
+      if (!NO_MATCHES.has(channel) && channel !== 'my:dashboard') await store.ready;
       lastIpc = `${channel} (выполняется)`;
       const t0 = Date.now();
       const data = await fn(...args);
@@ -361,11 +362,11 @@ function registerIpc() {
     const auth = store.read('auth.json', null);
     const meta = store.read('meta.json', null);
     const status = store.read('status.json', null);
-    let assets = sync.assets;
-    try {
-      assets = await sync.loadAssets();
-    } catch (e) {
-      emit('log', e.message);
+    const assets = sync.assets;
+    if (!startupAssets) {
+      startupAssets = sync.loadAssets().then((next) => {
+        if (next && (next.v !== assets?.v || next.fetchedAt !== assets?.fetchedAt)) emit('assets:updated', next);
+      }).catch((e) => emit('log', e.message)).finally(() => { startupAssets = null; });
     }
     return { settings, auth, meta, status, assets, version: app.getVersion() };
   });
@@ -374,7 +375,7 @@ function registerIpc() {
     const { steamId64, accountId } = await loginWithSteam(win);
     const profile = await fetchProfile(accountId);
     const auth = { steamId64, accountId, ...profile, via: 'steam' };
-    store.write('auth.json', auth);
+    await store.saveAuth(auth);
     return auth;
   });
 
@@ -394,12 +395,12 @@ function registerIpc() {
     if (!parsed) throw new Error('Не понял ссылку. Вставь адрес профиля Steam: steamcommunity.com/id/… или steamcommunity.com/profiles/7656…');
     const profile = await fetchProfile(parsed.accountId);
     const auth = { ...parsed, ...profile, via: 'manual' };
-    store.write('auth.json', auth);
+    await store.saveAuth(auth);
     return auth;
   });
 
   handle('auth:logout', async () => {
-    store.remove('auth.json');
+    await store.saveAuth(null);
     return true;
   });
 
@@ -469,6 +470,7 @@ function registerIpc() {
     }
   });
   handle('coach:get', async (opts) => sync.coach(authId(), opts || {}));
+  handle('my:dashboard', async (cachedOnly) => sync.dashboard(authId(), { cachedOnly: cachedOnly === true }));
   handle('leaks:get', async () => sync.leaks(authId()));
   handle('mu:mine', async () => sync.matchups(authId()));
   handle('mu:hero', async (heroId) => sync.heroMatchups(heroId));
@@ -489,16 +491,16 @@ function registerIpc() {
     return sync.myHeroes(auth.accountId);
   });
 
-  handle('my:heroSummary', async (heroId) => {
+  handle('my:heroSummary', async (heroId, cachedOnly, mode) => {
     const auth = store.read('auth.json', null);
     if (!auth) throw new Error('Сначала войди через Steam');
-    return sync.heroSummary(auth.accountId, heroId);
+    return sync.heroSummary(auth.accountId, heroId, { cachedOnly: cachedOnly === true, mode });
   });
 
-  handle('my:matches', async () => {
+  handle('my:matches', async (cachedOnly) => {
     const auth = store.read('auth.json', null);
     if (!auth) throw new Error('Сначала войди через Steam');
-    return sync.myMatches(auth.accountId);
+    return sync.myMatches(auth.accountId, { cachedOnly: cachedOnly === true });
   });
 
   handle('my:scanCache', async () => {
@@ -625,7 +627,10 @@ app.setAppUserModelId && app.setAppUserModelId('local.deadlock.coach');
 app.whenReady().then(() => {
   if (!gotLock) return;
   try {
-    store = new Store(path.join(app.getPath('userData'), 'data'), { lazy: true });
+    store = new Store(path.join(app.getPath('userData'), 'data'), {
+      lazy: true,
+      onPackError: (error) => logCrash('matches.pack', error.message),
+    });
     store.ready.then(() => {
       try {
         fs.appendFileSync(path.join(app.getPath('userData'), 'lag.log'), `${new Date().toISOString()} запуск ${app.getVersion()}: матчей на диске ${store.loadInfo.files} (из общего файла ${store.loadInfo.fromPack}, по одному ${store.loadInfo.fromFiles}), прочитаны за ${(store.loadInfo.ms / 1000).toFixed(1)} с\n`);

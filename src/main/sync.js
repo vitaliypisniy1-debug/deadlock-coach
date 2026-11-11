@@ -11,17 +11,18 @@ const { rankBuilds } = require('../core/buildMatch');
 const { NotFoundError } = require('./api');
 const { playersFromMatches, mergeCandidates, rankOf } = require('../core/discover');
 const { parseSteamInput, vanityOf, resolveVanity } = require('./steamIds');
-const { buildOverview, rankFromBadges } = require('../core/overview');
-const { gameLeaks, gameHighlights, leakProfile, counterItems, winLink, RANK_BENCH, WIN_LINKS } = require('../core/leaks');
+const { buildOverview, dashboardStats, rankFromBadges } = require('../core/overview');
+const { gameLeaks, gameHighlights, leakProfile, counterItems, winLink, RANK_BENCH, WIN_LINKS, lossPerDeath, SOUL_LOSS_THRESHOLD } = require('../core/leaks');
 const { mapData } = require('../core/mapdata');
 const { heroReport } = require('../core/heroReport');
 const { updateCoach } = require('../core/coach');
+const { macroReview } = require('../core/macro');
 const { myMatchups, heroVs, prepare, heroOutlook } = require('../core/matchups');
 const { proCandidates, versus } = require('../core/versus');
 const { playerFeatures, refAll } = require('../core/features');
 const { matchTips } = require('../core/tipsMatch');
 const { skillOrder, skillConsensus, compareSkills } = require('../core/skills');
-const { heroPool, pickAdvice, gamePlan, buildPickMeta, heroRole } = require('../core/pick');
+const { heroPool, pickAdvice, gamePlan, buildPickMeta, heroRole, RANKED_HERO_RULE } = require('../core/pick');
 const { matchBuild, buildText, buildFile } = require('../core/buildExport');
 const { encodeBuildCode } = require('../core/gameCode');
 
@@ -120,21 +121,26 @@ class Sync {
     try {
       return await this.api.matchHistory(id, ttlMs, { signal });
     } catch (error) {
-      const rows = [];
-      for (const match of this.store.allMatches()) {
-        const p = match.players.find((player) => player.account_id === id);
-        if (!p) continue;
-        rows.push({ match_id: match.match_id, hero_id: p.hero_id, start_time: match.start_time,
-          match_duration_s: match.duration_s, player_kills: p.k, player_deaths: p.d, player_assists: p.a,
-          net_worth: p.nw, player_team: p.team, match_result: p.won === true ? p.team : p.won === false ? 1 - p.team : null,
-          game_mode: match.game_mode, match_mode: match.match_mode, source: 'saved-history' });
-      }
+      const rows = this.savedHistory(id);
       if (!rows.length) {
         if (signal.aborted) throw new Error('История матчей не загрузилась вовремя. Попробуй ещё раз.');
         throw error;
       }
       return rows;
     }
+  }
+
+  savedHistory(accountId, heroId = null) {
+    const rows = [];
+    for (const match of this.store.allMatches()) {
+      const p = match.players.find((player) => player.account_id === accountId);
+      if (!p || (heroId !== null && p.hero_id !== heroId)) continue;
+      rows.push({ match_id: match.match_id, hero_id: p.hero_id, start_time: match.start_time,
+        match_duration_s: match.duration_s, player_kills: p.k, player_deaths: p.d, player_assists: p.a,
+        net_worth: p.nw, player_team: p.team, match_result: match.winning_team ?? (p.won === true ? p.team : null),
+        game_mode: match.game_mode, match_mode: match.match_mode, source: 'saved-history' });
+    }
+    return rows;
   }
 
   async myHistory(accountId, ttlMs = 60e3, signal) {
@@ -177,16 +183,21 @@ class Sync {
   }
 
   // ---------- справочники героев и предметов ----------
-  async loadAssets(force = false) {
+  loadAssets(force = false) {
+    if (this._assetsLoading) return this._assetsLoading;
     const cached = this.store.read('assets.json', null);
-    // v2: в справочнике есть компоненты предметов, карта и ранги — старый кэш перекачиваем
-    if (!force && cached && cached.v === 6 && Date.now() - cached.fetchedAt < 24 * 3600e3) {
+    if (!force && cached && cached.v === 8 && Date.now() - cached.fetchedAt < 24 * 3600e3) {
       this.assets = cached;
-      return cached;
+      return Promise.resolve(cached);
     }
+    this._assetsLoading = this._refreshAssets(cached).finally(() => { this._assetsLoading = null; });
+    return this._assetsLoading;
+  }
+
+  async _refreshAssets(cached) {
     try {
       const [heroes, items] = await Promise.all([this.api.heroesAssets(), this.api.itemsAssets()]);
-      const a = { v: 6, fetchedAt: Date.now(), heroes: {}, items: {} };
+      const a = { v: 8, fetchedAt: Date.now(), heroes: {}, items: {} };
       for (const h of heroes || []) {
         if (!h || !h.id) continue;
         const im = h.images || {};
@@ -196,8 +207,12 @@ class Sync {
           img: im.icon_image_small || im.icon_hero_card || im.minimap_image || im.top_bar_image || null,
           card: im.icon_hero_card || im.top_bar_vertical_image || im.selection_image || null,
           wide: im.background_image || im.top_bar_image || null,
+          color: Array.isArray(h.colors?.ui) && h.colors.ui.length === 3
+            && h.colors.ui.every((v) => Number.isInteger(v) && v >= 0 && v <= 255) ? h.colors.ui : null,
           disabled: !!h.disabled,
           inDev: !!h.in_development,
+          selectable: typeof h.player_selectable === 'boolean' ? h.player_selectable
+            : typeof h.development_state === 'string' ? h.development_state === 'release' : !h.in_development,
           cls: h.class_name || null,
           type: h.hero_type || null,
           tags: Array.isArray(h.tags) ? h.tags : [],
@@ -664,8 +679,7 @@ class Sync {
       } catch (e) {
         const stored = this.store.getMatch(id);
         if (stored) {
-          stored.upgradeTried = true;
-          await this.store.putMatch(stored);
+          await this.store.putMatch({ ...stored, upgradeTried: true });
           continue;
         }
         if (e instanceof NotFoundError) {
@@ -678,8 +692,7 @@ class Sync {
       }
     }
     this.store.write('missing.json', missing);
-    const mine = new Set(this.store.read('mine.json', []));
-    this.store.prune(nowSec() - settings.keepDays * DAY, mine);
+    await this.store.prune(nowSec() - settings.keepDays * DAY);
     return { found: ids.size, downloaded: mr.downloaded, unavailable: mr.notFound + mr.failed };
   }
 
@@ -804,13 +817,13 @@ class Sync {
   }
 
   // ---------- подробности одного матча ----------
-  async fetchMatch(matchId, { paths = false } = {}) {
+  async fetchMatch(matchId, { paths = false, signal } = {}) {
     const id = Number(matchId);
     let m = this.store.getMatch(id);
     const needPaths = paths && m && !m.paths && !m.pathsTried;
     if (!m || needPaths || this.needsUpgrade(m)) {
       try {
-        m = extractMatch(await this.api.matchMetadata(id), { paths });
+        m = extractMatch(await this.api.matchMetadata(id, { signal }), { paths });
         if (paths) m.pathsTried = true;
       } catch (e) {
         const stored = this.store.getMatch(id);
@@ -883,7 +896,7 @@ class Sync {
       .filter((x) => x.a && x.a.lift !== null && x.a.lift >= 1.2)
       .sort((x, y) => y.a.lift - x.a.lift)
       .slice(0, 3)
-      .map((x) => ({ id: x.id, t: x.t, before: x.a.before, after: x.a.after, lift: x.a.lift, fought: x.a.fought }));
+      .map((x) => ({ id: x.id, t: x.t, before: x.a.before, after: x.a.after, lift: x.a.lift, participated: x.a.participated }));
     const lastStat = fp.stats[fp.stats.length - 1] || {};
     const sources = SOURCE_FIELDS.map((f) => ({ field: f, name: SOURCE_NAMES[f], value: lastStat[f] ?? null }));
     return {
@@ -939,19 +952,38 @@ class Sync {
   }
 
   // ---------- твои матчи ----------
-  async myMatches(accountId, { fresh = false } = {}) {
+  async myMatches(accountId, { fresh = false, cachedOnly = false } = {}) {
+    accountId = Number(accountId);
     let h = null;
     let freshInfo = null;
-    if (fresh) {
+    let source = 'saved';
+    const signal = cachedOnly ? null : AbortSignal.timeout(8000);
+    if (fresh && signal) {
       try {
-        h = await this.api.matchHistoryFresh(accountId, { signal: AbortSignal.timeout(8000) });
+        h = await this.api.matchHistoryFresh(accountId, { signal });
+        source = 'steam';
         freshInfo = { ok: true };
       } catch (e) {
         freshInfo = { ok: false, limited: e.code === 429, error: e.message };
       }
     }
-    if (!h) h = await this.historyWithCache(accountId, 60e3);
-    const rows = h.map((m) => {
+    if (!h && signal && !signal.aborted) {
+      try {
+        h = await this.api.matchHistory(accountId, 60e3, { signal });
+        source = 'api';
+      } catch {
+        // При сбое остаются игры из локальных файлов.
+      }
+    }
+    const history = new Map(this.savedHistory(accountId).map((m) => [m.match_id, m]));
+    const onlineIds = new Set();
+    for (const m of h || []) {
+      const id = Number(m.match_id);
+      if (!Number.isSafeInteger(id) || id <= 0) continue;
+      history.set(id, m);
+      onlineIds.add(id);
+    }
+    const rows = [...history.values()].map((m) => {
       const stored = this.store.getMatch(m.match_id);
       const me = stored && stored.players.find((p) => p.account_id === accountId);
       return {
@@ -964,47 +996,73 @@ class Sync {
         a: m.player_assists,
         nw: m.net_worth,
         won: me ? me.won : typeof m.match_result === 'number' && typeof m.player_team === 'number' ? m.match_result === m.player_team : null,
-        loaded: !!stored,
+        loaded: !!me,
         match_mode: m.match_mode,
         source: m.source,
       };
     });
-    // Матчи, найденные в кэше Steam, которых ещё нет в истории deadlock-api
+    // На диске могут быть записи от сканирования другого профиля.
     const known = new Set(rows.map((r) => r.match_id));
-    let pending = this.store.read('pending.json', []).filter((p) => !known.has(p.match_id) && Date.now() - p.at < 3 * 86400e3);
-    const tryNow = pending.filter((p) => !this.store.getMatch(p.match_id) && (!p.tried || Date.now() - p.tried > 5 * 60e3)).sort((x, y) => y.match_id - x.match_id).slice(0, 2);
-    const pendingSignal = AbortSignal.timeout(3000);
-    for (const p of tryNow) {
-      if (pendingSignal.aborted) break;
-      p.tried = Date.now();
-      try {
-        const m = extractMatch(await this.api.matchMetadataOnce(p.match_id, { signal: pendingSignal }), { paths: true });
-        m.pathsTried = true;
-        await this.store.putMatch(m);
-      } catch (e) {
-        // ещё не обработан — попробуем позже
+    const pendingForAccount = (p) => (!p.accountId || p.accountId === accountId) && Date.now() - p.at < 3 * 86400e3;
+    if (signal && !signal.aborted) {
+      const pendingSignal = AbortSignal.any([signal, AbortSignal.timeout(3000)]);
+      const tryNow = this.store.read('pending.json', []).filter((p) => pendingForAccount(p) && !known.has(p.match_id) && !this.store.hasMatch(p.match_id) && (!p.tried || Date.now() - p.tried > 5 * 60e3))
+        .sort((x, y) => y.match_id - x.match_id).slice(0, 2);
+      for (const p of tryNow) {
+        if (pendingSignal.aborted) break;
+        // Сохраняем отметку до ожидания API, чтобы не затирать результат параллельного сканирования.
+        const latest = this.store.read('pending.json', []);
+        const entry = latest.find((x) => x.match_id === p.match_id && x.accountId === p.accountId);
+        if (!entry || (entry.tried && Date.now() - entry.tried <= 5 * 60e3)) continue;
+        entry.tried = Date.now();
+        this.store.write('pending.json', latest);
+        try {
+          const m = extractMatch(await this.api.matchMetadataOnce(p.match_id, { signal: pendingSignal }), { paths: true });
+          m.pathsTried = true;
+          await this.store.putMatch(m);
+        } catch {
+          // Метаданные ещё недоступны, оставляем запись в ожидании.
+        }
       }
     }
-    const keep = [];
-    for (const p of pending) {
+    const pending = this.store.read('pending.json', []);
+    for (const p of pending.filter(pendingForAccount)) {
+      if (known.has(p.match_id)) continue;
       const stored = this.store.getMatch(p.match_id);
       const me = stored && stored.players.find((x) => x.account_id === accountId);
       if (stored && !me) continue; // чужой матч из кэша (например, смотрел игру про-игрока)
-      keep.push(p);
+      known.add(p.match_id);
       if (stored && me) {
         rows.push({ match_id: stored.match_id, hero_id: me.hero_id, start_time: stored.start_time, duration_s: stored.duration_s, k: me.k, d: me.d, a: me.a, nw: me.nw, won: me.won, loaded: true, match_mode: stored.match_mode, source: 'cache' });
       } else {
         rows.push({ match_id: p.match_id, pending: true, start_time: null, source: 'cache' });
       }
     }
-    this.store.write('pending.json', keep);
+    if (!cachedOnly) {
+      const keep = pending.filter((p) => Date.now() - p.at < 3 * 86400e3 && (!pendingForAccount(p) || !onlineIds.has(p.match_id)));
+      if (keep.length !== pending.length) this.store.write('pending.json', keep);
+    }
     rows.sort((x, y) => (y.pending ? 2e9 : y.start_time || 0) - (x.pending ? 2e9 : x.start_time || 0));
-    const list = rows.slice(0, 60);
-    if (fresh) return { list, fresh: freshInfo };
-    return list;
+    return { list: rows.slice(0, 60), source, checkedAt: source === 'saved' ? null : Date.now(), fresh: freshInfo };
   }
 
   // ---------- общий обзор за период ----------
+  async dashboard(accountId, { cachedOnly = false } = {}) {
+    const id = Number(accountId);
+    const local = async () => { await this.store.ready; return this.savedHistory(id); };
+    if (cachedOnly) return { ...dashboardStats(await local()), source: 'saved' };
+    try {
+      const rows = await this.api.matchHistory(id, 2 * 60e3, { signal: AbortSignal.timeout(8000) });
+      if (!rows?.length) return { ...dashboardStats(await local()), source: 'saved' };
+      const saved = this.store.loadInfo.files ? this.savedHistory(id) : [];
+      return { ...dashboardStats([...saved, ...rows]), source: 'api' };
+    } catch (error) {
+      const saved = await local();
+      if (!saved.length) throw error;
+      return { ...dashboardStats(saved), source: 'saved' };
+    }
+  }
+
   async overview(accountId, days = 7) {
     const id = Number(accountId);
     const d = Math.max(1, Math.min(30, Number(days) || 7));
@@ -1032,7 +1090,7 @@ class Sync {
       }
     }
     for (const m of inPeriod) if (this.store.getMatch(Number(m.match_id))) mine.add(Number(m.match_id));
-    this.store.write('mine.json', [...mine].slice(-500));
+    this.store.markPersonalMatches(mine);
     if (need.length) this.progress('done', 1, 1, 'Готово');
     const matches = new Map();
     for (const m of inPeriod) {
@@ -1067,28 +1125,39 @@ class Sync {
     return [...by.values()].map((x) => ({ ...x, topGames: topGames.get(x.hero_id) || 0 })).sort((a, b) => b.games - a.games || b.last - a.last);
   }
 
-  async heroSummary(accountId, heroId, { limit = 20 } = {}) {
+  async heroSummary(accountId, heroId, { limit = 20, cachedOnly = false, mode = null } = {}) {
     const id = Number(accountId);
     const hid = Number(heroId);
-    const hist = await this.myHistory(id, 2 * 60e3);
-    const rows = hist.filter((m) => Number(m.hero_id) === hid).sort((a, b) => (b.start_time || 0) - (a.start_time || 0)).slice(0, limit);
-    const need = rows.filter((m) => this.needsDownload(m.match_id));
-    const mine = new Set(this.store.read('mine.json', []));
-    for (let i = 0; i < need.length; i++) {
-      this.progress('hero', i, need.length, `Скачиваю игры на герое: ${i + 1} из ${need.length}`);
+    const history = new Map(this.savedHistory(id, hid).filter((m) => isStandardMatch(m)).map((m) => [m.match_id, m]));
+    let partial = cachedOnly;
+    const signal = cachedOnly ? null : AbortSignal.timeout(8000);
+    if (signal) {
       try {
-        const m = await this.fetchMine(need[i].match_id);
-        m.pathsTried = true;
-        await this.store.putMatch(m);
-      } catch (e) {
-        // нет в API — посчитаем без подробностей
+        const recent = await this.myHistory(id, 2 * 60e3, signal);
+        partial = recent.some((m) => m.source === 'saved-history');
+        for (const m of recent) if (Number(m.hero_id) === hid) history.set(Number(m.match_id), m);
+      } catch {
+        partial = true;
       }
     }
-    if (need.length) this.progress('done', 1, 1, 'Готово');
+    const rows = [...history.values()].filter((row) => (mode !== 1 && mode !== 4) || row.match_mode === mode)
+      .sort((a, b) => (b.start_time || 0) - (a.start_time || 0)).slice(0, limit);
+    if (signal) for (const row of rows) {
+      if (!this.needsDownload(row.match_id)) continue;
+      if (signal.aborted) { partial = true; break; }
+      try {
+        const m = await this.fetchMine(row.match_id, signal);
+        m.pathsTried = true;
+        await this.store.putMatch(m);
+      } catch {
+        partial = true;
+      }
+    }
+    const mine = [];
     const games = rows.map((r) => {
       const m = this.store.getMatch(Number(r.match_id));
       const me = m ? m.players.find((p) => p.account_id === id) : null;
-      if (m) mine.add(m.match_id);
+      if (me) mine.push(m.match_id);
       return {
         match_id: Number(r.match_id),
         start_time: Number(r.start_time) || 0,
@@ -1104,41 +1173,45 @@ class Sync {
         me: me || null,
       };
     });
-    this.store.write('mine.json', [...mine].slice(-500));
+    if (!cachedOnly && mine.length) this.store.markPersonalMatches(mine);
     const top = this.store.read('top.json', { players: [] });
     const accounts = new Set(top.players.filter((p) => p.accountId && !p.excluded).map((p) => p.accountId));
-    const bench = benchmarkPlayers({ matches: this.store.allMatches(), heroId: hid, accounts, excludeAccount: id });
+    const modes = new Set(mode === 1 || mode === 4 ? [mode] : games.map((g) => g.match_mode).filter((m) => m === 1 || m === 4));
+    const pool = this.store.allMatches().filter((match) => isStandardMatch(match) && (!modes.size || modes.has(match.match_mode)));
+    const bench = benchmarkPlayers({ matches: pool, heroId: hid, accounts, excludeAccount: id });
     const rep = heroReport({ heroId: hid, games, bench, assets: this.assets, accountId: id });
+    rep.partial = partial || rep.loaded < rep.games;
+    rep.benchModes = [...modes];
     rep.matchups = myMatchups(games.filter((g) => g.match && g.me).map((g) => ({ match: g.match, me: g.me })));
     const abilityName = (x) => (this.assets && this.assets.items[x] ? this.assets.items[x].name : `способность ${x}`);
     const mySkills = skillConsensus(games.filter((g) => g.me).map((g) => skillOrder(g.me, this.assets)), { minFollow: 2 });
     const topSkills = skillConsensus(bench.map((b) => skillOrder(b.player, this.assets)));
     rep.skills = { mine: mySkills, top: topSkills, compare: compareSkills(mySkills, topSkills, abilityName) };
-    rep.list = games.map(({ match, me, ...g }) => ({ ...g, loaded: !!match }));
+    rep.list = games.map(({ match, me, ...g }) => ({ ...g, loaded: !!me }));
     return rep;
   }
 
   // ---------- билд игрока из конкретного матча (выгрузка) ----------
   async matchBuild(matchId, accountId, slot = null) {
-    await this.loadAssets().catch(() => {});
-    const m = await this.fetchMatch(Number(matchId));
+    const m = this.store.getMatch(Number(matchId)) || await this.fetchMatch(Number(matchId), { signal: AbortSignal.timeout(8000) });
     const p = m.players.find((x) => (accountId && x.account_id === Number(accountId)) || (slot !== null && x.slot === Number(slot))) || null;
     if (!p) throw new Error('Этого игрока нет в матче');
     const b = matchBuild({ match: m, player: p, assets: this.assets });
-    const names = await this.namesFor([p.account_id]).catch(() => new Map());
     const top = this.store.read('top.json', { players: [] });
     const t = top.players.find((x) => x.accountId === p.account_id);
-    b.playerName = (t && t.name) || names.get(p.account_id) || (p.account_id ? `ID ${p.account_id}` : 'игрок');
+    const auth = this.store.read('auth.json', null);
+    const localName = t?.name || (auth?.accountId === p.account_id ? auth.name : null);
     b.rank = t ? t.rank ?? null : null;
-    // похожие опубликованные билды — их можно найти в самой игре
-    b.similar = [];
-    try {
-      const raw = await this.api.builds(p.hero_id);
+    // Профиль и опубликованные билды дополняют экспорт, оба запроса делят короткий лимит.
+    const signal = AbortSignal.timeout(4000);
+    const name = localName || (p.account_id ? this.api.steamProfiles([p.account_id], { signal }).then((profiles) => profiles[0]?.personaname).catch(() => null) : null);
+    const similar = this.api.builds(p.hero_id, { signal }).then((raw) => {
       const core = b.buys.filter((x) => x.fate !== 'sold' && x.t <= 2400).map((x) => ({ id: x.id, pick: x.fate === 'kept' ? 1 : 0.6 }));
-      b.similar = rankBuilds(raw, core, { limit: 3 });
-    } catch (e) {
-      b.similarError = e.message;
-    }
+      return { similar: rankBuilds(raw, core, { limit: 3 }) };
+    }).catch((e) => ({ similar: [], similarError: signal.aborted ? 'Сервис не ответил вовремя' : e.message }));
+    const [playerName, suggestions] = await Promise.all([name, similar]);
+    b.playerName = playerName || (p.account_id ? `ID ${p.account_id}` : 'игрок');
+    Object.assign(b, suggestions);
     return b;
   }
 
@@ -1166,7 +1239,7 @@ class Sync {
   }
 
   // ---------- совет по пику (оверлей) ----------
-  // Твои герои для рейтинга: с 15+ победами (правило игры) или список из настроек.
+  // Пул по доступной истории матчей или сохранённый ручной выбор.
   async pickPool(accountId) {
     const id = Number(accountId);
     let hist = [];
@@ -1308,7 +1381,7 @@ class Sync {
       });
       if (!pm || pm.v !== 1) pm = await Promise.race([job, new Promise((r) => setTimeout(() => r(null), 20000))]);
     }
-    await this.loadAssets().catch(() => {});
+    if (!this.assets) await this.loadAssets().catch(() => {});
     const roles = this.heroRoles();
     const opts = { enemies: enemies.map(Number), allies: allies.map(Number), laneEnemies: laneEnemies.map(Number), partner, roles, meta, pm };
     const advice = pickAdvice({ pool, tables, current, ...opts });
@@ -1341,7 +1414,10 @@ class Sync {
       roles: Object.fromEntries([...enemies, ...allies, ...pool.map((p) => p.hero_id)].map((h) => [h, roles[h] || null])),
       pool: pool.map((p) => p.hero_id),
       inactive: inactive.map((p) => ({ hero_id: p.hero_id, lastDays: p.lastDays })),
-      allHeroes: all.map((p) => ({ hero_id: p.hero_id, games: p.games, wins: p.wins })),
+      allHeroes: [...new Map([...all, ...pool].map((p) => [p.hero_id, p])).values()].map((p) => ({
+        hero_id: p.hero_id, games: p.games, wins: p.wins, unlockPoints: p.unlockPoints, rankedEvidence: p.rankedEvidence,
+      })),
+      rankedThreshold: RANKED_HERO_RULE.threshold,
       manual,
       ready,
       poolSize: pool.length,
@@ -1361,8 +1437,7 @@ class Sync {
   // Удалить все скачанные матчи топов (свои матчи остаются) и всё, что по ним посчитано.
   async resetTopMatches() {
     if (this.running) throw new Error('Сейчас идёт обновление меты — дождись конца и попробуй ещё раз');
-    const mine = new Set(this.store.read('mine.json', []));
-    const removed = await this.store.removeMatches((m) => !mine.has(m.match_id));
+    const removed = await this.store.removeMatches(() => true);
     for (const f of ['missing.json', 'picktables.json']) this.store.write(f, f === 'missing.json' ? {} : null);
     this._topHero = null;
     this._counters = null;
@@ -1427,8 +1502,9 @@ class Sync {
       const table = picks && picks.tables && picks.tables[me.hero_id];
       const laneVs = table && table.vs ? Object.fromEntries(Object.entries(table.vs).map(([k, v]) => [k, typeof v.pro === 'number' ? v.pro : v.delta])) : null;
       const fresh = (m.v || 1) >= EXTRACT_V;
-      const leaks = gameLeaks({ m, me, f, ref: topHero.get(me.hero_id) || null, tier, assets: this.assets, counters, laneVs, heroName, itemName });
-      games.push({ match_id: m.match_id, start_time: m.start_time, duration_s: m.duration_s, hero: me.hero_id, won: me.won, k: me.k, d: me.d, a: me.a, fresh, leaks, f });
+      const checked = new Set();
+      const leaks = gameLeaks({ m, me, f, ref: topHero.get(me.hero_id) || null, tier, assets: this.assets, counters, laneVs, heroName, itemName, checked });
+      games.push({ match_id: m.match_id, start_time: m.start_time, duration_s: m.duration_s, hero: me.hero_id, won: me.won, k: me.k, d: me.d, a: me.a, fresh, leaks, checked: [...checked], f });
     }
     const profile = leakProfile(games.filter((g) => g.fresh));
     // Привычки до 10:00: твои медианы, твой ранг, высокий ранг и как это связано с победой
@@ -1453,7 +1529,7 @@ class Sync {
     this.store.write(`leaks-top-${id}.json`, topLeak ? { title: topLeak.title, fix: (topLeak.fix || [])[0] || null, count: topLeak.count, games: profile.games, at: Date.now() } : null);
     return {
       rank,
-      games: games.map(({ f, ...g }) => ({ ...g, leaks: g.leaks.map((l) => ({ key: l.key, area: l.area, level: l.level, title: l.title, text: l.text, fix: l.fix, moments: l.moments, score: l.score })) })),
+      games: games.map(({ f, ...g }) => ({ ...g, leaks: g.leaks.map((l) => ({ key: l.key, area: l.area, level: l.level, title: l.title, text: l.text, context: l.context, fix: l.fix, moments: l.moments, score: l.score })) })),
       fresh: games.filter((g) => g.fresh).length,
       total: games.length,
       profile,
@@ -1512,12 +1588,12 @@ class Sync {
         return { row: r, match: m || null, me: me || null };
       })
       .reverse();
-    this.store.write('mine.json', [...mine].slice(-500));
+    this.store.markPersonalMatches(mine);
     return out;
   }
 
   // ---------- личный тренер ----------
-  async coach(accountId, { forceNew = false } = {}) {
+  async coach(accountId, { forceNew = false, evidence = null } = {}) {
     const id = Number(accountId);
     const list = await this.myLoadedGames(id, { limit: 40, download: 25, label: 'Тренер смотрит твои матчи' });
     const heroName = (h) => (this.assets && this.assets.heroes[h] ? this.assets.heroes[h].name : `герой ${h}`);
@@ -1587,6 +1663,22 @@ class Sync {
       return t;
     };
     const state = this.store.read(`coach-${id}.json`, null);
+    let focusEvidence = null;
+    if (evidence) {
+      const m = this.store.getMatch(Number(evidence.matchId));
+      const me = m?.players.find((p) => p.account_id === id);
+      if (evidence.key === 'lost_souls') {
+        const event = me && lossPerDeath(me).find((x) => x.t === evidence.t && x.lost >= SOUL_LOSS_THRESHOLD);
+        if (!event) throw new Error('Эту потерю душ не удалось подтвердить в сохранённом матче.');
+        focusEvidence = { key: 'lost_souls', matchId: m.match_id, t: event.t, title: 'Крупная потеря душ', text: `При смерти потеряно ${event.lost} душ` };
+      } else {
+        const foe = me && m.players.find((p) => p.slot === me.deaths?.find((d) => d[0] === evidence.t)?.[3]);
+        if (!foe || foe.team === me.team || me.lane == null || foe.lane !== me.lane || !(evidence.t >= 0 && evidence.t <= 600)) {
+          throw new Error('Этот эпизод на линии не удалось подтвердить в сохранённом матче.');
+        }
+        focusEvidence = { matchId: m.match_id, t: evidence.t, title: 'Смерть на линии', text: `Смерть от ${heroName(foe.hero_id)}` };
+      }
+    }
     const { state: next, view } = updateCoach(state, {
       games,
       topHero,
@@ -1600,7 +1692,7 @@ class Sync {
         const t = tipsFor(g).find((x) => x.level === 'good');
         return t ? { title: t.title } : null;
       },
-    }, { forceNew });
+    }, { forceNew, focusEvidence });
     this.store.write(`coach-${id}.json`, next);
     view.topsReady = topHero.size > 0;
     view.loaded = games.filter((g) => g.f).length;
@@ -1670,7 +1762,7 @@ class Sync {
         if (m) mineIds.add(m.match_id);
         if (me) mine.push({ match: m, player: me });
       }
-      this.store.write('mine.json', [...mineIds].slice(-500));
+      this.store.markPersonalMatches(mineIds);
     }
     // контр-предметы топов против каждого соперника
     const vs = heroVs(pro.filter((r) => r.w === 1), this.assets, { minGames: 1 });
@@ -1688,14 +1780,22 @@ class Sync {
   }
 
   async prepareGame(accountId, { myHero, enemies = [], laneFoe = null }) {
-    const recs = this.topRecords(Number(myHero));
+    const heroId = Number(myHero);
+    const id = Number(accountId);
+    const recs = this.topRecords(heroId, id).filter(({ match }) => isStandardMatch(match));
     const topVs = heroVs(recs, this.assets, { minGames: 1 });
-    const list = accountId ? await this.myLoadedGames(accountId, { limit: 60, download: 0 }).catch(() => []) : [];
-    const mine = myMatchups(list.filter((x) => x.match && x.me));
+    const saved = id ? this.savedHistory(id, heroId).filter((row) => isStandardMatch(row)) : [];
+    const games = saved.sort((a, b) => b.start_time - a.start_time).slice(0, 60).map((row) => {
+      const match = this.store.getMatch(row.match_id);
+      return { match, me: match.players.find((p) => p.account_id === id) };
+    });
+    const mine = myMatchups(games);
     const heroName = (h) => (this.assets && this.assets.heroes[h] ? this.assets.heroes[h].name : `герой ${h}`);
     const itemName = (i) => (this.assets && this.assets.items[i] ? this.assets.items[i].name : `предмет ${i}`);
-    const res = prepare({ myHero: Number(myHero), enemies: enemies.map(Number), laneFoe: laneFoe === null ? null : Number(laneFoe), topVs, mine, heroName, itemName });
+    const res = prepare({ myHero: heroId, enemies: enemies.map(Number), laneFoe: laneFoe === null ? null : Number(laneFoe), topVs, mine, heroName, itemName });
     res.topGames = recs.length;
+    res.myGames = mine.games;
+    res.latestTopMatch = recs.reduce((latest, { match }) => Math.max(latest, match.start_time || 0), 0);
     return res;
   }
 
@@ -1738,9 +1838,9 @@ class Sync {
         m.pathsTried = true;
       } catch (e) {
         if (stored) {
-          stored.pathsTried = true;
-          await this.store.putMatch(stored);
-          return stored;
+          const fallback = { ...stored, pathsTried: true };
+          await this.store.putMatch(fallback);
+          return fallback;
         }
         if (e instanceof NotFoundError) {
           throw new Error('Этого матча пока нет в deadlock-api. Открой его в игре в истории матчей, затем нажми «Найти в кэше Steam» и попробуй через пару минут.');
@@ -1752,7 +1852,7 @@ class Sync {
     const mine = new Set(this.store.read('mine.json', []));
     if (!mine.has(id)) {
       mine.add(id);
-      this.store.write('mine.json', [...mine].slice(-500));
+      this.store.markPersonalMatches(mine);
     }
     return m;
   }
@@ -1773,8 +1873,8 @@ class Sync {
       .sort((a, b) => b.games - a.games);
   }
 
-  async analyzeMatch({ matchId, accountId, target = { type: 'top' }, winsOnly = false, source = 'top' }) {
-    const m = await this.loadMatch(matchId);
+  async analyzeMatch({ matchId, accountId, target = { type: 'top' }, winsOnly = false, source = 'top', preferSaved = false }) {
+    const m = (preferSaved && this.store.getMatch(matchId)) || await this.loadMatch(matchId);
     const me = m.players.find((p) => p.account_id === Number(accountId));
     if (!me) throw new Error('В этом матче нет твоего аккаунта. Проверь, что вошёл в нужный Steam.');
     const top = this.store.read('top.json', { players: [] });
@@ -1794,6 +1894,8 @@ class Sync {
       const topAcc = new Set(top.players.filter((p) => p.accountId && !p.excluded).map((p) => p.accountId));
       pool = pool.filter((x) => x.players.some((p) => topAcc.has(p.account_id)));
     }
+    const benchMode = m.match_mode === 1 || m.match_mode === 4 ? m.match_mode : null;
+    pool = pool.filter((match) => isStandardMatch(match) && (benchMode === null || match.match_mode === benchMode));
     const bench = benchmarkPlayers({ matches: pool, heroId: me.hero_id, accounts, winsOnly, excludeMatchId: m.match_id, excludeAccount: Number(accountId) });
     const nameOf = (id) => (this.assets && this.assets.items[id] ? this.assets.items[id].name : `Предмет ${id}`);
     const result = analyze({ me, myMatch: m, bench, assets: this.assets, nameOf });
@@ -1819,11 +1921,14 @@ class Sync {
     return {
       leaks,
       highlights,
+      macro: macroReview(m, me),
       fresh: (m.v || 1) >= EXTRACT_V,
       map: mapData(m),
       mySlot: me.slot,
+      purchases: itemFates(me.items || [], this.assets).map(({ id, t }) => ({ id, t })),
       match: { match_id: m.match_id, duration_s: m.duration_s, start_time: m.start_time, hero_id: me.hero_id, won: me.won, k: me.k, d: me.d, a: me.a, nw: me.nw },
       targetLabel: label,
+      benchMode,
       benchDays,
       winsOnly,
       result,
@@ -1859,11 +1964,11 @@ class Sync {
       const histIds = new Set(hist.map((m) => Number(m.match_id)));
       const maxId = hist.reduce((x, m) => Math.max(x, Number(m.match_id) || 0), 0);
       const pend = this.store.read('pending.json', []);
-      const pendIds = new Set(pend.map((p) => p.match_id));
+      const pendIds = new Set(pend.filter((p) => !p.accountId || p.accountId === accountId).map((p) => p.match_id));
       for (const r of records) {
         if (histIds.has(r.match_id) || pendIds.has(r.match_id)) continue;
         if (maxId && r.match_id < maxId - 1500000) continue;
-        pend.push({ match_id: r.match_id, at: Date.now() });
+        pend.push({ match_id: r.match_id, accountId, at: Date.now() });
         pendIds.add(r.match_id);
         added += 1;
       }

@@ -298,9 +298,8 @@ function analyze({ me, myMatch, bench, assets = null, nameOf = (id) => `#${id}` 
       insights.push({
         level: 'info',
         area: 'Урон',
-        title: farmProblem ? 'Урона мало из-за фарма' : 'Урона мало даже с учётом фарма',
+        title: farmProblem ? 'Урон на 1000 душ близок к уровню топов' : 'Урон на 1000 душ ниже, чем у топов',
         text: `На каждые 1000 душ у тебя ${fmtNum(myEff * 1000)} урона по героям, у топов ${fmtNum(topEff * 1000)}.`,
-        tip: farmProblem ? 'Стреляешь нормально — подтяни фарм, и урон вырастет сам.' : 'Чаще ищи драки и стреляй по героям, а не только по крипам. Проверь, что ключевые предметы на урон куплены вовремя.',
       });
     }
   }
@@ -328,17 +327,16 @@ function analyze({ me, myMatch, bench, assets = null, nameOf = (id) => `#${id}` 
       area: 'Предметы',
       title: `Поздно «${nameOf(it.id)}» (+${fmtTime(it.delay)})`,
       text: `В твоей сборке топы берут «${nameOf(it.id)}» около ${fmtTime(it.topT)}, ты — на ${fmtTime(it.myT)}.`,
-      tip: 'Предмет опаздывает обычно из-за нехватки душ или лишних покупок до него. Посмотри, что ты брал раньше.',
+      tip: 'Сравни доход и последовательность покупок до этого тайминга.',
     });
   }
   const missing = items.filter((i) => i.status === 'missing' && i.topPick >= 0.6).sort((a, b) => b.topPick - a.topPick);
   for (const it of missing.slice(0, 2)) {
     insights.push({
-      level: 'warn',
+      level: 'info',
       area: 'Предметы',
       title: `Не куплен «${nameOf(it.id)}»`,
       text: `Топы, которые играют такую же сборку, берут «${nameOf(it.id)}» в ${pct(it.topPick)} игр (около ${fmtTime(it.topT)}).`,
-      tip: 'Это один из основных предметов этой сборки — попробуй включить его.',
     });
   }
   const onTime = items.filter((i) => i.status === 'ok' || i.status === 'early').length;
@@ -354,23 +352,13 @@ function analyze({ me, myMatch, bench, assets = null, nameOf = (id) => `#${id}` 
     const myT = mine.has(s.id) ? mine.get(s.id) : null;
     const my = aroundPurchase(me.stats, myT);
     let verdict;
-    if (myT === null) verdict = { level: 'warn', text: 'У тебя этого предмета не было — ты пропустил момент силы.' };
-    else if (myT - s.topT > 150) verdict = { level: 'warn', text: `Купил на ${fmtTime(myT - s.topT)} позже топов — момент силы наступил поздно.` };
-    else if (my && my.lift !== null && my.lift < 1.05 && !my.fought) verdict = { level: 'warn', text: 'После покупки урон почти не вырос и драк не было — ты не использовал момент.' };
-    else if (my) verdict = { level: 'good', text: 'Ты использовал этот момент — урон после покупки вырос.' };
-    else verdict = { level: 'info', text: 'Недостаточно данных о твоём уроне вокруг покупки.' };
+    if (myT === null) verdict = { level: 'info', text: '' };
+    else if (!my) verdict = { level: 'info', text: 'Нет полного окна статистики вокруг покупки.' };
+    else verdict = { level: 'info', text: my.participated === true ? 'В течение трёх минут подтверждено убийство или помощь.'
+      : my.participated === false ? 'За три минуты счётчики убийств и помощи не выросли.'
+        : 'По снимкам нельзя уточнить участие в убийствах в этом окне.' };
     return { ...s, myT, my, verdict };
   });
-  for (const s of spikes) {
-    if (s.verdict.level !== 'warn') continue;
-    insights.push({
-      level: 'warn',
-      area: 'Паверспайк',
-      title: `Паверспайк «${nameOf(s.id)}»`,
-      text: `После «${nameOf(s.id)}» топы идут драться: урон по героям ${fmtNum(s.rateBefore)} → ${fmtNum(s.rateAfter)} в минуту. ${s.verdict.text}`,
-      tip: 'Сразу после покупки этого предмета ищи драку или иди давить линию вместе с командой.',
-    });
-  }
 
   // ---------- 6б. Библиотека советов по ситуации ----------
   let features = null;

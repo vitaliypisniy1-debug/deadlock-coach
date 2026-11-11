@@ -211,9 +211,9 @@ class Api {
     return this.get(`/v1/matches/${matchId}/metadata`, { signal });
   }
 
-  steamProfiles(accountIds) {
+  steamProfiles(accountIds, { signal } = {}) {
     if (!accountIds.length) return Promise.resolve([]);
-    return this.get(`/v1/players/steam?account_ids=${accountIds.join(',')}`, { ttlMs: 60 * 60e3 }).then((r) => (Array.isArray(r) ? r : []));
+    return this.get(`/v1/players/steam?account_ids=${accountIds.join(',')}`, { ttlMs: 60 * 60e3, signal }).then((r) => (Array.isArray(r) ? r : []));
   }
 
   heroesAssets() {
@@ -226,7 +226,7 @@ class Api {
 
   // Карта: радиус мира и картинки миникарты.
   async mapAssets() {
-    for (const p of ['https://assets.deadlock-api.com/v1/map', '/v1/assets/map']) {
+    for (const p of ['/v1/assets/map', 'https://assets.deadlock-api.com/v1/map']) {
       try {
         const r = await this.get(p, { ttlMs: 24 * 3600e3 });
         if (r && typeof r === 'object' && !Array.isArray(r)) return r;
@@ -239,7 +239,7 @@ class Api {
 
   // Названия и картинки рангов (сервис ассетов deadlock-api).
   async ranksAssets() {
-    for (const p of ['https://assets.deadlock-api.com/v2/ranks', '/v1/assets/ranks']) {
+    for (const p of ['/v1/assets/ranks', 'https://assets.deadlock-api.com/v2/ranks']) {
       try {
         const r = await this.get(p, { ttlMs: 24 * 3600e3 });
         if (Array.isArray(r) && r.length) return r;
@@ -250,7 +250,7 @@ class Api {
     return [];
   }
 
-  async builds(heroId) {
+  async builds(heroId, { signal } = {}) {
     const tries = [
       `/v1/builds?hero_id=${heroId}&sort_by=favorites&sort_direction=desc&limit=200&only_latest=true`,
       `/v1/builds?hero_id=${heroId}`,
@@ -258,7 +258,7 @@ class Api {
     let lastErr;
     for (const p of tries) {
       try {
-        const r = await this.get(p, { ttlMs: 60 * 60e3 });
+        const r = await this.get(p, { ttlMs: 60 * 60e3, signal });
         return Array.isArray(r) ? r : r.builds || [];
       } catch (e) {
         lastErr = e;

@@ -8,6 +8,8 @@ const { phaseSources, summarizePhase, averageRows, PHASES, TIPS } = require('./s
 const { playerFeatures, refAll } = require('./features');
 const { periodTips, basicsFor } = require('./tipsPeriod');
 const { selectTips } = require('./tipkit');
+const { isStandardMatch } = require('./meta');
+const { RANKED_HERO_RULE } = require('./pick');
 
 const DAY = 86400;
 const SESSION_GAP = 60 * 60; // больше часа между играми — новая сессия
@@ -36,6 +38,52 @@ function gameFromHistory(m) {
     match_mode: m.match_mode ?? null,
     abandoned: !!(m.team_abandoned || m.abandoned_time_s),
   };
+}
+
+function dashboardStats(history, now = Math.floor(Date.now() / 1000)) {
+  const dayStart = (offset) => {
+    const day = new Date(now * 1000);
+    day.setHours(0, 0, 0, 0);
+    day.setDate(day.getDate() + offset);
+    return day.getTime() / 1000;
+  };
+  const byId = new Map();
+  for (const row of history) {
+    const g = gameFromHistory(row);
+    if (!g.match_id || !g.start_time || g.start_time > now || !isStandardMatch(row)) continue;
+    byId.set(g.match_id, { ...g, badge: Number(row.ranked_display_badge) || null });
+  }
+  const games = [...byId.values()].sort((a, b) => a.start_time - b.start_time || a.match_id - b.match_id);
+  const from = dayStart(-6);
+  const week = games.filter((g) => g.start_time >= from);
+  const earlier = games.filter((g) => g.start_time >= dayStart(-36) && g.start_time < from);
+  const counts = (rows) => {
+    const wins = rows.filter((g) => g.won === true).length;
+    const losses = rows.filter((g) => g.won === false).length;
+    return { games: rows.length, wins, losses, unknown: rows.length - wins - losses, wr: wins + losses ? wins / (wins + losses) : null };
+  };
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const start = dayStart(i - 6);
+    const end = dayStart(i - 5);
+    return { start, ...counts(week.filter((g) => g.start_time >= start && g.start_time < end)) };
+  });
+  const byHero = new Map();
+  for (const g of week) {
+    if (!g.hero_id) continue;
+    if (!byHero.has(g.hero_id)) byHero.set(g.hero_id, []);
+    byHero.get(g.hero_id).push(g);
+  }
+  const heroes = [...byHero].map(([heroId, rows]) => ({
+    heroId, ...counts(rows),
+    kda: median(rows.map((g) => (g.k + g.a) / Math.max(1, g.d))),
+  })).sort((a, b) => b.games - a.games);
+  const season = now >= RANKED_HERO_RULE.from && now < RANKED_HERO_RULE.until;
+  const rankSince = season ? RANKED_HERO_RULE.from : now - 30 * DAY;
+  const rank = games.filter((g) => g.start_time >= rankSince && g.match_mode === 4
+    && Number.isInteger(g.badge) && g.badge >= 10 && g.badge < 120)
+    .map(({ badge, start_time, match_id }) => ({ badge, time: start_time, matchId: match_id }));
+  return { days, week: counts(week), baseline: counts(earlier), heroes, rank, season,
+    latest: games.at(-1) || null, hours: week.reduce((sum, g) => sum + g.duration_s, 0) / 3600 };
 }
 
 // Показатели одного игрока в одном матче (по подробным данным).
@@ -381,4 +429,4 @@ function buildOverview({ history, matches, accountId, days = 7, now = Math.floor
   return out;
 }
 
-module.exports = { buildOverview, gameFromHistory, playerMetrics, METRICS, rankFromBadges, TIPS };
+module.exports = { buildOverview, dashboardStats, gameFromHistory, playerMetrics, METRICS, rankFromBadges, TIPS };

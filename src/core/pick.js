@@ -140,43 +140,57 @@ function mixMatchup(r) {
 }
 
 // ---------- твои герои ----------
-// Рейтинг пускает на героев с 15 победами в обычном режиме. История из API неполная
-// (старые игры обрезаются), поэтому героя, на котором ты уже играл рейтинг, тоже считаем
-// доступным. Из доступных показываем тех, на ком ты играешь последние 2 месяца.
-const isRankedRow = (r) => r.match_mode === 4 || r.match_mode === 'Ranked';
+// Ranked Beta Season 2: анонс Valve от 05.11.2026, границы из ranked_seasons.vdata (билд 6860).
+const RANKED_HERO_RULE = { threshold: 35, from: 1793908800, until: 1804802400 };
 
-function heroPool(historyRows, { minWins = 15, manual = null, now = Date.now() / 1000, activeDays = 60 } = {}) {
+function heroPool(historyRows, { manual = null, now = Date.now() / 1000, activeDays = 60 } = {}) {
   const by = new Map();
+  const seen = new Set();
+  const empty = (hero_id) => ({ hero_id, games: 0, wins: 0, unlockPoints: 0, ranked: 0, last: 0, recent: 0, recentWins: 0, lastDays: null, rankedEvidence: 'unknown' });
   for (const r of historyRows || []) {
     const id = Number(r.hero_id);
     if (!id) continue;
-    if (!by.has(id)) by.set(id, { hero_id: id, games: 0, wins: 0, stdWins: 0, ranked: 0, last: 0, recent: 0, recentWins: 0 });
+    const matchId = Number(r.match_id);
+    const identified = Number.isSafeInteger(matchId) && matchId > 0;
+    if (identified) {
+      if (seen.has(matchId)) continue;
+      seen.add(matchId);
+    }
+    if (!by.has(id)) by.set(id, empty(id));
     const x = by.get(id);
     x.games += 1;
-    const won = typeof r.won === 'boolean' ? r.won : typeof r.match_result === 'number' ? r.match_result === r.player_team : false;
-    if (won) x.wins += 1;
-    if (isRankedRow(r)) x.ranked += 1;
-    else if (won) x.stdWins += 1;
-    const t = r.start_time || 0;
+    const knownTeams = (r.match_result === 0 || r.match_result === 1) && (r.player_team === 0 || r.player_team === 1);
+    const won = typeof r.won === 'boolean' ? r.won : knownTeams ? r.match_result === r.player_team : null;
+    if (won === true) x.wins += 1;
+    const t = Number(r.start_time) || 0;
+    const normal = r.game_mode === 1 || r.game_mode === 'normal';
+    if (identified && normal) {
+      if (r.match_mode === 4 || r.match_mode === 'Ranked') x.ranked += 1;
+      if ((r.match_mode === 1 || r.match_mode === 'Unranked') && t >= RANKED_HERO_RULE.from && t < RANKED_HERO_RULE.until && t <= now && won !== null) {
+        x.unlockPoints += won ? 2 : 1;
+      }
+    }
     x.last = Math.max(x.last, t);
-    if (now - t < activeDays * 86400) {
+    if (t > 0 && t <= now && now - t < activeDays * 86400) {
       x.recent += 1;
-      if (won) x.recentWins += 1;
+      if (won === true) x.recentWins += 1;
     }
   }
-  for (const x of by.values()) x.lastDays = x.last ? Math.floor((now - x.last) / 86400) : null;
+  for (const x of by.values()) {
+    x.lastDays = x.last ? Math.max(0, Math.floor((now - x.last) / 86400)) : null;
+    if (x.unlockPoints >= RANKED_HERO_RULE.threshold) x.rankedEvidence = 'points';
+    else if (x.ranked) x.rankedEvidence = 'played';
+  }
   const all = [...by.values()].sort((a, b) => b.recent - a.recent || b.games - a.games);
   let pool;
   let inactive = [];
   if (Array.isArray(manual) && manual.length) {
-    pool = manual.map((id) => by.get(Number(id)) || { hero_id: Number(id), games: 0, wins: 0, recent: 0, recentWins: 0, last: 0, lastDays: null });
+    pool = manual.map((id) => by.get(Number(id)) || empty(Number(id)));
   } else {
-    // старые записи без режима: считаем победы всех игр
-    const hasModes = all.some((x) => x.ranked > 0) || (historyRows || []).some((r) => r.match_mode !== undefined);
-    const eligible = all.filter((x) => (hasModes ? x.stdWins : x.wins) >= minWins || x.ranked > 0);
-    const active = eligible.filter((x) => x.recent >= 3);
-    pool = active.length >= 3 ? active : eligible;
-    inactive = eligible.filter((x) => !pool.includes(x));
+    const candidates = all.filter((x) => x.rankedEvidence !== 'unknown');
+    const active = candidates.filter((x) => x.recent >= 3);
+    pool = active.length >= 3 ? active : candidates;
+    inactive = candidates.filter((x) => !pool.includes(x));
     if (!pool.length) pool = all.filter((x) => x.games >= 5).slice(0, 8);
   }
   return { pool, all, inactive, manual: Array.isArray(manual) && manual.length > 0 };
@@ -313,4 +327,4 @@ function gamePlan({ row, counters = {}, leak = null, laneEnemies = [] }) {
   return { hero_id: row.hero_id, hard, easy, lane, items, mates: row.mates || [], matesBad: row.matesBad || [], leak };
 }
 
-module.exports = { heroPool, pickAdvice, gamePlan, mixMatchup, buildPickMeta, pairDelta, baseWr, laneSouls, heroRole, teamComp, compAdj, ROLE_NAMES, MY_SHARE, LANE_SOULS };
+module.exports = { heroPool, pickAdvice, gamePlan, mixMatchup, buildPickMeta, pairDelta, baseWr, laneSouls, heroRole, teamComp, compAdj, ROLE_NAMES, MY_SHARE, LANE_SOULS, RANKED_HERO_RULE };

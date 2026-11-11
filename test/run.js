@@ -3,6 +3,10 @@
 // Проверяет расчёты на синтетических матчах (без интернета).
 
 const assert = require('assert');
+const fs = require('fs/promises');
+const os = require('os');
+const path = require('path');
+const { Store } = require('../src/main/store');
 const { extractMatch } = require('../src/core/extract');
 const { valueAt, minuteSeries } = require('../src/core/timeline');
 const { buildMeta, heroBuild, collectRecords, isStandardMatch } = require('../src/core/meta');
@@ -46,6 +50,98 @@ const matches = [];
 for (let i = 0; i < 40; i++) {
   matches.push(extractMatch(fakeMatch({ id: 5000 + i, seed: 77 + i, start: now - i * 3600, accounts: TOP, skill: Array(12).fill(1.15) })));
 }
+
+async function withStoreDir(run) {
+  const parent = await fs.realpath(os.tmpdir());
+  const dir = await fs.mkdtemp(path.join(parent, 'deadlock-coach-store-'));
+  try {
+    await run(dir);
+  } finally {
+    const resolved = await fs.realpath(dir);
+    if (path.dirname(resolved) === parent && path.basename(resolved).startsWith('deadlock-coach-store-')) {
+      await fs.rm(resolved, { recursive: true, force: true });
+    }
+  }
+}
+
+test('store keeps personal matches by account across logout, prune and reset', () => withStoreDir(async (dir) => {
+  const store = new Store(dir);
+  const [personal, fromLegacy, top] = matches.slice(0, 3).map((m, i) => ({ ...m, players: [{ ...m.players[0], account_id: 123 + i }] }));
+  store.write('auth.json', { accountId: 123 });
+  store.write('coach-124.json', {});
+  await store.saveAuth({ accountId: 200 });
+  await store.saveAuth(null);
+  await Promise.all([store.putMatch(personal), store.putMatch(fromLegacy), store.putMatch(top)]);
+  assert.strictEqual(await store.prune(now + 1), 1);
+  assert.strictEqual(await store.removeMatches(() => true), 0);
+  assert.deepStrictEqual(new Set(new Store(dir).allMatches().map((m) => m.match_id)), new Set([personal.match_id, fromLegacy.match_id]));
+  store.markPersonalMatches(Array.from({ length: 501 }, (_, i) => i + 1));
+  store.markPersonalMatches([502]);
+  assert.strictEqual(store.read('mine.json').length, 502);
+}));
+
+test('store recovers newer JSON and rebuilds the package after append failure', () => withStoreDir(async (dir) => {
+  const store = new Store(dir, { lazy: true });
+  const match = matches[0];
+  await store.putMatch(match);
+  assert.strictEqual(await store._canReadPack(), true);
+  const oldPack = store.packFile + '.backup';
+  await fs.rename(store.packFile, oldPack);
+  await fs.mkdir(store.packFile);
+  await store.putMatch({ ...match, pathsTried: true });
+  await store.putMatch(matches[1]);
+  await fs.rmdir(store.packFile);
+  await fs.rename(oldPack, store.packFile);
+  assert.strictEqual(await store._canReadPack(), false);
+  const recovered = new Store(dir, { lazy: true });
+  await recovered.ready;
+  await recovered._matchQ;
+  assert.strictEqual(recovered.getMatch(match.match_id).pathsTried, true);
+  assert.strictEqual(recovered.hasMatch(matches[1].match_id), true);
+  const next = new Store(dir, { lazy: true });
+  await next.ready;
+  assert.strictEqual(next.loadInfo.fromPack, 2);
+  assert.strictEqual(next.getMatch(match.match_id).pathsTried, true);
+}));
+
+test('store survives a rebuild error and does not delete when protection metadata is invalid', () => withStoreDir(async (dir) => {
+  const saved = new Store(dir);
+  await saved.putMatch(matches[0]);
+  const tmp = saved.packFile + '.tmp';
+  await fs.mkdir(tmp);
+  const errors = [];
+  const store = new Store(dir, { lazy: true, onPackError: (err) => errors.push(err) });
+  await store.ready;
+  await store.putMatch(matches[1]);
+  assert.strictEqual(errors.length, 1);
+  assert.strictEqual(await store._canReadPack(), false);
+  await fs.writeFile(path.join(dir, 'mine.json'), '[');
+  await assert.rejects(store.prune(now + 1), /защиту личных матчей/);
+  assert.strictEqual(store.matches.size, 2);
+  await fs.rmdir(tmp);
+  const recovered = new Store(dir, { lazy: true });
+  await recovered.ready;
+  await recovered._matchQ;
+  assert.strictEqual(recovered.matches.size, 2);
+  assert.strictEqual(await recovered._canReadPack(), true);
+}));
+
+test('store keeps the last saved match after a JSON write error and accepts a retry', () => withStoreDir(async (dir) => {
+  const store = new Store(dir, { lazy: true });
+  const match = matches[0];
+  await store.putMatch(match);
+  const target = path.join(store.matchDir, `${match.match_id}.json`);
+  const tmp = target + '.tmp';
+  const updated = { ...match, pathsTried: true };
+  await fs.mkdir(tmp);
+  await assert.rejects(store.putMatch(updated));
+  assert.deepStrictEqual(store.getMatch(match.match_id), match);
+  assert.strictEqual(await fs.readFile(target, 'utf8'), JSON.stringify(match));
+  await fs.rmdir(tmp);
+  await store.putMatch(updated);
+  assert.deepStrictEqual(store.getMatch(match.match_id), updated);
+  assert.strictEqual(await fs.readFile(target, 'utf8'), JSON.stringify(updated));
+}));
 // Мой матч: я играю героем 1 (слот 0), навык ниже
 const MY = 4242;
 const myRaw = fakeMatch({ id: 9999, seed: 3, start: now, accounts: [MY, ...TOP.slice(1)], skill: [0.75] });
@@ -249,6 +345,31 @@ test('source phases flag the weak source in the right phase', () => {
   assert.ok(!lane.gaps.some((g) => g.field === 'g_neutral'), 'на линии лес не трогали');
 });
 
+test('dashboard keeps seven calendar days, a separate baseline and personal ranked badges', () => {
+  const { dashboardStats } = require('../src/core/overview');
+  const now = Math.floor(new Date(2026, 10, 11, 16, 0).getTime() / 1000);
+  const at = (day, hour = 12) => Math.floor(new Date(2026, 10, day, hour).getTime() / 1000);
+  const match = (match_id, start_time, hero_id, match_mode, match_result, ranked_display_badge) =>
+    ({ match_id, start_time, hero_id, game_mode: 1, match_mode, match_result, player_team: 0, ranked_display_badge });
+  const rows = [
+    match(1, at(3), 72, 4, 1, 101),
+    match(2, at(5, 0), 72, 1, 0, 110),
+    match(3, at(8), 7, 4, 1, 102),
+    match(4, at(11), 7, 4, null, 103),
+    match(5, at(11, 13), 7, 2, 0, 106),
+    match(6, at(11, 19), 72, 4, 0, 105),
+    match(3, at(8), 7, 4, 1, 102),
+  ];
+  const stats = dashboardStats(rows, now);
+  assert.deepStrictEqual(stats.week, { games: 3, wins: 1, losses: 1, unknown: 1, wr: 0.5 });
+  assert.strictEqual(stats.baseline.wr, 0);
+  assert.strictEqual(stats.days.length, 7);
+  assert.strictEqual(stats.days[0].wins, 1);
+  assert.strictEqual(stats.latest.hero_id, 7);
+  assert.deepStrictEqual(stats.rank.map((p) => p.badge), [102, 103]);
+  assert.deepStrictEqual(stats.heroes.map((h) => [h.heroId, h.games]), [[7, 2], [72, 1]]);
+});
+
 test('overview: summary, sessions, compare, tips', () => {
   const ME = 777;
   const now = 2_000_000_000;
@@ -308,6 +429,46 @@ test('tips differ between a weak and a strong game', () => {
   assert.strictEqual(new Set(sel.map((t) => t.family)).size, sel.length, 'без повторов темы');
   for (const t of weak.concat(strong)) assert.ok(t.title && t.text && !/undefined|NaN/.test(t.title + t.text + (t.tip || '')), `шаблон без пустот: ${t.id}`);
   console.log('    правил: матч', MATCH_RULES.length, 'период', PERIOD_RULES.length, '| слабая игра:', weak.map((t) => t.id).join(', '));
+});
+test('early death advice distinguishes the event from its first recorded snapshot', () => {
+  const advise = (firstDeathExact) => matchTips({
+    me: { firstDeath: 140, firstDeathExact }, ref: {}, lobby: {},
+  }).find((t) => t.family === 'first_death');
+  assert.match(advise(true).text, /в журнале.*2:20/i);
+  assert.match(advise(false).text, /к снимку.*2:20/i);
+  assert.match(advise(false).text, /точной секунды/i);
+});
+test('purchase windows do not infer kills or assists from interpolated counters', () => {
+  const { aroundPurchase } = require('../src/core/spikes');
+  const stats = (kill) => Array.from({ length: 12 }, (_, i) => ({
+    t: i * 60, pdmg: i * 50, k: i * 60 >= kill ? 1 : 0, a: 0,
+  }));
+  assert.strictEqual(aroundPurchase(stats(240), 210).participated, null);
+  assert.strictEqual(aroundPurchase(stats(300), 210).participated, true);
+  assert.strictEqual(aroundPurchase(stats(480), 210).participated, false);
+  assert.strictEqual(aroundPurchase(stats(300).slice(0, 5), 210), null);
+});
+test('map review preserves grouped soul losses and verifies team kills before a Midboss prompt', () => {
+  const { macroReview } = require('../src/core/macro');
+  const { majorSoulLosses } = require('../src/core/leaks');
+  const player = { team: 0, slot: 1, d: 3, deaths_t: [190, 250, 700], stats: [
+    { t: 300, d: 2, g_lost: 1600, g_brk: 80, g_lane: 1200 },
+    { t: 1200, d: 3, g_lost: 2600 },
+  ] };
+  const enemies = [2, 3, 4].map((slot) => ({ team: 1, slot, deaths: [[935 + slot, 100, 200, 1]] }));
+  const m = { match_id: 10, start_time: Date.UTC(2026, 10, 1) / 1000, duration_s: 1200, players: [player, ...enemies], midBoss: [[0, 1, 1000]] };
+  const rows = macroReview(m, player);
+  assert.match(rows[0].text, /Суммарная потеря/);
+  assert.equal(rows[0].evidence, null);
+  assert.equal(rows[1].evidence.t, 700);
+  assert.equal(majorSoulLosses(player, m.duration_s), null);
+  assert.equal(majorSoulLosses({ ...player, d: 1, deaths_t: [700], stats: [{ t: 1200, d: 1, g_lost: 1000 }] }, 1200), 1);
+  assert.ok(rows.some((r) => r.title === 'Когда проверить ранний Midboss'));
+  enemies[0].deaths[0][3] = null;
+  assert.ok(!macroReview(m, player).some((r) => r.title === 'Когда проверить ранний Midboss'));
+  assert.ok(rows.some((r) => r.moments.some((point) => point.t === 1000 && point.text.includes('награда — соперники'))));
+  assert.ok(rows.find((r) => r.title.includes('Rift')).moments.length === 0);
+  assert.ok(!macroReview({ ...m, start_time: 1 }, player).some((r) => r.title.includes('Rift') || r.tip.includes('Plaza')));
 });
 test('russian plurals with fractions', () => {
   assert.strictEqual(plural(1, 'смерть', 'смерти', 'смертей'), 'смерть');
@@ -382,6 +543,33 @@ function coachGames(skill, n, t0, seedBase = 500) {
     return { match_id: m.match_id, start_time: m.start_time, duration_s: m.duration_s, hero: me.hero_id, won: me.won, k: me.k, d: me.d, a: me.a, nw: me.nw, pos: (i % 4) + 1, afterLoss: false, gapMin: 20, match: m, me, f: playerFeatures(me, m) };
   });
 }
+test('coach returns the actual hero-specific threshold and keeps missing values pending', () => {
+  const goal = { key: 'neu9', short: 'лес к 9:00', cmp: 'ge', target: 800, byHero: { 72: 1000 } };
+  const [billy] = checkGame({ hero: 72, f: { neu9: 901 } }, [goal]);
+  assert.deepStrictEqual([billy.value, billy.target, billy.cmp, billy.pass], [901, 1000, 'ge', false]);
+  const [missing] = checkGame({ hero: 72, f: null }, [goal]);
+  assert.deepStrictEqual([missing.target, missing.pass], [1000, null]);
+  const [another] = checkGame({ hero: 7, f: { neu9: 901 } }, [goal]);
+  assert.deepStrictEqual([another.target, another.pass], [800, true]);
+});
+
+test('a selected episode survives reload and missing matches stay pending', () => {
+  const now = 1_900_000_000;
+  const evidence = { matchId: 100, t: 140 };
+  const old = Array.from({ length: 6 }, (_, i) => ({ match_id: 100+i, start_time: now-600*(6-i), hero:72, f:{d10:2} }));
+  const create = updateCoach(null, { now, games:old, topHero:new Map(), lobby:{}, extra:{} }, { focusEvidence:evidence });
+  assert.strictEqual(create.view.goals[0].target,1);
+  assert.strictEqual(create.view.goals[0].evidence.t,140);
+  const pendingGame = { match_id: 200, start_time: now+60, hero:72, f:null };
+  const next = updateCoach(create.state, { now:now+120, games:[...old,pendingGame,pendingGame], topHero:new Map(), lobby:{}, extra:{} });
+  assert.strictEqual(next.view.cards.length,1);
+  assert.strictEqual(next.view.cards[0].checks.find((x)=>x.key==='d10').pass,null);
+  assert.strictEqual(next.view.goals[0].games,0);
+  const checked = updateCoach(next.state, { now:now+240, games:[...old,{...pendingGame,f:{d10:1}}], topHero:new Map(), lobby:{}, extra:{} });
+  assert.strictEqual(checked.view.goals[0].passed,1);
+  assert.strictEqual(checked.view.goals[0].startedAt,now);
+});
+
 test('coach: plan from weaknesses, checks, closing goals', () => {
   const topHero = new Map([[benchM[0].players[0].hero_id, refF]]);
   const t0 = 1_900_000_000;
@@ -444,6 +632,7 @@ test('matchups: my record, tops vs heroes, counters, prepare', () => {
   const pr = prepare({ myHero: recs[0].player.hero_id, enemies, laneFoe: enemies[0], topVs: vs, mine, heroName: (x) => `H${x}`, itemName: (x) => `I${x}` });
   assert.strictEqual(pr.rows.length, 3);
   assert.ok(pr.rows[0].isLane);
+  assert.ok(vs.rows.every((r) => r.laneSamples <= r.laneGames));
 });
 test('hero outlook: good/bad enemies and lane partners', () => {
   // Синтетика: мой герой 1. Против героя 10 почти всегда победы, против 11 — поражения,
@@ -534,18 +723,277 @@ test('skills: order, consensus and build export', () => {
   assert.strictEqual(file.hero_build.details.mod_categories[0].mods[0].ability_id, 900);
 });
 
+test('ranked hero progress counts 34, 35 and 36 points in Standard only', () => {
+  const { heroPool, RANKED_HERO_RULE } = require('../src/core/pick');
+  const from = RANKED_HERO_RULE.from;
+  const now = from + 2 * 86400;
+  const rows = [];
+  for (const [heroId, wins, losses] of [[1, 17, 0], [2, 17, 1], [3, 18, 0]]) {
+    for (let i = 0; i < wins + losses; i++) {
+      rows.push({ match_id: rows.length + 1, hero_id: heroId, game_mode: 1, match_mode: 1, start_time: from + i,
+        match_result: i < wins ? 0 : 1, player_team: 0 });
+    }
+  }
+  const base = { ...rows[0], match_id: 100 };
+  rows.push(rows[0], { ...base, match_mode: 2 }, { ...base, match_id: 101, match_mode: 3 },
+    { ...base, match_id: 102, match_mode: 7 }, { ...base, match_id: 103, game_mode: 2 },
+    { ...base, match_id: 104, match_result: null }, { ...base, match_id: 105, player_team: null },
+    { ...base, match_id: 106, match_mode: null }, { ...base, match_id: 107, start_time: from - 1 },
+    { ...base, match_id: 108, start_time: RANKED_HERO_RULE.until }, { ...base, match_id: 109, start_time: now + 1 },
+    { ...base, match_id: null }, { ...base, match_id: 110, game_mode: null });
+  const data = heroPool(rows, { now });
+  const byId = new Map(data.all.map((h) => [h.hero_id, h]));
+  assert.deepStrictEqual([1, 2, 3].map((id) => byId.get(id).unlockPoints), [34, 35, 36]);
+  assert.deepStrictEqual([1, 2, 3].map((id) => byId.get(id).rankedEvidence), ['unknown', 'points', 'points']);
+  assert.deepStrictEqual(data.pool.map((h) => h.hero_id).sort(), [2, 3]);
+});
+
+test('ranked history evidence and incomplete progress remain distinct from manual selection', () => {
+  const { heroPool, RANKED_HERO_RULE } = require('../src/core/pick');
+  const from = RANKED_HERO_RULE.from;
+  const rows = Array.from({ length: 5 }, (_, i) => ({ match_id: i + 1, hero_id: 7, game_mode: 1, start_time: from - i, won: true }));
+  const options = { now: from + 86400 };
+  assert.strictEqual(heroPool(rows, options).pool[0].rankedEvidence, 'unknown');
+  rows.push({ match_id: 10, hero_id: 8, game_mode: 1, match_mode: 4, start_time: from - 1 });
+  const automatic = heroPool(rows, options).pool[0];
+  assert.deepStrictEqual([automatic.hero_id, automatic.unlockPoints, automatic.rankedEvidence], [8, 0, 'played']);
+  const manual = heroPool([], { ...options, manual: [88, 86] });
+  assert.deepStrictEqual(manual.pool.map((h) => [h.hero_id, h.rankedEvidence]), [[88, 'unknown'], [86, 'unknown']]);
+});
+
+test('saved history does not turn an unknown match result into ranked unlock points', () => withStoreDir(async (dir) => {
+  const { Sync } = require('../src/main/sync');
+  const { heroPool, RANKED_HERO_RULE } = require('../src/core/pick');
+  const store = new Store(dir);
+  const from = RANKED_HERO_RULE.from;
+  await store.putMatch({ match_id: 123, game_mode: 1, match_mode: 1, winning_team: null, start_time: from,
+    players: [{ account_id: 42, hero_id: 1, team: 0, won: false }] });
+  await store.putMatch({ match_id: 124, game_mode: 1, match_mode: 1, winning_team: 1, start_time: from,
+    players: [{ account_id: 42, hero_id: 1, team: 0, won: false }] });
+  const sync = new Sync({ store, api: { matchHistory: async () => { throw new Error('offline'); } } });
+  const history = await sync.myHistory(42);
+  assert.strictEqual(history.find((r) => r.match_id === 123).match_result, null);
+  assert.strictEqual(history.find((r) => r.match_id === 124).match_result, 1);
+  assert.strictEqual(heroPool(history, { now: from + 1 }).all[0].unlockPoints, 1);
+}));
+
+test('dashboard can show API history before the large match pack is ready', async () => {
+  const { Sync } = require('../src/main/sync');
+  const store = { read: () => null, loadInfo: { files: 0 }, ready: new Promise(() => {}) };
+  const history = [{ match_id: 1, hero_id: 72, start_time: Math.floor(Date.now() / 1000), game_mode: 1, match_mode: 4, player_team: 0, match_result: 0 }];
+  const dashboard = await new Sync({ store, api: { matchHistory: async () => history } }).dashboard(7);
+  assert.strictEqual(dashboard.source, 'api');
+  assert.strictEqual(dashboard.latest.hero_id, 72);
+});
+
+test('hero summary opens saved games without the API and keeps them on download failure', () => withStoreDir(async (dir) => {
+  const { Sync } = require('../src/main/sync');
+  const store = new Store(dir);
+  const m = matches[0];
+  const p = m.players[0];
+  await store.putMatch(m);
+  let historyCalls = 0;
+  let detailsCalls = 0;
+  const api = {
+    matchHistory: async () => {
+      historyCalls++;
+      return [
+        { match_id: m.match_id, hero_id: p.hero_id, start_time: m.start_time, game_mode: 1, match_mode: 1 },
+        { match_id: 314159, hero_id: p.hero_id, start_time: m.start_time + 1, game_mode: 1, match_mode: 1, match_result: 0, player_team: 0 },
+      ];
+    },
+    matchMetadata: async (_matchId, { signal }) => {
+      detailsCalls++;
+      assert.ok(signal instanceof AbortSignal);
+      throw new Error('Service unavailable');
+    },
+  };
+  const sync = new Sync({ store, api });
+  const cached = await sync.heroSummary(p.account_id, p.hero_id, { cachedOnly: true });
+  assert.deepStrictEqual([cached.games, cached.loaded, historyCalls, detailsCalls], [1, 1, 0, 0]);
+  const refreshed = await sync.heroSummary(p.account_id, p.hero_id);
+  assert.deepStrictEqual([refreshed.games, refreshed.loaded, historyCalls, detailsCalls, refreshed.partial], [2, 1, 1, 1, true]);
+  assert.deepStrictEqual(refreshed.list.map((x) => x.loaded), [false, true]);
+  assert.strictEqual(store.hasMatch(m.match_id), true);
+}));
+
+test('match history opens from disk without a request and merges online and saved rows by ID', () => withStoreDir(async (dir) => {
+  const { Sync } = require('../src/main/sync');
+  const store = new Store(dir);
+  const m = matches[0];
+  const account = m.players[0].account_id;
+  await store.putMatch(m);
+  let apiCalls = 0;
+  const same = { match_id: m.match_id, start_time: m.start_time, hero_id: m.players[0].hero_id };
+  const recent = { match_id: 80001, start_time: m.start_time + 1, hero_id: 1 };
+  const api = { matchHistory: async (_id, _ttl, { signal }) => {
+    apiCalls++;
+    assert.ok(signal instanceof AbortSignal);
+    return [same, same, recent];
+  } };
+  const sync = new Sync({ store, api });
+  const saved = await sync.myMatches(account, { cachedOnly: true });
+  assert.deepStrictEqual([saved.source, saved.checkedAt, saved.list.length, apiCalls], ['saved', null, 1, 0]);
+  const online = await sync.myMatches(account);
+  assert.strictEqual(online.source, 'api');
+  assert.deepStrictEqual(online.list.map((x) => [x.match_id, x.loaded]), [[80001, false], [m.match_id, true]]);
+  assert.strictEqual(apiCalls, 1);
+  api.matchHistory = async () => [];
+  assert.deepStrictEqual((await sync.myMatches(account)).list.map((x) => x.match_id), [m.match_id]);
+}));
+
+test('Steam rate limit is reported while normal history uses the same time budget', () => withStoreDir(async (dir) => {
+  const { Sync } = require('../src/main/sync');
+  const store = new Store(dir);
+  const m = matches[0];
+  const account = m.players[0].account_id;
+  await store.putMatch(m);
+  let originalSignal;
+  const api = {
+    matchHistoryFresh: async (_id, { signal }) => { originalSignal = signal; throw Object.assign(new Error('rate-limited'), { code: 429 }); },
+    matchHistory: async (_id, _ttl, { signal }) => { assert.strictEqual(signal, originalSignal); throw new Error('offline'); },
+  };
+  const result = await new Sync({ store, api }).myMatches(account, { fresh: true });
+  assert.deepStrictEqual([result.fresh.limited, result.source, result.list[0].match_id], [true, 'saved', m.match_id]);
+}));
+
+test('pending Steam matches preserve another account and entries added during a request', () => withStoreDir(async (dir) => {
+  const { Sync } = require('../src/main/sync');
+  const store = new Store(dir);
+  const account = 123;
+  const at = Date.now();
+  store.write('pending.json', [{ match_id: 70001, accountId: account, at }, { match_id: 70002, accountId: 456, at }]);
+  const api = {
+    matchHistory: async () => [],
+    matchMetadataOnce: async (id) => {
+      assert.strictEqual(id, 70001);
+      store.write('pending.json', [...store.read('pending.json', []), { match_id: 70003, accountId: account, at }]);
+      throw new Error('still processing');
+    },
+  };
+  const sync = new Sync({ store, api });
+  const cached = await sync.myMatches(account, { cachedOnly: true });
+  assert.deepStrictEqual(cached.list.map((x) => x.match_id), [70001]);
+  assert.strictEqual(store.read('pending.json')[0].tried, undefined);
+  const result = await sync.myMatches(account);
+  assert.deepStrictEqual(result.list.map((x) => x.match_id), [70001, 70003]);
+  assert.deepStrictEqual(store.read('pending.json').map((x) => x.match_id), [70001, 70002, 70003]);
+  assert.ok(store.read('pending.json')[0].tried >= at);
+}));
+
+test('pregame plan uses saved matches on the selected hero without requesting history', () => withStoreDir(async (dir) => {
+  const { Sync } = require('../src/main/sync');
+  const store = new Store(dir);
+  const match = matches[0];
+  const player = match.players[0];
+  const foe = match.players.find((p) => p.team !== player.team);
+  const otherHero = player.hero_id + 1000;
+  await store.putMatch({ ...match, game_mode: 1, match_mode: 1 });
+  await store.putMatch({ ...match, match_id: match.match_id + 1000, game_mode: 1, match_mode: 1,
+    players: [{ ...player, hero_id: otherHero, won: !player.won }, ...match.players.slice(1)] });
+  await store.putMatch({ ...match, match_id: match.match_id + 2000, game_mode: 1, match_mode: 2 });
+  let requests = 0;
+  const api = { matchHistory: async () => { requests++; throw new Error('History unavailable'); } };
+  const sync = new Sync({ store, api });
+  const opts = { enemies: [foe.hero_id], laneFoe: foe.hero_id };
+  const first = await sync.prepareGame(player.account_id, { ...opts, myHero: player.hero_id });
+  assert.strictEqual(first.myGames, 1);
+  assert.strictEqual(first.rows[0].mine.games, 1);
+  assert.strictEqual(first.rows[0].mine.wins, Number(player.won));
+  const second = await sync.prepareGame(player.account_id, { ...opts, myHero: otherHero });
+  assert.strictEqual(second.rows[0].mine.wins, Number(!player.won));
+  const empty = await sync.prepareGame(player.account_id, { ...opts, myHero: otherHero + 1 });
+  assert.strictEqual(empty.myGames, 0);
+  assert.strictEqual(empty.rows[0].mine, null);
+  assert.strictEqual(requests, 0);
+}));
+
+test('saved episode opens without waiting for a route download', () => withStoreDir(async (dir) => {
+  const { Sync } = require('../src/main/sync');
+  const store = new Store(dir);
+  const match = { ...matches[0], game_mode: 1, match_mode: 4, paths: null, pathsTried: false };
+  const player = match.players[0];
+  await store.putMatch(match);
+  const other = { ...player, account_id: player.account_id + 1000 };
+  store.write('top.json', { players: [{ accountId: other.account_id }] });
+  await store.putMatch({ ...match, match_id: match.match_id + 1000, match_mode: 1, players: [other, ...match.players.slice(1)] });
+  await store.putMatch({ ...match, match_id: match.match_id + 1001, players: [other, ...match.players.slice(1)] });
+  let requests = 0;
+  const api = { matchMetadata: async () => { requests++; throw new Error('Offline'); } };
+  const sync = new Sync({ store, api });
+  const analysis = await sync.analyzeMatch({ matchId: match.match_id, accountId: player.account_id, preferSaved: true });
+  assert.strictEqual(analysis.match.match_id, match.match_id);
+  assert.strictEqual(analysis.map.paths, null);
+  assert.strictEqual(analysis.benchMode, 4);
+  assert.strictEqual(analysis.result.benchN, 1);
+  assert.strictEqual(requests, 0);
+  assert.strictEqual(store.getMatch(match.match_id).pathsTried, false);
+}));
+
+test('saved match exports even if the published-build service is unavailable', () => withStoreDir(async (dir) => {
+  const { Sync } = require('../src/main/sync');
+  const { decodeBuildCode } = require('../src/core/gameCode');
+  const store = new Store(dir);
+  const match = matches[0];
+  const player = match.players[0];
+  await store.putMatch(match);
+  store.write('auth.json', { accountId: player.account_id, name: 'Игрок' });
+  store.write('assets.json', { ...assets, heroes: { [player.hero_id]: { id: player.hero_id, name: 'Герой' } } });
+  let suggestions = 0;
+  const api = { builds: async (_hero, { signal }) => {
+    assert.ok(signal instanceof AbortSignal);
+    suggestions++;
+    throw new Error('Offline');
+  } };
+  const sync = new Sync({ store, api });
+  const build = await sync.matchBuild(match.match_id, player.account_id);
+  assert.deepStrictEqual([build.playerName, build.similar.length, build.similarError, suggestions], ['Игрок', 0, 'Offline', 1]);
+  const exported = sync.buildExportText(build);
+  assert.strictEqual(decodeBuildCode(exported.gameCode).heroId, player.hero_id);
+  assert.ok(exported.file.hero_build.details.mod_categories.length > 0);
+}));
+
+test('hero catalog upgrades explicit selectability and retains the old catalog offline', () => withStoreDir(async (dir) => {
+  const { Sync } = require('../src/main/sync');
+  const store = new Store(dir);
+  const old = { v: 6, fetchedAt: Date.now(), heroes: { 88: { id: 88, inDev: true } }, items: {} };
+  store.write('assets.json', old);
+  const offline = async () => { throw new Error('offline'); };
+  const api = { heroesAssets: offline, itemsAssets: async () => [], mapAssets: async () => null, ranksAssets: async () => [] };
+  const sync = new Sync({ store, api });
+  assert.deepStrictEqual(await sync.loadAssets(), old);
+  let finish;
+  api.heroesAssets = () => new Promise((resolve) => { finish = resolve; });
+  const pending = sync.loadAssets();
+  assert.strictEqual(sync.loadAssets(), pending);
+  assert.deepStrictEqual(sync.assets, old);
+  finish([
+    { id: 88, name: 'Baba', in_development: true, player_selectable: true, development_state: 'release', colors: { ui: [22, 63, 91] } },
+    { id: 86, name: 'Violet', in_development: true, development_state: 'release' },
+    { id: 89, player_selectable: false, development_state: 'release' },
+    { id: 90, development_state: 'unreleased' },
+    { id: 91, disabled: true, player_selectable: true },
+  ]);
+  const updated = await pending;
+  assert.strictEqual(updated.v, 8);
+  assert.deepStrictEqual(updated.heroes[88].color, [22, 63, 91]);
+  assert.deepStrictEqual(Object.values(updated.heroes).filter((x) => !x.disabled && x.selectable).map((x) => x.id), [86, 88]);
+  api.heroesAssets = offline;
+  assert.deepStrictEqual(await sync.loadAssets(true), updated);
+}));
+
 test('pick advice: best pick vs enemies, keep/swap verdict, pool rules', () => {
-  const { heroPool, pickAdvice, gamePlan, buildPickMeta, pairDelta, heroRole, teamComp, mixMatchup, MY_SHARE } = require('../src/core/pick');
-  const now = 1000 * 86400;
+  const { heroPool, pickAdvice, gamePlan, buildPickMeta, pairDelta, heroRole, teamComp, mixMatchup, MY_SHARE, RANKED_HERO_RULE } = require('../src/core/pick');
+  const now = RANKED_HERO_RULE.from + 100 * 86400;
   const hist = [];
-  // герой 1: 30 обычных (18 побед), недавно; 2: 25 обычных (16 побед), недавно; 3: 20 обычных (10 побед), давно;
-  // 4: 6 игр, из них 4 рейтинговых недавно (раз играл в рейтинге — значит доступен); 5: одна рейтинговая
-  const push = (hero, n, wins, { mode = 1, t = now - 86400 } = {}) => { for (let i = 0; i < n; i++) hist.push({ hero_id: hero, won: i < wins, match_mode: mode, start_time: t - i }); };
-  push(1, 30, 18); push(2, 25, 16); push(3, 20, 15, { t: now - 200 * 86400 }); push(4, 2, 1); push(4, 4, 2, { mode: 4 }); push(5, 1, 1, { mode: 4 });
+  const push = (hero, n, wins, { mode = 4, t = now - 86400 } = {}) => {
+    for (let i = 0; i < n; i++) hist.push({ match_id: hist.length + 1, hero_id: hero, won: i < wins, game_mode: 1, match_mode: mode, start_time: t - i });
+  };
+  push(1, 30, 18); push(2, 25, 16); push(3, 20, 15, { mode: 1, t: now - 80 * 86400 }); push(4, 2, 1); push(4, 4, 2); push(5, 1, 1);
   const hp = heroPool(hist, { now });
-  assert.deepStrictEqual(hp.pool.map((p) => p.hero_id).sort(), [1, 2, 4], '15+ побед в обычных или игры в рейтинге, и играешь последние 2 месяца');
+  assert.deepStrictEqual(hp.pool.map((p) => p.hero_id).sort(), [1, 2, 4], 'свидетельство рейтинга или 35 очков, недавние игры в приоритете');
   assert.deepStrictEqual(hp.inactive.map((p) => p.hero_id).sort(), [3, 5], 'давно не играл / одна игра — отдельно');
-  assert.strictEqual(hp.inactive.find((p) => p.hero_id === 3).lastDays, 200);
+  assert.strictEqual(hp.inactive.find((p) => p.hero_id === 3).lastDays, 80);
   assert.deepStrictEqual(heroPool(hist, { manual: [3, 5], now }).pool.map((p) => p.hero_id), [3, 5], 'ручной список');
 
   // роли из справочника
@@ -863,13 +1311,14 @@ test('leaks: new match data (v2) and mistakes with moments', () => {
   const keys = leaks.map((l) => l.key);
   assert.ok(keys.includes('lane_trades'), 'размены на линии');
   const lt = leaks.find((l) => l.key === 'lane_trades');
-  assert.ok(/Тяжёлый матчап с H26/.test(lt.title) && /6% реже/.test(lt.text), 'матчап по топам в тексте');
+  assert.ok(/900/.test(lt.text) && /3\s000/.test(lt.text) && /H26/.test(lt.context), 'урон в наблюдении и матчап отдельно');
   assert.strictEqual(lt.moments.length, 2);
   assert.ok(keys.includes('farm_while_fight'), 'лес во время проигранных драк');
   const fw = leaks.find((l) => l.key === 'farm_while_fight');
   assert.strictEqual(fw.moments.length, 2);
   assert.strictEqual(fw.cost.allyDeaths, 4);
-  assert.ok(/19 с бега/.test(fw.moments[0].text), `время бега: ${fw.moments[0].text}`);
+  assert.ok(/19 с по прямой/.test(fw.moments[0].text), `оценка по прямой: ${fw.moments[0].text}`);
+  assert.match(fw.context, /приблизительную оценку/);
   assert.ok(keys.includes('map_timings'), 'тайминги карты');
   assert.ok(/у игроков Ascendant\+/.test(leaks.find((l) => l.key === 'map_timings').text));
   assert.ok(!keys.includes('sinner'), 'урна душ — командная, личной ошибкой не считается');
@@ -924,6 +1373,19 @@ test('leaks: new match data (v2) and mistakes with moments', () => {
   assert.strictEqual(lr.wrWith, null, 'мало игр с ошибкой — винрейт не показываем');
   assert.strictEqual(lr.deaths, 4);
   assert.strictEqual(prof.rows[0].key, 'lane_trades', 'на первом месте — то, что чаще и дороже');
+  assert.strictEqual(prof.goal.title, 'Не больше одной смерти до 10:00');
+  assert.ok(prof.goal.episode.t >= 0 && [1, 2].includes(prof.goal.episode.matchId));
+  assert.strictEqual(L.leakProfile(games.filter((g) => g.match_id !== 2)).goal, null);
+  const noTime = games.map((g) => ({ ...g, leaks: g.leaks.map((l) => ({ ...l, moments: [] })) }));
+  assert.strictEqual(L.leakProfile(noTime).goal, null);
+  const coverage = L.leakProfile(games.map((g) => ({
+    ...g, checked: g.match_id === 3 ? ['lane_trades'] : [],
+  })));
+  const coveredLane = coverage.rows.find((r) => r.key === 'lane_trades');
+  assert.deepStrictEqual([coveredLane.count, coveredLane.eligible, coveredLane.unknown], [2, 3, 2]);
+  assert.strictEqual(coveredLane.share, 2 / 3);
+  assert.strictEqual(coveredLane.wrWithout, null);
+  assert.strictEqual(coverage.goal.eligible, 3);
 
   // ---- что берут против героя ----
   const recs = [];

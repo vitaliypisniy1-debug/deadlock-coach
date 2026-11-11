@@ -261,6 +261,11 @@ function createWindow() {
       sandbox: true,
     },
   });
+  win.on('app-command', (_event, command) => {
+    if (command === 'browser-backward' || command === 'browser-forward') {
+      win.webContents.send('navigation:step', command === 'browser-backward' ? -1 : 1);
+    }
+  });
   if (b.maximized) win.maximize();
   win.on('closed', () => {
     if (overlay && !overlay.isDestroyed()) overlay.destroy();

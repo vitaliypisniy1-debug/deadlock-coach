@@ -95,6 +95,8 @@
   // ---------- навигация ----------
   // Меню: «Моя игра» (главная, тренер, матчи, герои) и «Мета» (герои меты, перед игрой, про-игроки).
   const VIEW_OF = { home: 'overview', overview: 'overview', coach: 'coach', growth: 'growth', matches: 'camp', camp: 'camp', myheroes: 'camp', meta: 'meta', players: 'meta', prep: 'prep', settings: 'settings' };
+  const viewHistory = [];
+  let historyIndex = -1;
   function navKey() {
     if (S.view === 'camp') return S.my.mode === 'hero' ? 'myheroes' : 'matches';
     if (S.view === 'meta') return S.metaTab === 'players' ? 'players' : 'meta';
@@ -113,7 +115,7 @@
     if (t) t.textContent = `Мета · топ-${S.settings.topN}`;
   }
 
-  function setView(v) {
+  function setView(v, { record = true } = {}) {
     const prevKey = S.view ? navKey() : null;
     if (v === 'matches' || v === 'camp') S.my.mode = 'match';
     if (v === 'myheroes') S.my.mode = 'hero';
@@ -121,6 +123,11 @@
     if (v === 'players') S.metaTab = 'players';
     const view = VIEW_OF[v] || v;
     S.view = view;
+    const key = navKey();
+    if (record && key !== viewHistory[historyIndex]) {
+      viewHistory.splice(historyIndex + 1, viewHistory.length, key);
+      historyIndex = viewHistory.length - 1;
+    }
     for (const id of ['overview', 'coach', 'growth', 'meta', 'camp', 'prep', 'settings']) $(`view-${id}`).hidden = id !== view;
     render();
     if (navKey() !== prevKey) {
@@ -139,6 +146,27 @@
     if (view === 'growth' && S.auth && !S.growth.loading && (!S.growth.data || S.growth.for !== S.auth.accountId)) loadGrowth();
     if (view === 'prep' && S.auth && !S.prep.mu && !S.prep.muLoading) loadMyMatchups();
   }
+  let lastNavigationInput = null;
+  function navigateHistory(step, source) {
+    const time = performance.now();
+    // Один клик может дать и событие мыши Chromium, и команду Windows.
+    if (lastNavigationInput?.step === step && lastNavigationInput.source !== source
+      && time - lastNavigationInput.time < 150) {
+      lastNavigationInput = null;
+      return;
+    }
+    lastNavigationInput = { step, source, time };
+    const next = historyIndex + step;
+    if (next < 0 || next >= viewHistory.length) return;
+    historyIndex = next;
+    setView(viewHistory[historyIndex], { record: false });
+  }
+  dc.on('navigation:step', (step) => navigateHistory(step, 'windows'));
+  window.addEventListener('mouseup', (event) => {
+    if (event.button !== 3 && event.button !== 4) return;
+    event.preventDefault();
+    navigateHistory(event.button === 3 ? -1 : 1, 'mouse');
+  }, true);
   document.querySelectorAll('.nav-item').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
 
   function render() {
@@ -934,9 +962,7 @@
 
   async function openPlayer(accountId) {
     if (!accountId) return;
-    S.metaTab = 'players';
-    if (S.view !== 'meta') setView('players');
-    syncNav();
+    if (navKey() !== 'players') setView('players');
     S.selectedPlayer = Number(accountId);
     S.playerDetail = null;
     S.playerLoading = true;
@@ -1085,8 +1111,8 @@
         h('div', h('b.num', g.games ? `${g.passed}/${g.games}` : '—'), h('span', 'игр с выполнением')),
         h('div', h('b.num', g.streak ? `${g.streak}` : '0'), h('span', 'подряд')),
         h('div', h('b.num', g.baselineText), h('span', 'было обычно'))),
-      g.rows.length ? Charts.goalChart(g.rows, g.cmp) : h('div.dim.small', 'Пока нет игр для проверки'),
-      h('div.goal-bar', h('span', { style: { width: `${Math.round((rate || 0) * 100)}%` } })),
+      g.games ? Charts.goalChart(g.rows, g.cmp) : h('div.muted.small', g.rows.length ? 'Жду подробности матчей для проверки цели.' : 'Пока нет игр для проверки цели.'),
+      g.games ? h('div.goal-bar', h('span', { style: { width: `${Math.round((rate || 0) * 100)}%` } })) : null,
       g.tip ? h('div.tip', Icon('bulb'), h('span', g.tip)) : null);
   }
 
@@ -1673,7 +1699,8 @@
     const banner = h(`section.dash-banner${localArt ? '.painted' : ''}`,
       backdrop ? h('img.dash-hero-bg', { src: backdrop, alt: '', onerror: (e) => { e.currentTarget.hidden = true; } }) : null,
       portrait ? h('img.dash-hero-art', { src: portrait, alt: '', onerror: (e) => { e.currentTarget.hidden = true; } }) : null,
-      h('div.dash-banner-copy', h('h1', `Привет, ${S.auth.name?.trim() || 'игрок'}`),
+      h('div.dash-banner-copy', h('h1', 'Привет, ', h('span.dash-name', S.auth.name?.trim() || 'игрок')),
+        d ? h('div.dash-week', `${d.week.games} ${plural(d.week.games, 'матч', 'матча', 'матчей')} · ${d.hours.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} ч · ${d.heroes.length} ${plural(d.heroes.length, 'герой', 'героя', 'героев')} за 7 дней`) : null,
         latest ? h('div.dash-latest', `Последний матч · ${heroName(latest.hero_id)} · ${dashboardDate(latest.start_time)}`) : null,
         h('div.row.dash-banner-actions',
           h('button.btn.primary', { onclick: () => setView('matches') }, 'История матчей', Icon('arrow')),
@@ -1688,15 +1715,16 @@
     const card = (title, action, ...children) => h('section.panel.dash-card',
       h('div.dash-card-head', h('h2', title), action), children);
     const maxGames = Math.max(1, ...d.days.map((x) => x.games));
-    const bars = h('div.dash-days', d.days.map((x) => {
+    const bars = h('div.dash-days', { role: 'list', 'aria-label': 'Игры по дням' }, d.days.map((x) => {
       const label = `${dashboardDate(x.start)} · побед: ${x.wins} · поражений: ${x.losses}${x.unknown ? ' · без результата: ' + x.unknown : ''}`;
       const segment = (n, kind) => n ? h(`span.${kind}`, { style: { flex: String(n) } }) : null;
-      return h('div.dash-day', { title: label, 'aria-label': label },
-        h('strong.num', x.games || '—'), h('div.dash-track',
+      return h('div.dash-day', { role: 'listitem', title: label, 'aria-label': label },
+        h('strong.num', x.games), h('div.dash-track', { 'aria-hidden': 'true' },
           x.games ? h('div.dash-stack', { style: { height: `${x.games / maxGames * 100}%` } }, segment(x.wins, 'win'), segment(x.losses, 'loss'), segment(x.unknown, 'unknown')) : null),
-        h('span.muted', dashboardDate(x.start)));
+        h('span.muted', dashboardDate(x.start)),
+        h('span.dash-day-result.num', { 'aria-hidden': 'true' }, `${x.wins}–${x.losses}`));
     }));
-    const legend = h('div.dash-legend', h('span.win', 'Победы'), h('span.loss', 'Поражения'),
+    const legend = h('div.dash-legend', h('span.win', 'Победы'), h('span.loss', 'Поражения'), h('span', 'Счёт под датой'),
       d.week.unknown ? h('span.unknown', 'Без результата') : null);
     const rate = (value, label) => h('div.dash-rate', h('strong.num', F.pct(value.wr)), h('span', label),
       h('span.muted.small', `${value.wins + value.losses} с результатом из ${value.games} матчей`));
@@ -1710,9 +1738,9 @@
         h('span.num', x.wins + x.losses >= 3 ? F.pct(x.wr) : '—'))));
     v.replaceChildren(banner, h('div.dash-grid',
       card('Игры за неделю', h('span.muted.small', `${d.week.games} ${plural(d.week.games, 'матч', 'матча', 'матчей')}`), bars, legend),
-      card('Форма за 7 дней', null, h('div.dash-rates', rate(d.week, 'Последние 7 дней'), rate(d.baseline, 'Предыдущие 30 дней')), h('div.hint', deltaText)),
       card('Мои герои за неделю', h('button.btn.small', { onclick: () => setView('myheroes') }, 'Все герои', Icon('arrow')),
         d.heroes.length ? heroRows : h('div.muted.dash-empty', 'За неделю пока нет матчей.')),
+      card('Форма за 7 дней', null, h('div.dash-rates', rate(d.week, 'Последние 7 дней'), rate(d.baseline, 'Предыдущие 30 дней')), h('div.hint', deltaText)),
       card('Изменения рейтинга', null, dashboardRank(d.rank, d.season))),
       h('div.dash-footer', h('span.muted.small', model.error ? `История недоступна · ${model.error}`
         : model.loading ? 'Проверяю свежие матчи…' : d.source === 'saved' ? 'Показаны сохранённые матчи' : 'По доступной истории Deadlock API'),
@@ -2170,7 +2198,7 @@
     const good = h('div.panel.verdict-col.good',
       h('h2', 'Что получается'),
       r.strengths.length ? h('ul.verdict-list', r.strengths.map((s) => h('li', h('b', s.title), h('div', s.text))))
-        : h('div.muted', 'Пока нет показателей, где ты заметно сильнее топов на этом герое. Это нормально — топы задают высокую планку.'));
+        : h('div.muted', r.benchN ? 'В этой выборке пока нет показателей, где ты заметно сильнее топов.' : 'Пока нет матчей топов для сравнения. Твои личные результаты доступны ниже.'));
     const bad = h('div.panel.verdict-col.bad',
       h('h2', 'Чего не хватает'),
       r.weaknesses.length ? h('ul.verdict-list', r.weaknesses.map((w) => h(`li.${w.level}`,
@@ -2234,7 +2262,10 @@
     if (!S.my.list) return null;
     const ageMin = (Date.now() / 1000 - lastFinished()) / 60;
     if (S.my.list.length && ageMin < 20) return null;
-    return h('details.missing', { open: true },
+    return h('details.missing', {
+      open: (S.my.missingHintOpen ?? !S.my.list.length) || null,
+      ontoggle: (e) => { if (e.currentTarget.isConnected) S.my.missingHintOpen = e.currentTarget.open; },
+    },
       h('summary', 'Только что сыграл, а матча нет?'),
       h('ol',
         h('li', 'deadlock-api добавляет матчи в историю с задержкой — от пары минут до нескольких часов. Пока открыт этот раздел, я сам проверяю каждые 3 минуты.'),
@@ -2244,7 +2275,7 @@
   }
 
   function matchListPanel() {
-    const idInput = h('input.input', { placeholder: 'ID матча', value: S.my.matchInput || '', oninput: (e) => { S.my.matchInput = e.target.value; }, style: { flex: '1' } });
+    const idInput = h('input.input', { placeholder: 'ID матча', 'aria-label': 'ID матча', value: S.my.matchInput || '', oninput: (e) => { S.my.matchInput = e.target.value; }, style: { flex: '1' } });
     const items = [];
     if (S.my.list?.length) items.push(...matchRows(S.my.list, { selected: S.my.selected, onOpen: openMatch }));
     else if (!S.my.loading && S.my.list) items.push(h('div.muted', 'Матчей не найдено. Если ты недавно играл, нажми «Найти в кэше Steam».'));
@@ -2261,7 +2292,11 @@
     return h('div.panel',
       h('div.row', { style: { marginBottom: '12px' } }, h('h2', { style: { margin: 0 } }, 'Твои матчи'), h('div.grow'),
         h('button.btn.small.icon', { onclick: () => loadMyMatches(), disabled: S.my.loading || null, title: 'Обновить список', 'aria-label': 'Обновить список' }, Icon('refresh'))),
-      h('div.row.nowrap', { style: { marginBottom: '10px' } }, idInput, h('button.btn.small', { onclick: () => idInput.value.trim() && openMatch(idInput.value.trim()) }, 'Открыть')),
+      h('form.row.nowrap', { style: { marginBottom: '10px' }, onsubmit: (e) => {
+        e.preventDefault();
+        const id = idInput.value.trim();
+        if (id) openMatch(id);
+      } }, idInput, h('button.btn.small', { type: 'submit' }, 'Открыть')),
       h('div.find-row',
         h('button.btn.small', { onclick: scanCache, disabled: S.my.scanBusy || null, title: 'Ищет твои матчи в кэше Steam и отправляет их в deadlock-api на обработку' }, S.my.scanBusy ? h('span.spin') : Icon('search'), 'Найти в кэше Steam'),
         h('button.btn.small', { onclick: freshMatches, disabled: S.my.freshBusy || null, title: 'Просит deadlock-api взять свежую историю прямо из Steam. Можно примерно раз в час.' }, S.my.freshBusy ? h('span.spin') : Icon('download'), 'Запросить у Steam')),
@@ -2745,7 +2780,14 @@
   function renderSettings() {
     const s = S.settings;
     const f = {};
-    const field = (label, el, hint) => [h('label', label), h('div', el, hint ? h('div.hint', hint) : null)];
+    let fieldIndex = 0;
+    const field = (label, el, hint) => {
+      const id = `settings-field-${++fieldIndex}`;
+      const control = el.matches('input, select, textarea') ? el : el.querySelector('input');
+      control.id = id;
+      if (hint) control.setAttribute('aria-describedby', `${id}-hint`);
+      return [h('label', { for: id }, label), h('div', el, hint ? h('div.hint', { id: `${id}-hint` }, hint) : null)];
+    };
     f.region = h('select.select', ['Europe', 'NAmerica', 'SAmerica', 'Asia', 'Oceania'].map((r) => h('option', { value: r, selected: s.region === r }, { Europe: 'Европа', NAmerica: 'Северная Америка', SAmerica: 'Южная Америка', Asia: 'Азия', Oceania: 'Океания' }[r])));
     f.topN = h('select.select', [50, 100].map((n) => h('option', { value: n, selected: Number(s.topN) === n || null }, `Топ-${n}`)));
     f.topSource = h('select.select',

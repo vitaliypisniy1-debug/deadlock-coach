@@ -68,7 +68,7 @@ contextBridge.exposeInMainWorld('dc', {
   buildPng: (rect, name) => call('build:png', { rect, name }),
   copyBuildImage: (rect) => call('build:copyImage', { rect }),
   on: (channel, fn) => {
-    const allowed = ['progress', 'log', 'meta:updated', 'assets:updated', 'overlay:shown', 'update:available', 'update:progress', 'overlay:recognized', 'game:event', 'game:mode'];
+    const allowed = ['progress', 'log', 'meta:updated', 'assets:updated', 'overlay:shown', 'update:available', 'update:progress', 'overlay:recognized', 'game:event', 'game:mode', 'navigation:step'];
     if (!allowed.includes(channel)) return () => {};
     const h = (_e, payload) => fn(payload);
     ipcRenderer.on(channel, h);

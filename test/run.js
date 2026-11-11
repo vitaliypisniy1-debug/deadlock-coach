@@ -629,7 +629,7 @@ test('updater: versions, release parsing, check and download', async () => {
     tag_name: 'v0.9.0', name: 'Deadlock Coach 0.9.0', body: '- Оверлей\n- Фиксы', html_url: 'https://github.com/u/r/releases/tag/v0.9.0',
     assets: [
       { name: 'DeadlockCoach-Portable-0.9.0.exe', browser_download_url: 'https://x/p.exe', size: 5 },
-      { name: 'DeadlockCoach-Setup-0.9.0.exe', browser_download_url: 'https://x/s.exe', size: 6 },
+      { name: 'DeadlockCoach-Setup-0.9.0.exe', browser_download_url: 'https://x/s.exe', size: 6, digest: 'sha256:7192385c3c0605de55bb9476ce1d90748190ecb32a8eed7f5207b30cf6a1fe89' },
     ],
   };
   const pr = pickRelease(rel);

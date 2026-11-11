@@ -10,6 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const crypto = require('crypto');
 
 // Сравнение версий вида 0.9.0 / v1.2.3 / 1.0.0-beta.1
 function parseVersion(v) {
@@ -45,7 +46,7 @@ function pickRelease(rel) {
     page: rel.html_url || null,
     published: rel.published_at || null,
     prerelease: !!rel.prerelease,
-    setup: setup ? { name: setup.name, url: setup.browser_download_url, size: setup.size || 0 } : null,
+    setup: setup ? { name: setup.name, url: setup.browser_download_url, size: setup.size || 0, digest: setup.digest || null } : null,
     portable: portable ? { name: portable.name, url: portable.browser_download_url, size: portable.size || 0 } : null,
   };
 }
@@ -89,6 +90,10 @@ class Updater {
     if (this.downloading) return this.downloading;
     const rel = this.latest;
     if (!rel || !rel.setup) throw new Error('В релизе нет установщика — подожди, пока GitHub его соберёт (обычно 5–10 минут после публикации).');
+    const digestMatch = String(rel.setup.digest || '').match(/^sha256:([a-f0-9]{64})$/i);
+    if (!digestMatch) throw new Error('GitHub не предоставил SHA-256 установщика. Обновление остановлено; скачай новую версию со страницы релиза вручную.');
+    const expectedDigest = digestMatch[1].toLowerCase();
+    this.file = null;
     this.downloading = (async () => {
       const dest = path.join(os.tmpdir(), `DeadlockCoach-Setup-${rel.version}.exe`);
       const res = await this.fetch(rel.setup.url, { headers: { 'User-Agent': 'DeadlockCoach/1.0' }, redirect: 'follow' });
@@ -96,6 +101,7 @@ class Updater {
       const total = Number(res.headers.get('content-length')) || rel.setup.size || 0;
       const out = fs.createWriteStream(dest);
       let got = 0;
+      const hash = crypto.createHash('sha256');
       let lastPct = -1;
       const reader = res.body.getReader();
       try {
@@ -103,6 +109,7 @@ class Updater {
           const { done, value } = await reader.read();
           if (done) break;
           got += value.length;
+          hash.update(value);
           if (!out.write(Buffer.from(value))) await new Promise((r) => out.once('drain', r));
           const pct = total ? Math.floor((got / total) * 100) : -1;
           if (pct !== lastPct) {
@@ -113,7 +120,15 @@ class Updater {
       } finally {
         await new Promise((r) => out.end(r));
       }
-      if (rel.setup.size && got !== rel.setup.size) throw new Error('Установщик скачался не полностью — попробуй ещё раз.');
+      if (rel.setup.size && got !== rel.setup.size) {
+        try { fs.unlinkSync(dest); } catch {}
+        throw new Error('Установщик скачался не полностью — попробуй ещё раз.');
+      }
+      const actualDigest = hash.digest('hex');
+      if (actualDigest !== expectedDigest) {
+        try { fs.unlinkSync(dest); } catch {}
+        throw new Error('SHA-256 установщика не совпал с GitHub. Файл удалён и запуск заблокирован. Попробуй скачать обновление ещё раз.');
+      }
       this.file = dest;
       return { file: dest, size: got };
     })();

@@ -1973,6 +1973,7 @@
     else if (S.my.error) items.push(h('div.muted', S.my.error));
     else if (S.my.list && !S.my.list.length) items.push(h('div.muted', 'Матчей не найдено. Если ты недавно играл, нажми «Найти в кэше Steam».'));
     else if (S.my.list) items.push(...matchRows(S.my.list, { selected: S.my.selected, onOpen: openMatch }));
+    const savedHistory = S.my.list?.some((match) => match.source === 'saved-history');
     return h('div.panel',
       h('div.row', { style: { marginBottom: '12px' } }, h('h2', { style: { margin: 0 } }, 'Твои матчи'), h('div.grow'),
         h('button.btn.small.icon', { onclick: loadMyMatches, title: 'Обновить список', 'aria-label': 'Обновить список' }, Icon('refresh'))),
@@ -1981,6 +1982,7 @@
         h('button.btn.small', { onclick: scanCache, disabled: S.my.scanBusy || null, title: 'Ищет твои матчи в кэше Steam и отправляет их в deadlock-api на обработку' }, S.my.scanBusy ? h('span.spin') : Icon('search'), 'Найти в кэше Steam'),
         h('button.btn.small', { onclick: freshMatches, disabled: S.my.freshBusy || null, title: 'Просит deadlock-api взять свежую историю прямо из Steam. Можно примерно раз в час.' }, S.my.freshBusy ? h('span.spin') : Icon('download'), 'Запросить у Steam')),
       missingHint(),
+      savedHistory ? h('div.hint', 'Показываю сохранённые матчи. Свежая история пока недоступна.') : null,
       h('div.match-list', items));
   }
 

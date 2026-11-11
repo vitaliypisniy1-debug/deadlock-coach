@@ -16,9 +16,18 @@ function isStandardMatch(m, { onlyRanked = false } = {}) {
   return true;
 }
 
+// Справочник заполняется до передачи в расчёты и заменяется при обновлении.
+const hasCatalogItems = new WeakMap();
+
 function isUpgrade(assets, id) {
   const items = assets && assets.items;
-  if (!items || !Object.keys(items).length) return true; // справочник не загружен — не выкидываем
+  if (!items) return true;
+  let hasItems = hasCatalogItems.get(items);
+  if (hasItems === undefined) {
+    hasItems = Object.keys(items).length > 0;
+    hasCatalogItems.set(items, hasItems);
+  }
+  if (!hasItems) return true; // справочник не загружен — не выкидываем
   const it = items[id];
   if (!it) return false; // нет в списке предметов магазина — это способность или служебная запись
   return !it.type || it.type === 'upgrade';

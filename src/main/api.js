@@ -1,4 +1,5 @@
 'use strict';
+const { setTimeout: delay } = require('node:timers/promises');
 // Клиент deadlock-api.com: очередь запросов, паузы при лимитах, повторы при сбоях,
 // кэш ответов в памяти. Ключ API не обязателен, но с ним лимиты выше
 // (бесплатно выдают в Discord проекта).
@@ -49,25 +50,39 @@ class Api {
     }
   }
 
-  _enqueue(fn) {
+  _enqueue(fn, signal) {
     return new Promise((resolve, reject) => {
-      this.queue.push(() => fn().then(resolve, reject));
+      if (signal?.aborted) return reject(signal.reason);
+      const job = () => {
+        signal?.removeEventListener('abort', cancelQueued);
+        return fn().then(resolve, reject);
+      };
+      const cancelQueued = () => {
+        const index = this.queue.indexOf(job);
+        if (index >= 0) this.queue.splice(index, 1);
+        reject(signal.reason);
+      };
+      signal?.addEventListener('abort', cancelQueued, { once: true });
+      this.queue.push(job);
       this._pump();
     });
   }
 
-  async _request(path, { method = 'GET', body = null, attempt = 0, noRetry = false } = {}) {
+  async _request(path, { method = 'GET', body = null, attempt = 0, noRetry = false, signal } = {}) {
+    signal?.throwIfAborted();
     const headers = { 'User-Agent': 'DeadlockCoach/1.0', Accept: 'application/json' };
     const key = this.getApiKey();
     if (key) headers['X-API-KEY'] = key;
     if (body) headers['Content-Type'] = 'application/json';
     let res;
     try {
-      res = await fetch(/^https:\/\//.test(path) ? path : BASE + path, { method, headers, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(45000) });
+      const timeout = AbortSignal.timeout(45000);
+      res = await fetch(/^https:\/\//.test(path) ? path : BASE + path, { method, headers, body: body ? JSON.stringify(body) : undefined, signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
     } catch (e) {
+      signal?.throwIfAborted();
       if (attempt < 3) {
-        await sleep(1500 * (attempt + 1));
-        return this._request(path, { method, body, attempt: attempt + 1 });
+        await delay(1500 * (attempt + 1), undefined, { signal });
+        return this._request(path, { method, body, attempt: attempt + 1, noRetry, signal });
       }
       throw new Error(`Нет связи с deadlock-api.com (${e.message})`);
     }
@@ -83,8 +98,8 @@ class Api {
       const ra = Number(res.headers.get('retry-after'));
       const waitMs = Number.isFinite(ra) && ra > 0 ? ra * 1000 : 3000 * 2 ** attempt;
       this.pausedUntil = Date.now() + waitMs;
-      await sleep(waitMs);
-      return this._request(path, { method, body, attempt: attempt + 1 });
+      await delay(waitMs, undefined, { signal });
+      return this._request(path, { method, body, attempt: attempt + 1, noRetry, signal });
     }
     if (!res.ok) {
       const text = await res.text().catch(() => '');
@@ -97,12 +112,12 @@ class Api {
   }
 
   // GET с кэшем в памяти на ttlMs.
-  get(path, { ttlMs = 0 } = {}) {
+  get(path, { ttlMs = 0, signal } = {}) {
     if (ttlMs) {
       const hit = this.cache.get(path);
       if (hit && hit.until > Date.now()) return Promise.resolve(hit.value);
     }
-    return this._enqueue(() => this._request(path)).then((value) => {
+    return this._enqueue(() => this._request(path, { signal }), signal).then((value) => {
       if (ttlMs) this.cache.set(path, { value, until: Date.now() + ttlMs });
       return value;
     });
@@ -122,9 +137,9 @@ class Api {
   }
 
   // Свежая история прямо из Steam (лимит deadlock-api — примерно раз в час с одного адреса).
-  matchHistoryFresh(accountId) {
+  matchHistoryFresh(accountId, { signal } = {}) {
     const path = `/v1/players/${accountId}/match-history?force_refetch=true`;
-    return this._enqueue(() => this._request(path, { noRetry: true })).then((r) => {
+    return this._enqueue(() => this._request(path, { noRetry: true, signal }), signal).then((r) => {
       const list = Array.isArray(r) ? r : (r && (r.matches || r.match_history || r.history)) || [];
       this.cache.set(`/v1/players/${accountId}/match-history`, { value: list, until: Date.now() + 2 * 60e3 });
       return list;
@@ -132,12 +147,12 @@ class Api {
   }
 
   // Метаданные без повторов при лимите (для проверки «новых» матчей).
-  matchMetadataOnce(matchId) {
-    return this._enqueue(() => this._request(`/v1/matches/${matchId}/metadata`, { noRetry: true }));
+  matchMetadataOnce(matchId, { signal } = {}) {
+    return this._enqueue(() => this._request(`/v1/matches/${matchId}/metadata`, { noRetry: true, signal }), signal);
   }
 
-  matchHistory(accountId, ttlMs = 20 * 60e3) {
-    return this.get(`/v1/players/${accountId}/match-history`, { ttlMs }).then((r) => {
+  matchHistory(accountId, ttlMs = 20 * 60e3, { signal } = {}) {
+    return this.get(`/v1/players/${accountId}/match-history`, { ttlMs, signal }).then((r) => {
       if (Array.isArray(r)) return r;
       if (r && typeof r === 'object') return r.matches || r.match_history || r.history || [];
       return [];
@@ -192,8 +207,8 @@ class Api {
     return this.get(`/v1/players/steam-search?search_query=${encodeURIComponent(name)}&limit=20`, { ttlMs: 6 * 3600e3 }).then((r) => (Array.isArray(r) ? r : []));
   }
 
-  matchMetadata(matchId) {
-    return this.get(`/v1/matches/${matchId}/metadata`);
+  matchMetadata(matchId, { signal } = {}) {
+    return this.get(`/v1/matches/${matchId}/metadata`, { signal });
   }
 
   steamProfiles(accountIds) {
@@ -315,10 +330,6 @@ function normRows(r, cols) {
     return out;
   }
   return [];
-}
-
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
 }
 
 module.exports = { Api, NotFoundError, BASE, normRows };

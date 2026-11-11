@@ -635,14 +635,14 @@ class Sync {
       this.progress('matches', done, todo.length, `Скачиваю матчи: ${done}/${todo.length}`);
       try {
         const raw = await this.api.matchMetadata(id);
-        this.store.putMatch(extractMatch(raw));
+        await this.store.putMatch(extractMatch(raw));
         delete missing[id];
         mr.downloaded += 1;
       } catch (e) {
         const stored = this.store.getMatch(id);
         if (stored) {
           stored.upgradeTried = true;
-          this.store.putMatch(stored);
+          await this.store.putMatch(stored);
           continue;
         }
         if (e instanceof NotFoundError) {
@@ -799,7 +799,7 @@ class Sync {
         if (e instanceof NotFoundError) throw new Error('Подробных данных этого матча пока нет в deadlock-api. Попробуй позже.');
         throw e;
       }
-      this.store.putMatch(m);
+      await this.store.putMatch(m);
     }
     return m;
   }
@@ -954,7 +954,7 @@ class Sync {
       try {
         const m = extractMatch(await this.api.matchMetadataOnce(p.match_id), { paths: true });
         m.pathsTried = true;
-        this.store.putMatch(m);
+        await this.store.putMatch(m);
       } catch (e) {
         // ещё не обработан — попробуем позже
       }
@@ -996,7 +996,7 @@ class Sync {
       try {
         const m = await this.fetchMine(mid);
         m.pathsTried = true;
-        this.store.putMatch(m);
+        await this.store.putMatch(m);
         mine.add(mid);
       } catch (e) {
         if (e instanceof NotFoundError) notFound += 1;
@@ -1051,7 +1051,7 @@ class Sync {
       try {
         const m = await this.fetchMine(need[i].match_id);
         m.pathsTried = true;
-        this.store.putMatch(m);
+        await this.store.putMatch(m);
       } catch (e) {
         // нет в API — посчитаем без подробностей
       }
@@ -1364,7 +1364,7 @@ class Sync {
   async leaks(accountId, { limit = 30 } = {}) {
     const id = Number(accountId);
     const list = await this.myLoadedGames(id, { limit, download: limit, label: 'Скачиваю твои матчи для разбора ошибок' });
-    const topHero = this.topFeaturesByHero();
+    const topHero = await this.topFeaturesByHero();
     const counters = this.counterTable();
     const picks = this.store.read('picktables.json', null);
     const heroName = (hid) => (this.assets && this.assets.heroes[hid] ? this.assets.heroes[hid].name : `Герой ${hid}`);
@@ -1420,21 +1420,23 @@ class Sync {
     };
   }
 
-  topFeaturesByHero() {
+  async topFeaturesByHero() {
     // кэш до изменения набора матчей (считать заново — секунды на тысячах игр)
     const all = this.store.allMatches();
     const key = `${all.length}:${all.reduce((s, m) => s + (m.v || 1), 0)}:${this.topAccounts().size}`;
     if (this._topHero && this._topHero.key === key) return this._topHero.map;
-    const map = this.computeTopFeatures();
+    const map = await this.computeTopFeatures();
     this._topHero = { key, map };
     return map;
   }
 
-  computeTopFeatures() {
+  async computeTopFeatures() {
     const by = new Map();
+    let processed = 0;
     for (const r of this.topRecords()) {
       if (!by.has(r.player.hero_id)) by.set(r.player.hero_id, []);
       by.get(r.player.hero_id).push(playerFeatures(r.player, r.match, this.assets));
+      if (++processed % 250 === 0) await new Promise((resolve) => setImmediate(resolve));
     }
     return new Map([...by.entries()].map(([h, list]) => [h, refAll(list)]));
   }
@@ -1450,7 +1452,7 @@ class Sync {
       try {
         const m = await this.fetchMine(need[i].match_id);
         m.pathsTried = true;
-        this.store.putMatch(m);
+        await this.store.putMatch(m);
       } catch (e) {
         // матча нет в API — пропустим
       }
@@ -1509,7 +1511,7 @@ class Sync {
     const lobbyF = [];
     for (const g of games) if (g.match && g.me) for (const p of g.match.players) if (p !== g.me && !p.abandoned) lobbyF.push(playerFeatures(p, g.match, this.assets));
     const lobby = refAll(lobbyF);
-    const topHero = this.topFeaturesByHero();
+    const topHero = await this.topFeaturesByHero();
     // признаки усталости и тильта
     const decided = games.filter((g) => g.won !== null);
     const wrOf = (l) => (l.length ? l.filter((g) => g.won).length / l.length : null);
@@ -1608,7 +1610,7 @@ class Sync {
         try {
           const m = await this.fetchMine(need[i].match_id);
           m.pathsTried = true;
-          this.store.putMatch(m);
+          await this.store.putMatch(m);
         } catch {}
       }
       if (need.length && !quiet) this.progress('done', 1, 1, 'Готово');
@@ -1686,7 +1688,7 @@ class Sync {
       } catch (e) {
         if (stored) {
           stored.pathsTried = true;
-          this.store.putMatch(stored);
+          await this.store.putMatch(stored);
           return stored;
         }
         if (e instanceof NotFoundError) {
@@ -1694,7 +1696,7 @@ class Sync {
         }
         throw e;
       }
-      this.store.putMatch(m);
+      await this.store.putMatch(m);
     }
     const mine = new Set(this.store.read('mine.json', []));
     if (!mine.has(id)) {
@@ -1753,7 +1755,8 @@ class Sync {
       const laneVs = table && table.vs ? Object.fromEntries(Object.entries(table.vs).map(([k, v]) => [k, typeof v.pro === 'number' ? v.pro : v.delta])) : null;
       const heroName = (hid) => (this.assets && this.assets.heroes[hid] ? this.assets.heroes[hid].name : `Герой ${hid}`);
       const tierOf = Array.isArray(m.badge) && typeof m.badge[me.team] === 'number' ? Math.floor(m.badge[me.team] / 10) : null;
-      const ctx = { m, me, f: playerFeatures(me, m, this.assets), ref: this.topFeaturesByHero().get(me.hero_id) || null, tier: tierOf, assets: this.assets, counters: this.counterTable(), laneVs, heroName, itemName: nameOf };
+      const topHero = await this.topFeaturesByHero();
+      const ctx = { m, me, f: playerFeatures(me, m, this.assets), ref: topHero.get(me.hero_id) || null, tier: tierOf, assets: this.assets, counters: this.counterTable(), laneVs, heroName, itemName: nameOf };
       leaks = gameLeaks(ctx);
       highlights = gameHighlights(ctx);
       // не хвалим и не ругаем за одно и то же: если по карте есть ошибка, похвалу за карту убираем
@@ -1821,3 +1824,4 @@ class Sync {
 }
 
 module.exports = { Sync };
+

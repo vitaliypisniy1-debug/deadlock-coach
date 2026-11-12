@@ -1015,6 +1015,17 @@ h2 > .dot.ally { background: var(--ally); box-shadow: 0 0 10px rgba(111, 178, 25
 .ol-mates { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); column-gap: 28px; }
 .ol-mates .mu-row:first-child { border-top: 0; }
 
+/* ===== Справочник контрпиков ===== */
+.pill.dim { color: var(--muted); opacity: 0.9; }
+.codex-item { padding: 10px 0; border-top: 1px solid var(--line); font-size: 13px; color: var(--text-2); }
+.codex-item:first-child { border-top: 0; }
+.codex-item > .row { margin-bottom: 2px; }
+.codex-item details { margin-top: 6px; }
+.codex-item summary { cursor: pointer; font-size: 12px; color: var(--accent); user-select: none; }
+.codex-item summary:hover { text-decoration: underline; }
+.codex-detail { margin-top: 6px; padding: 10px 12px; border-radius: var(--radius-s); background: var(--bg-2); border: 1px solid var(--line); font-size: 12.5px; display: grid; gap: 5px; }
+ul.codex-threats { margin: 8px 0 0 18px; padding: 0; display: grid; gap: 5px; font-size: 13px; color: var(--text-2); }
+
 /* ===== Скилл-билд ===== */
 .btn.ghost { background: transparent; border-color: var(--line-2); color: var(--text-2); }
 .btn.ghost:hover { color: var(--text); border-color: var(--accent); }

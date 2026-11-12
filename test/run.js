@@ -1502,6 +1502,143 @@ test('leaks: new match data (v2) and mistakes with moments', () => {
   assert.strictEqual(L.winLink('pu10', 7).wr, 0.519);
 });
 
+test('counter codex: picks, items, rules, small samples, stale, hero switch, false counter item', () => {
+  const C = require('../src/core/counters');
+  const { RULES } = require('../src/core/counterRules');
+
+  // синтетическая мета: 50 героев, ~50% побед; герой 5 сильный (55%),
+  // герой 2 выигрывает против него 62% — это и есть контрпик
+  const heroes = Array.from({ length: 50 }, (_, i) => i + 1);
+  const pm = { v: 1, badge: 81, since: 1000, at: 2000, games: 100000, base: {}, vs: {}, lane: {}, with: {}, duo: {}, souls: {} };
+  for (const h of heroes) {
+    pm.base[h] = [500, 1000];
+    pm.vs[h] = {};
+    pm.lane[h] = {};
+    pm.souls[h] = {};
+    for (const e of heroes) {
+      if (e === h) continue;
+      pm.vs[h][e] = [500, 1000];
+      pm.lane[h][e] = [150, 300];
+      pm.souls[h][e] = [0, 300];
+    }
+  }
+  pm.base[5] = [550, 1000];
+  pm.vs[2][5] = [620, 1000];
+  pm.lane[2][5] = [200, 300];
+  pm.souls[2][5] = [180, 300];
+  pm.vs[7][5] = [10, 20]; // пара с малой выборкой — скрыть
+  pm.vs[8][5] = [560, 1000]; // герой из пула с небольшим плюсом
+
+  const table = { 50: [{ id: 2, lift: 3.3, rateVs: 0.3 }] };
+  const as = { items: { 2: { id: 2, name: 'Toxic Bullets', cost: 1250, tier: 3, slot: 'weapon' } } };
+
+  // 1) полный список героев: у каждого героя корректный ответ, помеченный своим enemy
+  const data = {};
+  for (const h of heroes) {
+    const res = C.counterCodex(h, { pm, table, assets: as, pool: [8] });
+    assert.strictEqual(res.enemy, h, 'результат помечен своим героем — при смене героя данные не смешиваются');
+    data[h] = res;
+    assert.ok(Array.isArray(res.picks.rows), 'строки контрпиков — массив');
+    assert.ok(typeof res.picks.covered === 'boolean' && typeof res.picks.pairsSeen === 'number', 'флаги покрытия и видимых пар');
+    assert.ok(Array.isArray(res.items.purchases) && Array.isArray(res.items.mechanics), 'структура предметов');
+    assert.ok(res.rules.patch && res.rules.source, 'источник правил указан');
+  }
+  // у героя 6 разницы в парах в пределах шума — контрпиков нет, и это видно
+  assert.strictEqual(data[6].picks.rows.length, 0, 'нулевые разницы не выдаются за контрпики');
+  assert.strictEqual(data[6].picks.pairsSeen, 49, 'видимые пары посчитаны');
+  assert.notStrictEqual(data[5].enemy, data[6].enemy, 'смена героя: разные ответы');
+
+  // 2) контрпик и дельта
+  const p5 = data[5].picks;
+  assert.strictEqual(p5.rows[0].hero_id, 2, 'против сильного героя 5 — контрпик герой 2');
+  assert.ok(p5.rows[0].pp > 0.1, 'фактическая разница заметна');
+  assert.ok(p5.rows.every((r) => r.n >= C.MIN_PAIR_GAMES), 'пары с малым числом игр скрыты');
+  assert.ok(!p5.rows.some((r) => r.hero_id === 7), 'пара с 20 играми скрыта');
+  assert.ok(p5.rows.every((r) => r.pp > 0), 'показываются только плюсовые разницы');
+  assert.strictEqual(p5.rows[0].small, false, '1000 игр — не «мало игр»');
+  assert.strictEqual(p5.rows.find((r) => r.hero_id === 8).inPool, true, 'герой из пула помечен');
+  assert.ok(p5.rows[0].laneWr !== null && p5.rows[0].laneN === 300 && p5.rows[0].soulsD !== null, 'линия и души передаются');
+
+  // 3) устаревшие данные: метка stale и дата
+  const staleRes = C.counterCodex(5, { pm: { ...pm, at: 1 }, table, assets: as, stale: true });
+  assert.strictEqual(staleRes.meta.stale, true, 'устаревшие данные помечены');
+  assert.strictEqual(staleRes.meta.at, 1, 'дата сохранённых данных передаётся');
+
+  // 4) популярный предмет не выдают за контрпредмет: предмет 1 (берут всегда) не в выводе
+  const r50 = C.counterCodex(50, { pm, table, assets: as });
+  assert.strictEqual(r50.items.purchases.length, 1);
+  const pu = r50.items.purchases[0];
+  assert.strictEqual(pu.id, 2);
+  assert.ok(pu.rule && pu.rule.threatLabel === 'Режет лечение', 'правило предмета подхвачено по имени');
+  assert.ok(!r50.items.purchases.some((x) => x.id === 1), 'популярный предмет — не контрпредмет');
+
+  // 5) механические ответы для сквозных героев (Apollo, Victor, Lash, Infernus)
+  for (const id of [77, 66, 31, 1]) {
+    const res = C.counterCodex(id, { pm, table: {}, assets: as });
+    assert.ok(res.heroRule && res.heroRule.threats.length, `правила героя ${id}`);
+    assert.ok(res.items.mechanics.length >= 2, `механические ответы для героя ${id}`);
+    for (const m of res.items.mechanics) assert.ok(m.why && m.rule && m.confidence === 'likely', 'у ответа есть объяснение и правило');
+  }
+  // Infernus: оговорка про продление горения попаданиями
+  const inf = C.counterCodex(1, { pm, table: {}, assets: as });
+  const dr = inf.items.mechanics.find((m) => m.name === 'Debuff Reducer');
+  assert.ok(dr && /продлевает/.test(dr.why), 'оговорка: горение продлевается попаданиями оружием');
+  // герой без разобранных механик — без выдуманных объяснений
+  const noRule = C.counterCodex(42, { pm, table: {}, assets: as });
+  assert.strictEqual(noRule.heroRule, null, 'нет правил — нет heroRule');
+  assert.strictEqual(noRule.items.mechanics.length, 0, 'нет выдуманных механических ответов');
+
+  // 6) правила: версия патча, сборка и точные имена предметов текущего патча
+  assert.ok(RULES.patch === 'Halloween (2026-10-30)' && RULES.build === 6861 && /deadlock\.gs/.test(RULES.source));
+  for (const n of ['Toxic Bullets', 'Healbane', 'Debuff Reducer', 'Counterspell', 'Slowing Hex', 'Reactive Barrier', 'Spirit Resilience']) {
+    assert.ok(RULES.items[n], `правило предмета ${n}`);
+    assert.ok(RULES.items[n].text && RULES.items[n].goodVs && RULES.items[n].notEnough, `у ${n} — эффект, польза и ограничение`);
+  }
+});
+
+test('codex lookup: no network on hero switch, saved data on failure', () => withStoreDir(async (dir) => {
+  const { Sync } = require('../src/main/sync');
+  const store = new Store(dir);
+  // свежие кэши: мета и справочники — сеть не нужна
+  const pm = { v: 1, badge: 81, since: 1000, at: Date.now(), games: 1000, base: { 5: [50, 100], 6: [50, 100] },
+    // герой 6 против героя 5 выигрывает 60% — контрпик; герой 5 против 6 — 40%
+    vs: { 5: { 6: [40, 100] }, 6: { 5: [60, 100] } }, lane: {}, with: {}, duo: {}, souls: {} };
+  store.write('pickmeta.json', pm);
+  store.write('assets.json', { v: 8, fetchedAt: Date.now(), heroes: { 5: { id: 5, name: 'H5' }, 6: { id: 6, name: 'H6' } },
+    items: { 2: { id: 2, name: 'Toxic Bullets', cost: 1250, tier: 3, slot: 'weapon' } } });
+  let calls = 0;
+  const api = {
+    heroStatsAnalytics: async () => { calls++; return []; },
+    heroCounterAnalytics: async () => { calls++; return []; },
+    heroSynergyAnalytics: async () => { calls++; return []; },
+    matchHistory: async () => { calls++; throw new Error('offline'); },
+    heroesAssets: async () => { calls++; return []; },
+    itemsAssets: async () => { calls++; return []; },
+  };
+  const sync = new Sync({ store, api });
+  const a = await sync.codexLookup(null, 5);
+  assert.strictEqual(a.enemy, 5);
+  assert.strictEqual(a.meta.stale, false, 'свежая мета — без пометки');
+  assert.ok(a.picks.rows.length === 1 && a.picks.rows[0].hero_id === 6, 'контрпик из меты');
+  assert.strictEqual(a.meta.error, undefined, 'ошибок нет');
+  // смена героя: ответ из кэша, сеть не трогаем
+  const b = await sync.codexLookup(null, 6);
+  assert.strictEqual(b.enemy, 6);
+  const again = await sync.codexLookup(null, 5);
+  assert.strictEqual(again.enemy, 5);
+  assert.strictEqual(calls, 0, 'ни одного запроса к сети при смене героя');
+
+  // устаревшая мета + сбой сети: показываем сохранённые данные с датой и ошибкой
+  store.write('pickmeta.json', { ...pm, at: Date.now() - 8 * 3600e3 });
+  const sync2 = new Sync({ store, api });
+  const c = await sync2.codexLookup(null, 5);
+  assert.strictEqual(c.enemy, 5);
+  assert.strictEqual(c.meta.stale, true, 'данные помечены как сохранённые');
+  assert.ok(c.meta.at < Date.now() - 7 * 3600e3, 'дата сохранённых данных передана');
+  assert.ok(c.meta.error, 'ошибка обновления видна');
+  assert.ok(c.picks.rows.length, 'контрпики показаны из сохранённой меты');
+}));
+
 test('solo deaths: fires without allies nearby, hidden without routes', () => {
   const L = require('../src/core/leaks');
   const D = require('../src/core/deaths');

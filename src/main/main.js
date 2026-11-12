@@ -490,6 +490,10 @@ function registerIpc() {
     const auth = store.read('auth.json', null);
     return sync.prepareGame(auth ? auth.accountId : null, opts || {});
   });
+  handle('codex:lookup', async (enemyId) => {
+    const auth = store.read('auth.json', null);
+    return sync.codexLookup(auth ? auth.accountId : null, enemyId);
+  });
   handle('vs:candidates', async (matchId) => sync.proCandidatesFor(matchId, authId()));
   handle('vs:get', async ({ matchId, proMatchId, proAccountId }) => sync.versus(matchId, authId(), proMatchId, proAccountId));
 

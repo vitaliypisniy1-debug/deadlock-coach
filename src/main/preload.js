@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('dc', {
   heroOutlook: (heroId) => call('mu:outlook', heroId),
   heroMatchups: (heroId) => call('mu:hero', heroId),
   prepareGame: (opts) => call('mu:prepare', opts),
+  codexLookup: (enemyId) => call('codex:lookup', enemyId),
   proCandidates: (matchId) => call('vs:candidates', matchId),
   versus: (opts) => call('vs:get', opts),
   overview: (days) => call('my:overview', days),

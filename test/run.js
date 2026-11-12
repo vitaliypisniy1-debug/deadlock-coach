@@ -491,6 +491,41 @@ test('map review uses purchases and verified events without attributing a fight 
   enemies[0].stats[0].t = 361;
   assert.doesNotMatch(macroReview(match, player).find((r) => r.title.includes('Ротация')).text, /в среднем/);
 });
+test('map review: late decisive fight followed by an objective or wasted', () => {
+  const { macroReview } = require('../src/core/macro');
+  const { findFights } = require('../src/core/leaks');
+  const player = { team: 0, slot: 1, d: 0, deaths: [], deaths_t: [], stats: [] };
+  const enemies = [2, 3, 4].map((slot) => ({ team: 1, slot, deaths: [[1250 + slot, 100, 200, 1]] }));
+  const late = { match_id: 11, start_time: Date.UTC(2026, 10, 1) / 1000, duration_s: 1800,
+    players: [player, ...enemies], objectives: [], midBoss: [] };
+  // драка скластеризовалась и поздняя
+  assert.strictEqual(findFights(late).length, 1);
+  assert.ok(findFights(late)[0].t1 > 1200);
+  // 3 соперника, 0 своих — победа без объекта
+  const wasted = macroReview(late, player).find((r) => r.title === 'После выигранной драки — объект');
+  assert.ok(wasted, 'строка про незакреплённую победу появилась');
+  assert.match(wasted.text, /не взяла ни Midboss, ни объект/);
+  assert.match(wasted.text, /3 соперников и 0 героев/);
+  assert.ok(!/undefined|NaN/.test(wasted.text + wasted.tip));
+  // объект взят в окно 60 секунд — хвалим шаблон
+  const taken = macroReview({ ...late, objectives: [[0, 3, 1290]] }, player).find((r) => r.title === 'После выигранной драки — объект');
+  assert.match(taken.text, /взяла 1 объект/);
+  assert.match(taken.text, /закрепи этот шаблон/);
+  assert.ok(taken.moments.some((m) => m.t === 1290 && m.text === 'Сломан объект'));
+  // Midboss в окно тоже считается
+  const boss = macroReview({ ...late, midBoss: [[0, 0, 1300]] }, player).find((r) => r.title === 'После выигранной драки — объект');
+  assert.match(boss.text, /Midboss/);
+  // размен 3:2 — не решительная победа, строки нет
+  const close = { ...late, players: [player, ...enemies, { team: 0, slot: 5, deaths: [[1252, 150, 250, 2]] }, { team: 0, slot: 6, deaths: [[1258, 150, 250, 3]] }] };
+  assert.ok(!macroReview(close, player).some((r) => r.title === 'После выигранной драки — объект'), '3:2 — не окно');
+  // старый формат без данных об объектах — молчим, а не «не взяли»
+  assert.ok(!macroReview({ ...late, objectives: undefined }, player).some((r) => r.title === 'После выигранной драки — объект'));
+  assert.ok(!macroReview({ ...late, midBoss: undefined }, player).some((r) => r.title === 'После выигранной драки — объект'));
+  // игрок погиб в драке — другой совет
+  const meDead = { ...late, players: [{ ...player, deaths: [[1255, 120, 210, 2]] }, ...enemies] };
+  assert.match(macroReview(meDead, { ...player, deaths: [[1255, 120, 210, 2]] }).find((r) => r.title === 'После выигранной драки — объект').tip, /возродиться/);
+});
+
 test('replay ties losses and Midboss context to matching death records only', () => {
   const { summarizeReplay } = require('../src/main/replayAnalysis');
   const player = { team: 0, deaths_t: [100], stats: [{ t: 110, d: 1, g_lost: 1200 }] };

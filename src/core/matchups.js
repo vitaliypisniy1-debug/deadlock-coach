@@ -109,12 +109,22 @@ function heroVs(records, assets, { minGames = 3 } = {}) {
 
 // --- 3. Подготовка к игре ---
 // myHero, enemies[], lanes: id героя на твоей линии (или null)
+// Меньше этого числа игр в паре цифра считается неустойчивой: не красится и
+// помечается «мало данных», чтобы 1–2 матча не выглядели закономерностью.
+const THIN_PAIR = 5;
+
 function prepare({ myHero, enemies, laneFoe = null, topVs, mine, heroName, itemName, global = null }) {
   const rows = enemies.map((e) => {
     const t = topVs.rows.find((r) => r.hero_id === e) || null;
     const m = mine.all.find((r) => r.hero_id === e) || null;
     const g = global ? global.find((r) => r.enemy === e) || null : null;
-    return { hero_id: e, top: t, mine: m, global: g, isLane: laneFoe === e };
+    return {
+      hero_id: e, top: t, mine: m, global: g, isLane: laneFoe === e,
+      // тонкие выборки: топов в паре < 5, твоих встреч < 5, замеров линии < 5
+      thin: !t || t.games < THIN_PAIR,
+      mineThin: !m || m.games < THIN_PAIR,
+      laneThin: !t || t.laneSamples < THIN_PAIR,
+    };
   });
   const tips = [];
   const lane = rows.find((r) => r.isLane);
@@ -123,11 +133,13 @@ function prepare({ myHero, enemies, laneFoe = null, topVs, mine, heroName, itemN
       tips.push({
         kind: 'info',
         title: `Линия против ${heroName(lane.hero_id)}`,
-        text: `К 10:00 типичная разница у топов на ${heroName(myHero)} — ${lane.top.laneDiff > 0 ? '+' : ''}${Math.round(lane.top.laneDiff)} душ. Сравнение по ${lane.top.laneSamples} матчам с данными по линии.`,
+        text: `К 10:00 типичная разница у топов на ${heroName(myHero)} — ${lane.top.laneDiff > 0 ? '+' : ''}${Math.round(lane.top.laneDiff)} душ. Сравнение по ${lane.top.laneSamples} матчам с данными по линии${lane.laneThin ? '. Данных по линии мало — оценка предварительная' : ''}.`,
       });
     }
     if (lane.mine && lane.mine.games >= 2) {
-      tips.push({ kind: lane.mine.wr >= 0.5 ? 'good' : 'warn', title: `Твой опыт против ${heroName(lane.hero_id)}`, text: `${lane.mine.wins}–${lane.mine.losses} в играх, где он был у тебя в соперниках.` });
+      const thinNote = lane.mine.games < THIN_PAIR ? '. Встреч пока мало — это не закономерность' : '';
+      const kind = lane.mineThin ? 'info' : lane.mine.wr >= 0.5 ? 'good' : 'warn';
+      tips.push({ kind, title: `Твой опыт против ${heroName(lane.hero_id)}`, text: `${lane.mine.wins}–${lane.mine.losses} в играх, где он был у тебя в соперниках${thinNote}.` });
     }
   }
   const counterIds = new Map();
@@ -138,10 +150,10 @@ function prepare({ myHero, enemies, laneFoe = null, topVs, mine, heroName, itemN
   if (counters.length) {
     tips.push({ kind: 'info', title: 'Что топы докупают против этого состава', text: counters.map((c) => `«${itemName(c.id)}» против ${heroName(c.vs)} (${Math.round(c.pick * 100)}% игр, обычно ${Math.round(c.base * 100)}%)`).join('; ') + '.' });
   }
-  const hard = rows.filter((r) => r.top && r.top.games >= 4 && r.top.wr < 0.45);
+  const hard = rows.filter((r) => r.top && !r.thin && r.top.wr < 0.45);
   const observed = (entries) => entries.map((r) => `${heroName(r.hero_id)} (${r.top.wins} побед из ${r.top.games})`).join(', ');
   if (hard.length) tips.push({ kind: 'warn', title: 'Меньше побед в сохранённых матчах', text: `На ${heroName(myHero)} топы выиграли менее 45% матчей с этими героями в составе соперника: ${observed(hard)}.` });
-  const easy = rows.filter((r) => r.top && r.top.games >= 4 && r.top.wr > 0.58);
+  const easy = rows.filter((r) => r.top && !r.thin && r.top.wr > 0.58);
   if (easy.length) tips.push({ kind: 'good', title: 'Больше побед в сохранённых матчах', text: `На ${heroName(myHero)} топы выиграли более 58% матчей с этими героями в составе соперника: ${observed(easy)}.` });
   return { rows, tips, counters };
 }

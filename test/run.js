@@ -733,6 +733,58 @@ test('matchups: my record, tops vs heroes, counters, prepare', () => {
   assert.ok(pr.rows[0].isLane);
   assert.ok(vs.rows.every((r) => r.laneSamples <= r.laneGames));
 });
+
+test('prepare: thin pairs (fewer than 5 games) marked and kept out of confident tips', () => {
+  const { heroVs, prepare, myMatchups } = require('../src/core/matchups');
+  const pl = (hero_id, team, won, lane = null) => ({ hero_id, team, won, lane, items: [] });
+  const rec = (i, foes, won) => {
+    const my = pl(1, 0, won, 1);
+    const others = [pl(2, 0, won, 1), ...[3, 4, 5, 6, 7].map((h) => pl(h, 0, won, 2))];
+    const enemies = foes.map((h, k) => pl(h, 1, !won, k < 2 ? 1 : 2));
+    return { match: { match_id: i, players: [my, ...others, ...enemies] }, player: my };
+  };
+  // X(10): 4 игры, 1 победа — тонкая пара; Y(11): 5 игр, 2 победы — уверенно тяжёлая; Z(12): 8 игр, 5 побед — уверенно лёгкая
+  const recs = [
+    rec(1, [10, 11, 12, 33, 34, 35], false),
+    rec(2, [10, 11, 12, 33, 34, 35], false),
+    rec(3, [10, 11, 12, 33, 34, 35], false),
+    rec(4, [10, 11, 12, 33, 34, 35], true),
+    rec(5, [11, 12, 33, 34, 35, 36], true),
+    rec(6, [12, 33, 34, 35, 36, 37], true),
+    rec(7, [12, 33, 34, 35, 36, 37], true),
+    rec(8, [12, 33, 34, 35, 36, 37], true),
+  ];
+  const topVs = heroVs(recs, null, { minGames: 1 });
+  const by = (h) => topVs.rows.find((r) => r.hero_id === h);
+  assert.strictEqual(by(10).games, 4);
+  assert.strictEqual(by(11).games, 5);
+  assert.strictEqual(by(12).games, 8);
+  // мои две встречи с X
+  const me1 = pl(1, 0, true);
+  const me2 = pl(1, 0, false);
+  const mine = myMatchups([
+    { match: { match_id: 101, players: [me1, pl(10, 1, false)] }, me: me1 },
+    { match: { match_id: 102, players: [me2, pl(10, 1, true)] }, me: me2 },
+  ]);
+  const pr = prepare({ myHero: 1, enemies: [10, 11, 12], laneFoe: 10, topVs, mine, heroName: (x) => `H${x}`, itemName: (x) => `I${x}` });
+  const row = (h) => pr.rows.find((r) => r.hero_id === h);
+  // помечены тонкие выборки
+  assert.ok(row(10).thin && row(10).mineThin && row(10).laneThin, 'X: топов < 5, встреч < 5, замеров линии < 5');
+  assert.ok(!row(11).thin && !row(12).thin, 'Y и Z: топов в паре достаточно');
+  assert.strictEqual(row(10).mineThin, mine.all.find((r) => r.hero_id === 10).games < 5, 'mineThin согласован с числом встреч');
+  // тонкая пара не попадает в уверенные советы
+  const hard = pr.tips.find((t) => t.title === 'Меньше побед в сохранённых матчах');
+  const easy = pr.tips.find((t) => t.title === 'Больше побед в сохранённых матчах');
+  assert.ok(hard && /H11/.test(hard.text) && !/H10/.test(hard.text), 'тяжёлый совет — только про Y (5 игр), не про X (4 игры)');
+  assert.ok(easy && /H12/.test(easy.text), 'лёгкий совет — про Z');
+  // личный опыт с 2 встречами — показан, но с пометкой
+  const my = pr.tips.find((t) => t.title === 'Твой опыт против H10');
+  assert.ok(my, 'совет про свой опыт есть (порог показа ≥ 2)');
+  assert.ok(/мало/.test(my.text) && /1–1/.test(my.text), 'счёт честный и помечен как малая выборка');
+  assert.strictEqual(my.kind, 'info', 'малая выборка показывается без положительной или отрицательной оценки');
+  // без line-данных (нет stats) линия тонкая, но не падает
+  assert.ok(pr.rows.every((r) => typeof r.laneThin === 'boolean'));
+});
 test('hero outlook: good/bad enemies and lane partners', () => {
   // Синтетика: мой герой 1. Против героя 10 почти всегда победы, против 11 — поражения,
   // с напарником 20 на линии побеждаем, с 21 — нет. Остальные соперники — шум.

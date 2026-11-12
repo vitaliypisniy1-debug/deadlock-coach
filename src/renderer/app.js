@@ -1088,6 +1088,9 @@
       if (forceNew) toast('Новый план готов');
     } catch (e) {
       S.coach.error = e.message;
+      // Ошибка валидации эпизода («Отслеживать в тренере») не должна молчать:
+      // игрок остаётся на экране «Ошибки» и без объяснения не поймёт, что цель не создалась.
+      if (evidence) toast(e.message);
     } finally {
       S.coach.loading = false;
       if (S.view === 'coach') renderCoach();
@@ -2769,8 +2772,8 @@
       h('div.hint', `Основание — «${goal.reason}» в ${goal.count} из ${goal.eligible} матчей, которые можно было проверить.`),
       h('div.row',
         h('button.btn.small', { onclick: () => openGrowthEpisode(goal.episode) }, `Открыть эпизод · ${F.time(goal.episode.t)}`),
-        ['lane_trades', 'lost_souls'].includes(goal.key) ? h('button.btn.small', { disabled: S.coach.loading || null, onclick: () => {
-          loadCoach(false, { ...goal.episode, key: goal.key === 'lost_souls' ? goal.key : undefined });
+        ['lane_trades', 'lost_souls', 'solo_deaths'].includes(goal.key) ? h('button.btn.small', { disabled: S.coach.loading || null, onclick: () => {
+          loadCoach(false, { ...goal.episode, key: goal.key === 'lane_trades' ? undefined : goal.key });
           setView('coach');
         } }, 'Отслеживать в тренере') : null)) : null;
     const focus = top ? h('section.leak-focus',

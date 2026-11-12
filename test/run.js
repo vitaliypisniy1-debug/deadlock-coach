@@ -576,6 +576,37 @@ function coachGames(skill, n, t0, seedBase = 500) {
     return { match_id: m.match_id, start_time: m.start_time, duration_s: m.duration_s, hero: me.hero_id, won: me.won, k: me.k, d: me.d, a: me.a, nw: me.nw, pos: (i % 4) + 1, afterLoss: false, gapMin: 20, match: m, me, f: playerFeatures(me, m) };
   });
 }
+test('coach: solo deaths goal from episode, plan even with few games', () => {
+  const now = 1_900_000_000;
+  const evidence = { key: 'solo_deaths', matchId: 1, t: 1100 };
+  const games = [{ match_id: 1, start_time: now - 600, hero: 72, f: { soloDeaths: 3 } }];
+  // игр меньше пяти: раньше эпизод молча пропадал, теперь план создаётся из одной цели
+  const r = updateCoach(null, { now, games, topHero: new Map(), lobby: {}, extra: {} }, { focusEvidence: evidence });
+  assert.ok(r.view.plan, 'план создан из эпизода');
+  const g = r.view.goals[0];
+  assert.strictEqual(g.key, 'solo_deaths');
+  assert.strictEqual(g.target, 1);
+  assert.strictEqual(g.cmp, 'le');
+  assert.strictEqual(g.evidence.t, 1100);
+  assert.strictEqual(g.baseline, 3, 'основание — как было обычно');
+  // игра после плана: ни одной одиночной смерти — цель выполнена
+  const after = updateCoach(r.state, { now: now + 120, games: [...games, { match_id: 2, start_time: now + 60, hero: 72, f: { soloDeaths: 0 } }], topHero: new Map(), lobby: {}, extra: {} });
+  assert.strictEqual(after.view.goals[0].passed, 1);
+  assert.strictEqual(after.view.goals[0].games, 1);
+  // метрики нет (старый матч без маршрутов) — «жду данные», не «выполнено»
+  const unknown = updateCoach(r.state, { now: now + 240, games: [...games, { match_id: 3, start_time: now + 180, hero: 72, f: {} }], topHero: new Map(), lobby: {}, extra: {} });
+  assert.strictEqual(unknown.view.cards[0].checks.find((x) => x.key === 'solo_deaths').pass, null, 'нет данных — pending');
+  // авто-подбор цели: медиана одиночных смертей выше 1,5
+  const cands = require('../src/core/coach').candidates({ games: [
+    { match_id: 11, start_time: now, hero: 72, f: { soloDeaths: 3 } },
+    { match_id: 12, start_time: now + 1, hero: 72, f: { soloDeaths: 3 } },
+    { match_id: 13, start_time: now + 2, hero: 72, f: { soloDeaths: 2 } },
+  ], topHero: new Map(), lobby: {}, extra: {} });
+  const cand = cands.find((c) => c.key === 'solo_deaths');
+  assert.ok(cand, 'цель появляется сама при частых одиночных смертях');
+  assert.strictEqual(cand.target, 2, 'цель — на единицу меньше медианы');
+});
+
 test('coach returns the actual hero-specific threshold and keeps missing values pending', () => {
   const goal = { key: 'neu9', short: 'лес к 9:00', cmp: 'ge', target: 800, byHero: { 72: 1000 } };
   const [billy] = checkGame({ hero: 72, f: { neu9: 901 } }, [goal]);
@@ -1434,6 +1465,72 @@ test('leaks: new match data (v2) and mistakes with moments', () => {
   // привычки и победа
   assert.strictEqual(L.winLink('d9', 2).wr, 0.473);
   assert.strictEqual(L.winLink('pu10', 7).wr, 0.519);
+});
+
+test('solo deaths: fires without allies nearby, hidden without routes', () => {
+  const L = require('../src/core/leaks');
+  const D = require('../src/core/deaths');
+  const { playerFeatures: pf } = require('../src/core/features');
+  const step = 5;
+  const mkPath = (fn) => Array.from({ length: 400 }, (_, i) => fn(i * step));
+  const players = [];
+  for (let i = 0; i < 12; i++) {
+    const team = i < 6 ? 0 : 1;
+    players.push({ account_id: 1 + i, hero_id: 20 + i, team, slot: i, lane: [1, 1, 4, 4, 6, 6][i % 6], won: team === 1, k: 0, d: 0, a: 0, nw: 20000, items: [], deaths: [], deaths_t: [], pu: [],
+      stats: [{ t: 600, nw: 5000, d: 0, g_lost: 0, k: 0, a: 0 }, { t: 1200, nw: 12000, d: 1, g_lost: 700, k: 0, a: 0 }, { t: 1800, nw: 18000, d: 3, g_lost: 1500, k: 0, a: 0 }] });
+  }
+  const me = players[0];
+  me.d = 3;
+  // смерть до 10:00 — не в счёт; две после — в одиночку (союзники в 6000 единицах)
+  me.deaths = [[200, 0, 0, 6, 0, 0], [1100, 0, 0, 7, 100, 0], [1700, 0, 0, 7, 100, 0]];
+  me.deaths_t = [200, 1100, 1700];
+  const pathsP = {};
+  for (const p of players) pathsP[p.slot] = mkPath((t) => [p === me ? 0 : 6000, 0, 1, 0, 100]);
+  const mm = { match_id: 9002, start_time: 1, duration_s: 1800, players, paths: { step, players: pathsP }, badge: [52, 52],
+    dmg: { t: [180, 600, 1800], d: { '7>0': [0, 0, 9000] } } };
+  const fm = pf(me, mm, null);
+  assert.strictEqual(fm.soloDeaths, 2, 'две смерти в одиночку');
+  const checked = new Set();
+  const leaks = L.gameLeaks({ m: mm, me, f: fm, ref: null, tier: 5, checked, heroName: (x) => `H${x}`, itemName: (x) => `I${x}` });
+  const sd = leaks.find((l) => l.key === 'solo_deaths');
+  assert.ok(sd, 'правило сработало');
+  assert.ok(checked.has('solo_deaths'), 'игра помечена проверяемой');
+  assert.strictEqual(sd.moments.length, 2);
+  assert.ok(/убил H27/.test(sd.moments[0].text), `кто убил: ${sd.moments[0].text}`);
+  assert.ok(/до союзников \d+ с бега/.test(sd.moments[0].text));
+  assert.strictEqual(sd.cost.deaths, 2);
+  assert.ok(!/undefined|NaN/.test(sd.title + sd.text + sd.context + sd.moments.map((x) => x.text).join('')));
+
+  // союзник рядом (500 единиц) — не считается одиночеством
+  const nearPaths = { ...pathsP };
+  nearPaths[1] = mkPath((t) => [500, 0, 1, 0, 100]);
+  const mNear = { ...mm, paths: { step, players: nearPaths } };
+  assert.strictEqual(pf(me, mNear, null).soloDeaths, 0, 'союзник был рядом');
+  const ln = L.gameLeaks({ m: mNear, me, f: pf(me, mNear, null), ref: null, tier: 5, heroName: (x) => `H${x}` });
+  assert.ok(!ln.some((l) => l.key === 'solo_deaths'), 'рядом союзник — не ошибка');
+
+  // маршрутов нет — данных не хватает: null, а не «ноль»
+  const mNo = { ...mm, paths: null };
+  assert.strictEqual(D.soloDeathRows(mNo, me), null);
+  assert.strictEqual(D.soloDeathsVerifiable(mNo, me), null);
+  assert.strictEqual(pf(me, mNo, null).soloDeaths, null, 'нет данных — не 0');
+  const checked2 = new Set();
+  const lNo = L.gameLeaks({ m: mNo, me, f: fm, ref: null, tier: 5, checked: checked2, heroName: (x) => `H${x}` });
+  assert.ok(!lNo.some((l) => l.key === 'solo_deaths'));
+  assert.ok(!checked2.has('solo_deaths'), 'без маршрутов игра не считается проверяемой — ложного «нуля ошибок» нет');
+
+  // цель из эпизодов: два матча с одиночными смертями → цель «не больше одной»
+  const games = [
+    { match_id: 1, won: false, hero: 1, leaks, checked: [...checked] },
+    { match_id: 2, won: false, hero: 1, leaks, checked: [...checked] },
+    { match_id: 3, won: true, hero: 1, leaks: [], checked: [...checked] },
+  ];
+  const prof = L.leakProfile(games);
+  assert.strictEqual(prof.goal.key, 'solo_deaths', `цель из ошибки: ${prof.goal.key}`);
+  assert.ok([1100, 1700].includes(prof.goal.episode.t));
+  assert.ok(Number.isFinite(prof.goal.episode.matchId));
+  const soloRow = prof.rows.find((r) => r.key === 'solo_deaths');
+  assert.deepStrictEqual([soloRow.count, soloRow.eligible], [2, 3], 'частота среди проверяемых игр');
 });
 
 test('versus: candidates and side by side', () => {

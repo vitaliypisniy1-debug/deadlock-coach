@@ -13,6 +13,7 @@ const { playersFromMatches, mergeCandidates, rankOf } = require('../core/discove
 const { parseSteamInput, vanityOf, resolveVanity } = require('./steamIds');
 const { buildOverview, dashboardStats, rankFromBadges } = require('../core/overview');
 const { gameLeaks, gameHighlights, leakProfile, counterItems, winLink, RANK_BENCH, WIN_LINKS, lossPerDeath, SOUL_LOSS_THRESHOLD } = require('../core/leaks');
+const { soloDeathRows } = require('../core/deaths');
 const { mapData } = require('../core/mapdata');
 const { heroReport } = require('../core/heroReport');
 const { updateCoach } = require('../core/coach');
@@ -1671,6 +1672,13 @@ class Sync {
         const event = me && lossPerDeath(me).find((x) => x.t === evidence.t && x.lost >= SOUL_LOSS_THRESHOLD);
         if (!event) throw new Error('Эту потерю душ не удалось подтвердить в сохранённом матче.');
         focusEvidence = { key: 'lost_souls', matchId: m.match_id, t: event.t, title: 'Крупная потеря душ', text: `При смерти потеряно ${event.lost} душ` };
+      } else if (evidence.key === 'solo_deaths') {
+        const row = me && (soloDeathRows(m, me) || []).find((r) => r.t === evidence.t);
+        if (!row) throw new Error('Эту смерть в одиночку не удалось подтвердить в сохранённом матче.');
+        const killer = m.players.find((p) => p.slot === row.killerSlot);
+        focusEvidence = { key: 'solo_deaths', matchId: m.match_id, t: row.t, x: row.x, y: row.y, title: 'Смерть в одиночку',
+          text: killer ? `Смерть вдали от команды — убил ${heroName(killer.hero_id)}` : 'Смерть вдали от команды',
+          context: 'В момент смерти ни один живой союзник не был ближе 2 500 единиц карты (≈8 с бега).' };
       } else {
         const foe = me && m.players.find((p) => p.slot === me.deaths?.find((d) => d[0] === evidence.t)?.[3]);
         if (!foe || foe.team === me.team || me.lane == null || foe.lane !== me.lane || !(evidence.t >= 0 && evidence.t <= 600)) {

@@ -47,5 +47,8 @@
       "artifactName": "DeadlockCoach-Portable-${version}.${ext}"
     }
   },
-  "updateRepo": ""
+  "updateRepo": "",
+  "dependencies": {
+    "fzstd": "0.1.1"
+  }
 }

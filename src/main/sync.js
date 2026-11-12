@@ -1921,7 +1921,7 @@ class Sync {
     return {
       leaks,
       highlights,
-      macro: macroReview(m, me),
+      macro: macroReview(m, me, { nameOf }),
       fresh: (m.v || 1) >= EXTRACT_V,
       map: mapData(m),
       mySlot: me.slot,

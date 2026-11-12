@@ -470,6 +470,39 @@ test('map review preserves grouped soul losses and verifies team kills before a 
   assert.ok(rows.find((r) => r.title.includes('Rift')).moments.length === 0);
   assert.ok(!macroReview({ ...m, start_time: 1 }, player).some((r) => r.title.includes('Rift') || r.tip.includes('Plaza')));
 });
+test('map review uses purchases and verified events without attributing a fight to Rift', () => {
+  const { macroReview } = require('../src/core/macro');
+  const player = { team: 0, slot: 1, lane: 0, stats: [{ t: 360, nw: 4500 }], items: [[10, 400]], deaths: [[1105, 100, 200, 2]] };
+  const enemies = [2, 3, 4].map((slot, i) => ({ team: 1, slot, deaths: [
+    [900 + i * 12, 100, 200, 1],
+    ...(i < 2 ? [[1100 + i * 3, 100, 200, 1]] : []),
+  ] }));
+  Object.assign(enemies[0], { lane: 0, stats: [{ t: 360, nw: 3000 }] });
+  const match = { start_time: Date.UTC(2026, 10, 1) / 1000, duration_s: 1200, players: [player, ...enemies] };
+  const rows = macroReview(match, player, { nameOf: () => 'Предмет игрока' });
+  assert.ok(!rows.some((r) => r.title.includes('Midboss')), 'три убийства за 24 секунды не дают короткого окна');
+  const rift = rows.find((r) => r.title.includes('Rift'));
+  assert.match(rift.text, /Связь с Rift можно проверить в повторе/);
+  assert.equal(rift.moments[0].t, 1100);
+  const rotation = rows.find((r) => r.title.includes('Ротация'));
+  assert.match(rotation.text, /К 6:00.*4\s500.*3\s000/);
+  assert.match(rotation.text, /6:40.*Предмет игрока/);
+  assert.equal(rotation.moments[1].t, 400);
+  enemies[0].stats[0].t = 361;
+  assert.doesNotMatch(macroReview(match, player).find((r) => r.title.includes('Ротация')).text, /в среднем/);
+});
+test('replay ties losses and Midboss context to matching death records only', () => {
+  const { summarizeReplay } = require('../src/main/replayAnalysis');
+  const player = { team: 0, deaths_t: [100], stats: [{ t: 110, d: 1, g_lost: 1200 }] };
+  const match = { duration_s: 600, players: [player, { team: 1, deaths_t: [115] }], midBoss: [[0, 0, 120]] };
+  const events = [{ tick: 6400, victim_team_number: 2 }, { tick: 7360, victim_team_number: 3 }];
+  const result = summarizeReplay(events, match, player);
+  assert.equal(result.aligned, true);
+  assert.deepEqual(result.losses, [{ t: 100, lost: 1200 }]);
+  assert.deepEqual(result.bosses, [{ t: 120, allies: 1, opponents: 1 }]);
+  const mismatched = summarizeReplay([events[0], { ...events[1], tick: 8000 }], match, player);
+  assert.deepEqual(mismatched, { count: 2, aligned: false, losses: [], bosses: [] });
+});
 test('russian plurals with fractions', () => {
   assert.strictEqual(plural(1, 'смерть', 'смерти', 'смертей'), 'смерть');
   assert.strictEqual(plural(5, 'смерть', 'смерти', 'смертей'), 'смертей');

@@ -43,6 +43,8 @@ contextBridge.exposeInMainWorld('dc', {
   scanCache: () => call('my:scanCache'),
   campTargets: (heroId) => call('camp:targets', heroId),
   analyze: (opts) => call('camp:analyze', opts),
+  replay: (matchId) => call('camp:replay', matchId),
+  cancelReplay: (matchId) => call('camp:replayCancel', matchId),
   openUrl: (url) => call('shell:open', url),
   copy: (text) => call('clipboard:write', text),
   updateCheck: () => call('update:check'),

@@ -123,8 +123,8 @@ class Api {
     });
   }
 
-  post(path, body) {
-    return this._enqueue(() => this._request(path, { method: 'POST', body }));
+  post(path, body, { signal } = {}) {
+    return this._enqueue(() => this._request(path, { method: 'POST', body, signal }), signal);
   }
 
   // ---- конкретные запросы ----

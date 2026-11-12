@@ -2034,6 +2034,8 @@
   }
 
   async function openMatch(matchId, episode = null) {
+    stopReplay();
+    S.my.replay = null;
     S.my.selected = Number(matchId);
     S.my.leakMoment = null;
     S.my.reviewTime = episode ? { t: episode.t, point: episode } : null;
@@ -2323,6 +2325,50 @@
         } }, 'Отслеживать в тренере') : null))));
   }
 
+  function stopReplay() {
+    const state = S.my.replay;
+    if (!state?.loading) return;
+    S.my.replay = null;
+    dc.cancelReplay(state.matchId).catch(() => {});
+  }
+
+  function replayPanel(matchId, seek) {
+    const state = S.my.replay?.matchId === matchId ? S.my.replay : null;
+    const result = state?.result;
+    const open = (t) => {
+      seek(t);
+      $('match-review')?.scrollIntoView({ block: 'nearest' });
+    };
+    const start = async () => {
+      const model = S.my;
+      const request = { matchId, loading: true };
+      model.replay = request;
+      renderCamp();
+      try {
+        request.result = await dc.replay(matchId);
+      } catch (error) {
+        request.error = error.message;
+      } finally {
+        request.loading = false;
+        if (S.my === model && model.replay === request && showingMatches()) renderCamp();
+      }
+    };
+    return h('section.panel', h('h2', 'Глубокий разбор реплея'),
+      state?.loading ? h('div.row', h('span.muted', 'Сверяю события реплея…'),
+        h('button.btn.small', { onclick: () => { stopReplay(); renderCamp(); } }, 'Отменить')) : null,
+      state?.error ? h('p.muted', state.error) : null,
+      !state?.loading && !result ? h('button.btn.small', { onclick: start }, 'Разобрать реплей') : null,
+      result ? h('div',
+        h('p', `В реплее найдено событий смерти: ${result.count}.`),
+        !result.aligned ? h('p.muted', 'Журналы не совпали по времени или командам. Для эпизодов используй обычный разбор.') : null,
+        result.losses.map(({ t, lost }) => h('div.row',
+          h('button.btn.small', { onclick: () => open(t) }, F.time(t)),
+          h('span', `Потеря душ по статистике матча: ${F.num(lost)}`))),
+        result.bosses.map(({ t, allies, opponents }) => h('div.row',
+          h('button.btn.small', { onclick: () => open(t) }, F.time(t)),
+          h('span', `Midboss по метаданным. За 30 секунд до события смертей у твоей команды: ${allies}, у соперников: ${opponents}.`)))) : null);
+  }
+
   function matchLeaksPanel(A, onSeek) {
     const leaks = (A.leaks || []).filter((l) => l.level !== 'good');
     const good = (A.highlights || []).concat((A.leaks || []).filter((l) => l.level === 'good'));
@@ -2460,6 +2506,7 @@
     const m = A.match;
     const episode = growthEpisodePanel(A);
     const review = matchReview(A);
+    const replay = replayPanel(m.match_id, review.seek);
 
     const head = h('div.row', { style: { marginBottom: '14px' } }, heroIcon(m.hero_id),
       h('div.grow', h('h2', { style: { margin: 0 } }, `${heroName(m.hero_id)} — ${m.won ? 'победа' : 'поражение'}`),
@@ -2483,7 +2530,7 @@
     if (!r.benchN) {
       return h('div', h('div.panel', head, bar, h('div.empty', h('strong', 'Нет матчей для сравнения'),
         'В выборке нет игр на этом герое для выбранного режима и настроек сравнения. Данные самого матча доступны ниже.')),
-        episode, review.panel, macroReviewPanel(A.macro, review.seek), matchLeaksPanel(A, review.seek), A.map ? mapPanel(A.map, A.mySlot ?? null, 'Карта матча') : null);
+        episode, review.panel, replay, macroReviewPanel(A.macro, review.seek), matchLeaksPanel(A, review.seek), A.map ? mapPanel(A.map, A.mySlot ?? null, 'Карта матча') : null);
     }
 
     const sc = r.scores;
@@ -2597,7 +2644,7 @@
         }))),
       h('div.hint', 'Слева твоё значение, справа — медиана топов. Зелёный — не хуже топов.'));
 
-    return h('div', h('div.panel', head, bar, scores), episode, review.panel, mainPanel, macroReviewPanel(A.macro, review.seek), matchLeaksPanel(A, review.seek), variantPanel, phasePanel, sourcesPanel, spikePanel, A.map ? mapPanel(A.map, A.mySlot ?? null, 'Карта матча') : null, itemsPanel, insights, cpTable);
+    return h('div', h('div.panel', head, bar, scores), episode, review.panel, replay, mainPanel, macroReviewPanel(A.macro, review.seek), matchLeaksPanel(A, review.seek), variantPanel, phasePanel, sourcesPanel, spikePanel, A.map ? mapPanel(A.map, A.mySlot ?? null, 'Карта матча') : null, itemsPanel, insights, cpTable);
   }
 
 

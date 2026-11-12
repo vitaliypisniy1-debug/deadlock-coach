@@ -6,6 +6,7 @@ const { checkConsoleLog, findDeadlockDir } = require('./gameLog');
 const { Recognizer } = require('./recognizer');
 const { GameWatch, consoleLogPath } = require('./gameWatch');
 const { GameMode } = require('./gameMode');
+const { replayEvents, summarizeReplay } = require('./replayAnalysis');
 let recognizer = null;
 let watch = null;
 let gameMode = null;
@@ -77,6 +78,8 @@ let win = null;
 let store;
 let api;
 let sync;
+let replayRequest;
+const replayCache = new Map();
 let autoTimer = null;
 let startupAssets = null;
 
@@ -526,6 +529,38 @@ function registerIpc() {
     if (!auth) throw new Error('Сначала войди через Steam');
     const s = store.settings();
     return sync.analyzeMatch({ ...opts, accountId: auth.accountId, source: opts.source || s.benchmarkSource, winsOnly: opts.winsOnly ?? s.winsOnly });
+  });
+
+  handle('camp:replay', async (matchId) => {
+    const auth = store.read('auth.json', null);
+    if (!auth || !Number.isSafeInteger(matchId) || matchId <= 0) throw new Error('Открой свой матч для разбора.');
+    const match = store.getMatch(matchId);
+    const player = match?.players.find((p) => p.account_id === Number(auth.accountId));
+    if (!player) throw new Error('Сначала открой обычный разбор своего матча.');
+    const key = `${auth.accountId}:${matchId}`;
+    if (replayCache.has(key)) return replayCache.get(key);
+    replayRequest?.controller.abort();
+    const request = { matchId, controller: new AbortController() };
+    replayRequest = request;
+    const timeout = AbortSignal.timeout(90000);
+    const signal = AbortSignal.any([request.controller.signal, timeout]);
+    try {
+      const result = summarizeReplay(await replayEvents(api, matchId, signal), match, player);
+      signal.throwIfAborted();
+      replayCache.set(key, result);
+      if (replayCache.size > 16) replayCache.delete(replayCache.keys().next().value);
+      return result;
+    } catch (error) {
+      if (timeout.aborted) throw new Error('Обработка реплея заняла слишком много времени. Попробуй позже.');
+      throw error;
+    } finally {
+      if (replayRequest === request) replayRequest = null;
+    }
+  });
+
+  handle('camp:replayCancel', (matchId) => {
+    if (replayRequest?.matchId === matchId) replayRequest.controller.abort();
+    return true;
   });
 
   handle('shell:open', async (url) => {

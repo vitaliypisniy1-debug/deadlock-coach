@@ -1312,11 +1312,12 @@
         h('table.table.prep-table', h('thead', h('tr', h('th', 'Соперник'), h('th.r', 'Топы против него'), h('th.r', 'Ты против него'), h('th.r', 'Линия к 10:00'), h('th', 'Топы докупают'))),
           h('tbody', r.rows.map((x) => h(`tr${x.isLane ? '.selected' : ''}`,
             h('td', h('div.hero-cell', heroIcon(x.hero_id, '.sm'), heroName(x.hero_id), x.isLane ? h('span.pill.hot', 'на линии') : null)),
-            h('td.r.num', x.top ? h('span', { style: { color: x.top.wr >= 0.5 ? 'var(--good)' : 'var(--bad)' } }, F.pct(x.top.wr)) : '—', x.top ? h('div.dim.small', `${x.top.games} ${plural(x.top.games, 'игра', 'игры', 'игр')}`) : null),
-            h('td.r.num', x.mine ? `${x.mine.wins}–${x.mine.losses}` : '—', x.mine ? h('div.dim.small', `${x.mine.games} ${plural(x.mine.games, 'игра', 'игры', 'игр')}`) : null),
-            h('td.r.num', x.top && x.top.laneDiff !== null ? h('span', { style: { color: x.top.laneDiff >= 0 ? 'var(--good)' : 'var(--bad)' } }, `${x.top.laneDiff > 0 ? '+' : ''}${F.num(x.top.laneDiff)}`) : '—', x.top?.laneSamples ? h('div.dim.small', `${x.top.laneSamples} ${plural(x.top.laneSamples, 'игра', 'игры', 'игр')}`) : null),
+            h('td.r.num', x.top ? h('span', { style: { color: x.thin ? 'var(--muted)' : x.top.wr >= 0.5 ? 'var(--good)' : 'var(--bad)' }, title: x.thin ? 'Игр в паре меньше 5 — цифра может сильно измениться' : `Статистическая оценка по выборке ${F.pct(x.top.ci_lo)} и ${F.pct(x.top.ci_hi)}` }, F.pct(x.top.wr)) : '—',
+              x.top ? h('div.dim.small', `${x.top.games} ${plural(x.top.games, 'игра', 'игры', 'игр')} · ${x.thin ? 'мало данных' : `интервал ${F.pct(x.top.ci_lo)}–${F.pct(x.top.ci_hi)}`}`) : null),
+            h('td.r.num', x.mine ? `${x.mine.wins}–${x.mine.losses}` : '—', x.mine ? h('div.dim.small', `${x.mine.games} ${plural(x.mine.games, 'игра', 'игры', 'игр')}${x.mineThin ? ' · мало встреч' : ''}`) : null),
+            h('td.r.num', x.top && x.top.laneDiff !== null ? h('span', { style: { color: x.laneThin ? 'var(--muted)' : x.top.laneDiff >= 0 ? 'var(--good)' : 'var(--bad)' } }, `${x.top.laneDiff > 0 ? '+' : ''}${F.num(x.top.laneDiff)}`) : '—', x.top?.laneSamples ? h('div.dim.small', `${x.top.laneSamples} ${plural(x.top.laneSamples, 'игра', 'игры', 'игр')}${x.laneThin ? ' · мало данных' : ''}`) : null),
             h('td', x.top && x.top.counters.length ? h('div.mini-items', x.top.counters.map((c) => h('span', { title: `${itemName(c.id)}: ${F.pct(c.pick)} игр против него (обычно ${F.pct(c.base)})` }, itemImg(c.id)))) : h('span.dim', '—')))))),
-        h('div.hint', '«Ты против него» — победы и поражения на выбранном герое, когда указанный соперник был во вражеской команде. «Линия к 10:00» — типичная разница в душах по матчам с подтверждённой линией и замером на 10-й минуте. «Топы докупают» — предметы, которые против этого соперника брали заметно чаще обычного.')));
+        h('div.hint', '«Ты против него» — победы и поражения на выбранном герое, когда указанный соперник был во вражеской команде. «Линия к 10:00» — типичная разница в душах по матчам с подтверждённой линией и замером на 10-й минуте. «Топы докупают» — предметы, которые против этого соперника брали заметно чаще обычного. «Интервал» показывает неопределённость оценки по сохранённым матчам. При числе игр меньше 5 результат помечен как предварительный и не входит в сводку побед топов.')));
     }
     // прогноз по выбранному герою: твои игры + игры топового уровня
     if (P.myHero) {
@@ -1339,6 +1340,7 @@
       heroIcon(x.hero_id, '.sm'),
       h('div.grow', h('div.mu-name', heroName(x.hero_id)),
         h('div.mu-meta', rec(x.pro, 'топы'), rec(x.mine, 'ты'), lane(x, duo),
+          x.evidence < 5 ? h('span.mu-thin', { title: 'Пар с этим героем меньше 5 — цифра неустойчива, смотри счёт рядом' }, 'мало игр') : null,
           kind === 'bad' && x.counters && x.counters.length ? h('span.mu-counter', { title: 'Что топы докупают против него' }, h('i', 'докупают'), h('span.mini-items', x.counters.map((c) => h('span', { title: itemName(c.id) }, itemImg(c.id))))) : null)),
       h(`div.mu-delta.${x.delta >= 0 ? 'pos' : 'neg'}`, { title: 'Насколько чаще обычного побеждают в таких играх' }, h('b.num', pct(x.delta)), h('span', 'к победам')));
     const empty = (t) => h('div.muted', { style: { padding: '8px 0' } }, t);

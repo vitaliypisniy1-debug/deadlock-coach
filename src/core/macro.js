@@ -2,7 +2,7 @@
 
 const { findFights, SOUL_LOSS_THRESHOLD } = require('./leaks');
 const { isStandardMatch } = require('./meta');
-const { N, T } = require('./tipkit');
+const { N, T, plural } = require('./tipkit');
 // Первый полный UTC-день после каждого обновления. Игры в день релиза
 // могут быть сыграны как до, так и после смены карты или правил.
 const RIFT_PATCH = Date.UTC(2026, 6, 1) / 1000;
@@ -83,6 +83,46 @@ function macroReview(match, player, { nameOf = () => null } = {}) {
             : 'Проверь доступность Midboss, позиции союзников и время до возрождения соперников. Если команда успевает собраться и удержать яму, предложи Midboss.',
         moments,
       });
+    }
+
+    // ---------- После 20:00: победа в драке закреплена объектом? ----------
+    // Решающая драка (≥3 погибших соперников и заметный перевес) — это окно на
+    // Midboss или Walker. Совпадение по времени не доказывает причину: совет
+    // всегда предлагает проверить повтор, а не «вы потеряли босса».
+    if (Array.isArray(match.objectives) && Array.isArray(match.midBoss)) {
+      const usedFights = [];
+      for (const fight of fights) {
+        if (fight.t1 <= 1200 || fight.t1 > match.duration_s) continue;
+        const enemyDeaths = fight.deaths.filter((d) => d.team === 1 - player.team).length;
+        const allyDeaths = fight.deaths.length - enemyDeaths;
+        if (enemyDeaths < 3 || allyDeaths > enemyDeaths - 2) continue;
+        usedFights.push({ fight, enemyDeaths, allyDeaths });
+      }
+      const shown = usedFights.slice(-3).reverse();
+      for (const { fight, enemyDeaths, allyDeaths } of shown) {
+        const win = [fight.t1, fight.t1 + 60];
+        const ourBoss = bosses.find(([kill, , t]) => kill === player.team && t >= win[0] && t <= win[1]);
+        const ourObjects = match.objectives.filter(([team, , t]) => team === player.team
+          && Number.isFinite(t) && t >= win[0] && t <= win[1] && t <= match.duration_s);
+        const taken = [];
+        if (ourObjects.length) taken.push(`${ourObjects.length} ${plural(ourObjects.length, 'объект', 'объекта', 'объектов')}`);
+        if (ourBoss) taken.push('Midboss');
+        const score = `${enemyDeaths} соперников и ${allyDeaths} ${plural(allyDeaths, 'герой', 'героя', 'героев')} твоей команды`;
+        const moments = [{ t: fight.t1, text: 'Конец драки в вашу пользу' }];
+        for (const [, , t] of ourObjects) moments.push({ t, text: 'Сломан объект' });
+        if (ourBoss) moments.push({ t: ourBoss[2], text: 'Убит Midboss' });
+        const meDied = fight.deaths.some((d) => d.slot === player.slot);
+        rows.push({
+          title: 'После выигранной драки — объект',
+          text: taken.length
+            ? `На ${T(fight.t1)} в драке погибло ${score}. За 60 секунд команда взяла ${taken.join(' и ')} — победа сразу превращается в объект, закрепи этот шаблон.`
+            : `На ${T(fight.t1)} в драке погибло ${score}, но за следующие 60 секунд команда не взяла ни Midboss, ни объект. Проверь в повторе, сколько было до возрождения соперников и какой объект был ближе.`,
+          tip: meDied
+            ? 'Ты погиб в этой драке: проверь, успевал ли возродиться и добежать до объекта. После победы команды не жди у фонтана — толкай ближайший объект, пока враги мертвы.'
+            : 'После решающей драки первым делом сверь таймеры возрождения врагов и ближайший объект: пока они мертвы, Walker или Midboss почти бесплатны. Если команда разбрелась по лагерям — предложи объект.',
+          moments,
+        });
+      }
     }
   }
 

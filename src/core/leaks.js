@@ -54,6 +54,14 @@ const SPEED = 320; // средняя скорость героя, единиц �
 const FIGHT_FAR = 3000; // дальше этого — не участвовал в драке (≈10 секунд бега)
 const FIGHT_REACH = 9000; // дальше этого — не успел бы добежать (≈28 секунд)
 const LANE_END = 600; // до 10:00 — стадия линий
+
+// Серия смертей: 3+ смерти после 10:00, между соседними не больше этого
+const STREAK_GAP = 240;
+// предмет живучести считается заметной покупкой от этой цены (душ)
+const VITALITY_COST = 1250;
+// после последней смерти серии должно остаться столько секунд игры,
+// чтобы покупка успела случиться, — иначе серия не проверяется
+const REACT_SECS = 90;
 const SOUL_LOSS_THRESHOLD = 1000;
 
 const clampTier = (t) => (t ? Math.max(1, Math.min(TOP_TIER, t)) : null);
@@ -406,6 +414,86 @@ function gameLeaks(c) {
     });
   }
 
+  // ---------- 5a. Серия смертей без покупки живучести ----------
+  // Факт из данных: после 10:00 серия из 3+ смертей (между соседними не больше
+  // 4 минут), и с начала серии не куплено ни одного предмета живучести от 1 250
+  // душ. Что этот предмет дал бы — гипотеза: проверяется в повторе.
+  const vit = (id) => c.assets && c.assets.items && c.assets.items[id] && c.assets.items[id].slot === 'vitality';
+  const vitCost = (id) => (c.assets && c.assets.items && c.assets.items[id] && c.assets.items[id].cost) || null;
+  const vitalPurchases = (me.items || []).filter(([id]) => vit(id) && (vitCost(id) || 0) >= VITALITY_COST);
+  const myDeaths = (me.deaths || [])
+    .filter((d) => Number.isFinite(d[0]) && d[0] >= LANE_END)
+    .map((d) => ({ t: d[0], x: d[1], y: d[2], killer: d[3] }));
+  if (c.assets && c.assets.items && Object.keys(c.assets.items).length && (me.items || []).length && myDeaths.length >= 3) checked('survivability_purchase');
+
+  // серии: 3+ смертей после 10:00 подряд, между соседними не больше 4 минут
+  const streaks = [];
+  let run = [];
+  for (const d of myDeaths) {
+    if (run.length && d.t - run[run.length - 1].t > STREAK_GAP) {
+      if (run.length >= 3) streaks.push(run);
+      run = [];
+    }
+    run.push(d);
+  }
+  if (run.length >= 3) streaks.push(run);
+  // без каталога предметов проверка невозможна: «нет покупок живучести»
+  // не отличить от «не знаем, что это за предметы»
+  const catalog = !!(c.assets && c.assets.items && Object.keys(c.assets.items).length);
+  // серия считается проверенной, если после её последней смерти оставалось
+  // минимум 90 секунд игры — время дойти до магазина и купить
+  const candidates = catalog ? streaks.filter((s) => endS - s[s.length - 1].t >= REACT_SECS
+    && !vitalPurchases.some(([, bt]) => bt >= s[0].t)
+    // живучесть уже была собрана (2+ предмета к началу серии) — «купи ещё» из
+    // данных не следует, совет не показываем
+    && vitalPurchases.filter(([, bt]) => bt <= s[0].t).length < 2) : [];
+  if (candidates.length) {
+    // худая серия — с наибольшими потерями душ (при равенстве — длиннее)
+    const lostByT = new Map(observedLosses.map((x) => [x.t, x.lost]));
+    const worst = candidates.map((s) => ({
+      deaths: s,
+      lost: s.reduce((acc, d) => acc + (lostByT.get(d.t) || 0), 0),
+    })).sort((a, b) => b.lost - a.lost || b.deaths.length - a.deaths.length)[0];
+    const s0 = worst.deaths[0].t;
+    const hadVitality = vitalPurchases.filter(([, bt]) => bt <= s0).length;
+    const spent = (me.items || [])
+      .filter(([id, bt]) => bt >= s0 && bt <= endS && c.assets && c.assets.items && c.assets.items[id] && (c.assets.items[id].cost || 0) >= VITALITY_COST && !vit(id))
+      .map(([id, bt]) => ({ id, t: bt }))
+      .sort((a, b) => a.t - b.t);
+    const spentText = spent.length
+      ? `после начала серии ${plural(spent.length, 'покупка дороже', 'покупки дороже', 'покупок дороже')} ${N(VITALITY_COST)} ${plural(spent.length, 'шла', 'шли', 'шли')} не в живучесть: ${spent.slice(0, 3).map((x) => `${itemName(x.id)} (${N(c.assets.items[x.id].cost)} душ, ${T(x.t)})`).join(', ')}`
+      : `крупных покупок (${N(VITALITY_COST)}+ душ) после начала серии не было`;
+    out.push({
+      key: 'survivability_purchase',
+      area: 'Предметы',
+      level: 'warn',
+      score: 34 + worst.deaths.length * 6,
+      title: 'После серии смертей — без живучести',
+      groupTitle: 'Не докупаешь живучесть после серии смертей',
+      text: `С ${T(s0)} ты погиб ${worst.deaths.length} ${plural(worst.deaths.length, 'раз', 'раза', 'раз')} за короткий срок, и до конца игры не купил ни одного предмета живучести от ${N(VITALITY_COST)} душ (${hadVitality ? `к началу серии ${plural(hadVitality, 'такой предмет уже был', 'таких предметов уже было', 'таких предметов уже было')}` : 'таких предметов не было и до серии'}). ${spentText}.`
+        + (worst.lost >= 400 ? ` Смерти в серии стоили ${soulsAcc(worst.lost)}.` : ''),
+      context: 'Серия смертей и список покупок — факты из данных. Помогла бы живучесть — гипотеза: в повторе проверь, от какого урона умирал (оружие или способности) и было ли окно дойти до магазина. Предмет живучести не предотвращает смерть сам по себе.',
+      fix: [
+        'После двух смертей подряд остановись и проверь остаток душ: предмет живучести (здоровье, сопротивление, барьер) покупают до следующей драки, а не после неё.',
+        'Если копишь на дорогой урон — сравни в повторе цену ожидания: каждая смерть в серии отдаёт соперникам души, карту и время.',
+      ],
+      groupFix: [
+        'После серии смертей меняй план закупки: предмет живучести покупают до следующей драки, а не после неё.',
+        'Копишь на дорогой урон в плохой игре — сравни в повторе, сколько душ и карты стоило ожидание.',
+      ],
+      moments: worst.deaths.map((d) => {
+        const kp = bySlot.get(d.killer);
+        const parts = [`смерть в ${T(d.t)}`];
+        if (kp) parts.push(`убил ${heroName(kp.hero_id)}`);
+        const lost = lostByT.get(d.t);
+        if (Number.isFinite(lost) && lost >= 100) parts.push(`−${N(lost)} душ`);
+        return { t: d.t, x: d.x, y: d.y, lost: Number.isFinite(lost) ? lost : undefined, text: parts.join(' · ') };
+      }),
+      cost: { deaths: worst.deaths.length, souls: worst.lost },
+      facts: { streakStart: s0, streakDeaths: worst.deaths.length, hadVitality, spent: spent.slice(0, 5).map((x) => ({ id: x.id, t: x.t })) },
+    });
+  }
+
   // ---------- 6. Не собрал предмет против опасного героя ----------
   if (c.counters && endS >= 1200) {
     if (me.items?.length && m.dmg?.t?.at(-1) >= endS - 65 && enemies.some((e) => c.counters[e.hero_id]?.length)) checked('counter_missing');
@@ -748,6 +836,7 @@ function leakProfile(games) {
     lane_trades: { title: 'Не больше одной смерти до 10:00', action: 'После неудачного размена отойди и восстанови здоровье перед следующим.', check: 'После матча посчитай смерти до 10-й минуты.' },
     lost_souls: { title: `Ни одной смерти с потерей ${N(SOUL_LOSS_THRESHOLD)} душ или больше`, action: 'Перед рискованной дракой или пушем Walker проверь, можно ли сохранить души или безопасно купить предмет.', check: 'После матча проверь потерю душ в эпизодах своих смертей, если для них есть данные.' },
     solo_deaths: { title: 'Не больше одной смерти в одиночку после 10:00', action: 'Не заходи на чужую половину и к объектам без напарника: фарми рядом с командой или на своей половине.', check: 'После матча проверь смерти после 10:00: рядом (ближе ~8 секунд бега) должны быть живые союзники.' },
+    survivability_purchase: { title: 'После серии из трёх смертей — покупка живучести', action: 'После двух смертей подряд проверь остаток душ и купи предмет живучести до следующей драки, а не после неё.', check: 'После матча проверь: была ли серия смертей и куплен ли предмет живучести от 1 250 душ после её начала.' },
   };
   let goal = null;
   for (const row of rows) {

@@ -1502,6 +1502,76 @@ test('leaks: new match data (v2) and mistakes with moments', () => {
   assert.strictEqual(L.winLink('pu10', 7).wr, 0.519);
 });
 
+test('survivability purchase: streak of deaths without a vitality item', () => {
+  const L = require('../src/core/leaks');
+  const { playerFeatures: pf } = require('../src/core/features');
+
+  // каталог: 11 — живучесть 1 500, 13 — живучесть 2 000, 12 — оружие 3 000
+  const assets = { items: {
+    11: { id: 11, name: 'Барьер', slot: 'vitality', cost: 1500, tier: 2 },
+    13: { id: 13, name: 'Кираса', slot: 'vitality', cost: 2000, tier: 3 },
+    12: { id: 12, name: 'Резак', slot: 'weapon', cost: 3000, tier: 3 },
+  } };
+  const mkMatch = ({ deaths, items, duration = 1800, end }) => {
+    const players = [];
+    for (let i = 0; i < 12; i++) {
+      const team = i < 6 ? 0 : 1;
+      players.push({ account_id: 1 + i, hero_id: 20 + i, team, slot: i, lane: 1, won: team === 1, k: 0, d: 0, a: 0, nw: 20000,
+        items: i === 0 ? items : [], deaths: i === 0 ? deaths : [], deaths_t: (i === 0 ? deaths : []).map((d) => d[0]), pu: [],
+        stats: [{ t: 540, nw: 6000, d: 2, g_lost: 0, g_brk: 600, g_neutral: 600, k: 0, a: 0 }, { t: 1800, nw: 24000, d: deaths.length, g_lost: 1500, g_brk: 2600, g_neutral: 4000, k: 0, a: 0 }] });
+    }
+    const m = { match_id: 42, start_time: 1, duration_s: end ?? duration, players, badge: [52, 52], dmg: { t: [180, 1800], d: {} } };
+    const me = players[0];
+    const f = pf(me, m, assets);
+    const checked = new Set();
+    const leaks = L.gameLeaks({ m, me, f, ref: null, tier: 5, assets, checked, heroName: (x) => `H${x}`, itemName: (x) => assets.items[x].name });
+    return { leaks, checked, m, me, f };
+  };
+
+  // 1) серия из 3 смертей после 10:00, покупался только урон — утечка есть
+  const deaths = [[700, 0, 0, 6, 0, 0], [830, 0, 0, 7, 0, 0], [950, 0, 0, 6, 0, 0]];
+  const r1 = mkMatch({ deaths, items: [[12, 1000, 0, 0]] });
+  const lk = r1.leaks.find((l) => l.key === 'survivability_purchase');
+  assert.ok(lk, 'утечка после серии без живучести');
+  assert.strictEqual(lk.area, 'Предметы');
+  assert.strictEqual(lk.moments.length, 3, 'момент на каждую смерть серии');
+  assert.strictEqual(lk.cost.deaths, 3);
+  assert.ok(/H26/.test(lk.moments[0].text) && /H27/.test(lk.moments[1].text), 'имена убийц в моментах');
+  assert.ok(/Резак/.test(lk.text) && /не в живучесть/.test(lk.text), 'показано, куда ушли души');
+  assert.ok(/гипотеза/.test(lk.context), 'помечено как гипотеза, а не факт');
+  assert.ok(r1.checked.has('survivability_purchase'), 'игра помечена проверяемой');
+  assert.ok(!/undefined|NaN/.test(lk.title + lk.text + lk.moments.map((x) => x.text).join('')), 'нет undefined/NaN');
+  // серия входит в цель тренера (нужно ≥2 игры с доказательством)
+  const mkGame = (mid, ls, ck) => ({ match_id: mid, start_time: mid, won: false, hero: 20, leaks: ls, checked: ck });
+  const prof = L.leakProfile([mkGame(42, r1.leaks, [...r1.checked]), mkGame(43, r1.leaks, [...r1.checked])]);
+  const row = prof.rows.find((x) => x.key === 'survivability_purchase');
+  assert.ok(row, 'строка в общем профиле');
+  assert.strictEqual(row.deaths, 6);
+  assert.strictEqual(prof.goal.title, 'После серии из трёх смертей — покупка живучести');
+  assert.ok(prof.goal.episode.t >= 0, 'эпизод с моментом смерти');
+
+  // 2) живучесть куплена после начала серии — утечки нет
+  const r2 = mkMatch({ deaths, items: [[12, 1000, 0, 0], [11, 1020, 0, 0]] });
+  assert.ok(!r2.leaks.some((l) => l.key === 'survivability_purchase'), 'живучесть после серии — не утечка');
+  assert.ok(r2.checked.has('survivability_purchase'), 'игра всё равно проверяемая');
+
+  // 3) к началу серии уже было 2 предмета живучести — «купи ещё» не показываем
+  const r3 = mkMatch({ deaths, items: [[11, 300, 0, 0], [13, 500, 0, 0], [12, 1000, 0, 0]] });
+  assert.ok(!r3.leaks.some((l) => l.key === 'survivability_purchase'), 'живучесть уже собрана — без совета');
+
+  // 4) смерти растянуты (порог 4 минуты между соседними) — не серия
+  const r4 = mkMatch({ deaths: [[700, 0, 0, 6, 0, 0], [1500, 0, 0, 7, 0, 0], [2200, 0, 0, 6, 0, 0]], items: [[12, 1000, 0, 0]], duration: 2400 });
+  assert.ok(!r4.leaks.some((l) => l.key === 'survivability_purchase'), 'смерти не подряд — не серия');
+
+  // 5) после последней смерти не осталось 90 секунд игры — не проверяем
+  const r5 = mkMatch({ deaths: [[700, 0, 0, 6, 0, 0], [830, 0, 0, 7, 0, 0], [950, 0, 0, 6, 0, 0]], items: [[12, 1000, 0, 0]], end: 1000 });
+  assert.ok(!r5.leaks.some((l) => l.key === 'survivability_purchase'), 'нет окна на покупку — без совета');
+
+  // 6) каталог не загружен — утечки нет (и «чисто» тоже не заявляем)
+  const noAssets = L.gameLeaks({ m: r1.m, me: r1.me, f: r1.f, ref: null, tier: 5, assets: null, heroName: (x) => `H${x}`, itemName: (x) => `I${x}` });
+  assert.ok(!noAssets.some((l) => l.key === 'survivability_purchase'), 'без каталога — без утечки');
+});
+
 test('counter codex: picks, items, rules, small samples, stale, hero switch, false counter item', () => {
   const C = require('../src/core/counters');
   const { RULES } = require('../src/core/counterRules');

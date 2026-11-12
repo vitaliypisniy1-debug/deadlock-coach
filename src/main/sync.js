@@ -24,6 +24,7 @@ const { playerFeatures, refAll } = require('../core/features');
 const { matchTips } = require('../core/tipsMatch');
 const { skillOrder, skillConsensus, compareSkills } = require('../core/skills');
 const { heroPool, pickAdvice, gamePlan, buildPickMeta, heroRole, RANKED_HERO_RULE } = require('../core/pick');
+const { counterCodex } = require('../core/counters');
 const { matchBuild, buildText, buildFile } = require('../core/buildExport');
 const { encodeBuildCode } = require('../core/gameCode');
 
@@ -1427,6 +1428,56 @@ class Sync {
       metaInfo: pm ? { at: pm.at, badge: pm.badge, games: pm.games } : null,
       metaError: pm ? null : pmError || 'мета ещё загружается',
     };
+  }
+
+  // ---------- справочник контрпиков и контрпредметов ----------
+  // Один запрос на врага, ответ кэшируется: смена героя не запускает новых
+  // обращений к сети (мета и таблица покупок уже в кэше, пул — на 10 минут).
+  async codexLookup(accountId, enemyId, { force = false } = {}) {
+    const X = Number(enemyId);
+    if (!X) throw new Error('Не выбран герой соперника');
+    const table = this.counterTable(); // с внутренним кэшем по числу матчей
+    let pm = this.store.read('pickmeta.json', null);
+    const pmKey = (m) => (m && m.at) || 0;
+    const tKey = Object.keys(table).length;
+    const cache = this._codexCache;
+    if (!force && cache && cache.X === X && cache.pmKey === pmKey(pm) && cache.tKey === tKey) return cache.res;
+
+    let pmError = null;
+    let stale = false;
+    if (!pm || pm.v !== 1 || Date.now() - pm.at > 6 * 3600e3) {
+      // нет меты — ждём (несколько секунд); устарела — обновляем, но сохранённую
+      // отдаём даже при сбое сети (с датой и пометкой)
+      const job = this.pickMeta().then((m) => ({ m }), (e) => ({ e }));
+      if (!pm || pm.v !== 1) {
+        const r = await Promise.race([job, new Promise((res) => setTimeout(() => res({}), 20000))]);
+        if (r.m) pm = r.m;
+        if (r.e) pmError = r.e.message;
+      } else {
+        stale = true;
+        const r = await Promise.race([job, new Promise((res) => setTimeout(() => res({}), 8000))]);
+        if (r.m) {
+          pm = r.m;
+          stale = false;
+        } else if (r.e) pmError = r.e.message;
+        else job.then(({ m }) => { if (m) this._codexCache = null; }); // обновится позже — сбросим кэш
+      }
+    }
+    if (!this.assets) await this.loadAssets().catch(() => {});
+
+    // пул твоих героев для тумблера «Из моего пула» — кэш 10 минут, сеть дёргаем редко
+    let pool = [];
+    if (accountId) {
+      const pc = this._codexPool;
+      if (!pc || Date.now() - pc.at > 10 * 60e3) {
+        this._codexPool = { at: Date.now(), job: this.pickPool(accountId).then((r) => r.pool).catch(() => []) };
+      }
+      pool = await this._codexPool.job;
+    }
+    const res = counterCodex(X, { pm, table, assets: this.assets, pool, stale: stale && !!pm });
+    if (pmError) res.meta.error = pmError;
+    this._codexCache = { X, pmKey: pmKey(pm), tKey, res };
+    return res;
   }
 
   // ---------- общие помощники для тренера и матчапов ----------

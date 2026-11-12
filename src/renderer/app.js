@@ -27,6 +27,7 @@
     coach: { data: null, loading: false, error: null, for: null },
     growth: { data: null, loading: false, error: null, for: null, open: null },
     prep: newPrep(),
+    codex: { enemy: null, data: {}, pending: new Set(), poolOnly: false },
     heroMu: {},
     dashboard: newDashboard(),
     ov: { days: 7, data: null, loading: false, error: null, mode: 'lobby', srcMode: 'top', for: null },
@@ -94,7 +95,7 @@
 
   // ---------- навигация ----------
   // Меню: «Моя игра» (главная, тренер, матчи, герои) и «Мета» (герои меты, перед игрой, про-игроки).
-  const VIEW_OF = { home: 'overview', overview: 'overview', coach: 'coach', growth: 'growth', matches: 'camp', camp: 'camp', myheroes: 'camp', meta: 'meta', players: 'meta', prep: 'prep', settings: 'settings' };
+  const VIEW_OF = { home: 'overview', overview: 'overview', coach: 'coach', growth: 'growth', matches: 'camp', camp: 'camp', myheroes: 'camp', meta: 'meta', players: 'meta', prep: 'prep', codex: 'codex', settings: 'settings' };
   const viewHistory = [];
   let historyIndex = -1;
   function navKey() {
@@ -128,7 +129,7 @@
       viewHistory.splice(historyIndex + 1, viewHistory.length, key);
       historyIndex = viewHistory.length - 1;
     }
-    for (const id of ['overview', 'coach', 'growth', 'meta', 'camp', 'prep', 'settings']) $(`view-${id}`).hidden = id !== view;
+    for (const id of ['overview', 'coach', 'growth', 'meta', 'camp', 'prep', 'codex', 'settings']) $(`view-${id}`).hidden = id !== view;
     render();
     if (navKey() !== prevKey) {
       document.querySelector('.main').scrollTop = 0;
@@ -176,6 +177,7 @@
     if (S.view === 'coach') renderCoach();
     if (S.view === 'growth') renderGrowth();
     if (S.view === 'prep') renderPrep();
+    if (S.view === 'codex') renderCodex();
     if (S.view === 'meta') renderMeta();
     if (S.view === 'camp') renderCamp();
     if (S.view === 'settings') renderSettings();
@@ -262,6 +264,7 @@
     S.assets = assets;
     if (S.view === 'overview' && !S.dashboard.details) renderOverview();
     if (S.view === 'prep') renderPrep();
+    if (S.view === 'codex') renderCodex();
     if (S.view === 'meta') renderMeta();
   });
 
@@ -1294,6 +1297,7 @@
       }, { multi: true, disabled: new Set([P.myHero]), lane: P.laneFoe }),
       h('div.row', { style: { marginTop: '14px' } },
         h('button.btn.primary', { onclick: runPrep, disabled: !P.myHero || !P.enemies.length || !!P.request || null }, P.request ? h('span.spin') : Icon('zap'), 'Показать план'),
+        P.enemies.length ? h('button.btn', { onclick: () => { S.codex.enemy = P.laneFoe || P.enemies[0]; setView('codex'); }, title: 'Справочник: контрпики и контрпредметы по выбранному сопернику' }, 'Справочник по сопернику') : null,
         P.enemies.length ? h('button.btn', { onclick: () => { P.enemies = []; P.laneFoe = null; selectionChanged(); } }, 'Сбросить') : null));
     const parts = [head, h('div.prep-steps', step1, step2)];
     const r = P.result;
@@ -1360,6 +1364,146 @@
     ];
   }
 
+  // ================= СПРАВОЧНИК КОНТРПИКОВ И КОНТРПРЕДМЕТОВ =================
+  // Выбрал врага — получил «кого взять» (статистика матчапов) и «что купить»
+  // (покупки топов + проверенные механики). Ответ кэшируется по герою:
+  // смена героя лишних запросов не запускает.
+  async function loadCodex(enemyId) {
+    const C = S.codex;
+    if (C.data[enemyId] !== undefined || C.pending.has(enemyId)) return;
+    C.pending.add(enemyId);
+    renderCodex();
+    try {
+      C.data[enemyId] = await dc.codexLookup(enemyId);
+    } catch (e) {
+      C.data[enemyId] = { enemy: enemyId, error: e.message };
+    } finally {
+      C.pending.delete(enemyId);
+      if (S.view === 'codex') renderCodex();
+    }
+  }
+
+  function codexMetaNote(d) {
+    const m = d.meta || {};
+    const bits = [];
+    if (m.covered) bits.push(`пары герой-против-героя за 14 дней · ранг ${m.badge >= 91 ? 'Фантом 1+' : 'Оракул 1+'}`);
+    if (m.at) bits.push(`данные от ${new Date(m.at).toLocaleString('ru-RU', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}`);
+    if (m.stale) bits.push('показаны сохранённые, обновление идёт в фоне');
+    if (m.error) bits.push(`обновить не удалось: ${m.error}`);
+    return bits.join(' · ');
+  }
+
+  function renderCodex() {
+    const v = $('view-codex');
+    if (!v) return;
+    const C = S.codex;
+    const head = h('div.page-head', h('div', h('div.crumbs', 'Мета / Справочник контрпиков'), h('h1', 'Справочник контрпиков'),
+      h('div.sub', 'Выбери героя соперника: кого взять против него до игры и что докупить, если матч уже идёт. У каждой рекомендации — источник: статистика матчапов, покупки топов или механика из файлов игры.')));
+    if (!Object.keys(S.assets.heroes).length) {
+      return void v.replaceChildren(head, h('div.empty', h('strong', 'Нет списка героев'), 'Нажми «Обновить данные» в «Мете героев».'));
+    }
+    const select = h('section.panel', h('div.row', { style: { justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: '10px' } },
+      h('h2', { style: { margin: 0 } }, 'Герой соперника'),
+      C.poolOnly ? h('label.row.small', { style: { gap: '6px', cursor: 'pointer' } }, h('input', { type: 'checkbox', checked: true, onchange: () => { C.poolOnly = false; renderCodex(); } }), 'показываю только из моего пула') : null),
+      heroGrid(C.enemy, (id) => { C.enemy = id; C.showAllPicks = false; renderCodex(); }));
+    const parts = [head, select];
+    const enemy = C.enemy;
+    if (!enemy) {
+      parts.push(h('div.empty', h('strong', 'Выбери соперника сверху'), 'Покажу контрпики и контрпредметы по нему.'));
+      v.replaceChildren(...parts);
+      return;
+    }
+    const d = C.data[enemy];
+    if (d === undefined) loadCodex(enemy);
+    if (!d || C.pending.has(enemy)) {
+      parts.push(skeleton(`Собираю контрпики и предметы против ${heroName(enemy)}`, 'list'));
+      v.replaceChildren(...parts);
+      return;
+    }
+    if (d.error) {
+      parts.push(h('section.panel', h('div.note', Icon('info'), h('div', `Не получилось собрать справочник: ${d.error}`))));
+      v.replaceChildren(...parts);
+      return;
+    }
+
+    // ---------- кого взять ----------
+    const picks = d.picks || { rows: [] };
+    let rows = picks.rows || [];
+    const hasPool = rows.some((x) => x.inPool);
+    if (C.poolOnly && hasPool) {
+      rows = rows.filter((x) => x.inPool);
+      if (!rows.length) rows = picks.rows;
+    }
+    const shown = C.showAllPicks ? rows : rows.slice(0, 6);
+    const pp = (x) => (x === null || x === undefined ? '—' : `${x >= 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(x * 100).toFixed(1)} п.п.`);
+    const pickTable = shown.length
+      ? h('table.table', h('thead', h('tr', h('th', 'Герой'), h('th.r', 'Против него'), h('th.r', 'Обычно'), h('th.r', 'Разница'), h('th.r', 'Линия'), h('th.r', 'Души к 9-й'))),
+        h('tbody', shown.map((x) => h('tr',
+          h('td', h('div.hero-cell', heroIcon(x.hero_id, '.sm'), heroName(x.hero_id),
+            x.inPool ? h('span.pill', 'твой герой') : null,
+            x.small ? h('span.pill.dim', { title: `${x.n} ${plural(x.n, 'игра', 'игры', 'игр')} в паре — выборка скромная` }, 'мало игр') : null)),
+          h('td.r.num', x.wrVs !== null ? F.pct(x.wrVs) : '—', h('div.dim.small', `${x.n} ${plural(x.n, 'матч', 'матча', 'матчей')} в паре`)),
+          h('td.r.num', x.base !== null ? F.pct(x.base) : '—'),
+          h('td.r.num', h('span', { style: { color: (x.pp || 0) >= 0 ? 'var(--good)' : 'var(--bad)', fontWeight: 700 } }, pp(x.pp))),
+          h('td.r.num', { title: x.laneN ? `На одной линии: ${F.pct(x.laneWr)} за ${x.laneN} ${plural(x.laneN, 'матч', 'матча', 'матчей')}` : 'Матчапы на одной линии: мало игр' },
+            x.laneN >= 100 && x.laneWr !== null && x.base !== null ? pp(x.laneWr - x.base) : '—', x.laneN >= 100 ? h('div.dim.small', `${x.laneN} ${plural(x.laneN, 'матч', 'матча', 'матчей')}`) : null),
+          h('td.r.num', { title: x.soulsN ? `Разница душ к 9-й минуте на одной линии, ${x.soulsN} ${plural(x.soulsN, 'игра', 'игры', 'игр')}` : '' },
+            x.soulsD !== null ? h('span', { style: { color: x.soulsD >= 0 ? 'var(--good)' : 'var(--bad)' } }, `${x.soulsD > 0 ? '+' : x.soulsD < 0 ? '−' : ''}${F.num(Math.abs(x.soulsD))}`) : '—')))))
+      : h('div.muted', d.picks && d.picks.pairsSeen
+        ? `Явных контрпиков по статистике не видно: в ${d.picks.pairsSeen} ${plural(d.picks.pairsSeen, 'паре', 'парах', 'парах')} разница с обычным винрейтом в пределах шума. Бери по составу команды и героям, на которых играешь уверенно.`
+        : 'Пар с надёжной выборкой пока нет — мета ещё собирается.');
+    parts.push(h('section.panel',
+      h('div.row', { style: { justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: '10px' } },
+        h('h2', `Кого взять против ${heroName(enemy)}`),
+        hasPool ? h('button.btn.small', { onclick: () => { C.poolOnly = !C.poolOnly; renderCodex(); }, 'aria-pressed': C.poolOnly ? 'true' : 'false' }, C.poolOnly ? 'Показать всех' : 'Из моего пула') : null),
+      h('div.hint', '«Разница» — винрейт героя в матчапах против выбранного соперника минус его обычный винрейт в той же выборке: сильный сам по себе герой не выглядит «контрпиком» против всех. Ранжирование осторожное: малые выборки стянуты к нулю, пары со ${'<' /* разорвать, чтобы не съело html */}100 игр скрыты. Преимущество конкретной пары обычно невелико (около ±1 п.п.) — не воспринимай его как гарантию.'),
+      pickTable,
+      rows.length > 6 ? h('div.row', { style: { marginTop: '12px' } }, h('button.btn.small', { onclick: () => { C.showAllPicks = !C.showAllPicks; renderCodex(); } }, C.showAllPicks ? 'Свернуть' : `Показать все ${rows.length}`)) : null,
+      !hasPool && S.auth ? h('div.hint', 'Героев из твоего пула в списке нет: они не проходят порог выборки, или история ещё загружается.') : null,
+      !S.auth ? h('div.hint', 'Войди через Steam — появится фильтр «из моего пула» по героям, на которых ты играешь.') : null));
+
+    // ---------- что купить ----------
+    const items = d.items || {};
+    const hr = d.heroRule;
+    const mechRows = (items.mechanics || []).map((x) => h('div.codex-item',
+      h('div.row', { style: { alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
+        h('span.pill', 'механика патча'),
+        h('b', x.name),
+        x.tier ? h('span.muted.small', `${x.slot === 'vitality' ? 'Живучесть' : x.slot === 'spirit' ? 'Дух' : x.slot === 'weapon' ? 'Оружие' : ''} T${x.tier}`) : null,
+        x.rule ? h('span.pill.dim', x.rule.threatLabel) : null),
+      h('div', { style: { margin: '4px 0' } }, x.why),
+      x.rule ? h('details', h('summary', 'Как работает предмет'), h('div.codex-detail', h('div', h('b', 'Эффект: '), x.rule.text), x.rule.goodVs ? h('div', h('b', 'Полезен: '), x.rule.goodVs) : null, x.rule.notEnough ? h('div', h('b', 'Не решит: '), x.rule.notEnough) : null)) : null));
+    const buyRows = (items.purchases || []).map((x) => h('div.codex-item',
+      h('div.row', { style: { alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
+        h('span.mini-items', itemImg(x.id)),
+        h('b', x.name),
+        x.cost ? h('span.muted.small', `${x.cost} душ · ${x.slot === 'vitality' ? 'Живучесть' : x.slot === 'spirit' ? 'Дух' : x.slot === 'weapon' ? 'Оружие' : ''} T${x.tier}`) : null,
+        x.rule ? h('span.pill.dim', x.rule.threatLabel) : null,
+        h('span.pill.hot', { title: `Покупают в ${F.pct(x.rateVs)} игр против ${heroName(enemy)} и в ${F.pct(Math.max(0, x.rateVs / x.lift))} игр без него` }, `×${x.lift.toFixed(1)} чаще обычного`)),
+      x.rule ? h('div', { style: { margin: '4px 0' } }, x.rule.text) : h('div.muted.small', 'Почему берут именно против него — из файлов игры не подтверждено; смотри на частоту покупок топов.'),
+      x.rule ? h('details', h('summary', 'Когда брать, когда нет'), h('div.codex-detail', h('div', h('b', 'Полезен: '), x.rule.goodVs), h('div', h('b', 'Не решит: '), x.rule.notEnough))) : null));
+    const itemPanel = h('section.panel',
+      h('h2', `Что купить против ${heroName(enemy)}`),
+      hr && hr.threats && hr.threats.length ? h('div', { style: { marginBottom: '14px' } },
+        h('h3', `Чем опасен ${heroName(enemy)} (из файлов игры, патч ${d.rules ? d.rules.patch : ''})`),
+        h('ul.codex-threats', hr.threats.map((t) => h('li', t))),
+        hr.heals && hr.heals.length ? h('div.note', Icon('info'), h('div', h('b', 'Лечится: '), hr.heals.join('; '), ' — снижение входящего лечения (Toxic Bullets, Healbane) бьёт именно по этому.')) : null)
+        : h('div.hint', `Механики ${heroName(enemy)} из файлов игры пока не разобраны — рекомендации ниже основаны только на покупках топов и статистике. Универсальных советов не показываю.`),
+      mechRows.length ? h('div', { style: { marginBottom: '12px' } }, h('h3', 'Проверенные механики'), mechRows) : null,
+      buyRows.length ? h('div', h('h3', 'По покупкам топов'), h('div.hint', `Предметы, которые в матчах топового уровня против ${heroName(enemy)} берут минимум в 1.5 раза чаще, чем на тех же героях без него. Это наблюдение, а не доказательство: покупка может быть ответом на весь состав соперника, а дорогие предметы чаще встречаются в длинных играх.`), buyRows) : null,
+      !mechRows.length && !buyRows.length ? h('div.muted', 'Надёжных контрпредметов пока нет: покупок против этого героя в матчах топов меньше порога (нужно ≥60 игр с обеих сторон), а механика из файлов игры не подтверждена.') : null);
+    parts.push(itemPanel);
+
+    // ---------- источники ----------
+    const foot = [];
+    const metaNote = codexMetaNote(d);
+    if (metaNote) foot.push(h('div', h('b', 'Матчапы: '), `Deadlock API (все матчи выбранного ранга). ${metaNote}. ${d.meta && d.meta.error ? `Ошибка обновления: ${d.meta.error}.` : ''}`));
+    if (d.rules) foot.push(h('div', h('b', 'Механики: '), `${d.rules.source}, патч ${d.rules.patch}.`));
+    foot.push(h('div', h('b', 'Покупки: '), 'матчи топового уровня, сохранённые приложением (lift против игр без этого героя).'));
+    parts.push(h('section.panel', h('h2', 'Откуда данные'), foot));
+    v.replaceChildren(...parts);
+  }
+
   // ================= МАТЧАПЫ НА СТРАНИЦЕ ГЕРОЯ (МЕТА) =================
   function heroMatchupPanel(heroId) {
     const c = S.heroMu[heroId];
@@ -1373,7 +1517,10 @@
     const line = (x) => h('div.mu-row', heroIcon(x.hero_id, '.sm'), h('span.grow', heroName(x.hero_id)), h('span.num.muted', `${x.games} ${plural(x.games, 'игра', 'игры', 'игр')}`),
       x.counters.length ? h('div.mini-items', { title: 'Что топы докупают против него' }, x.counters.map((k) => itemImg(k.id))) : null,
       h('b.num', { style: { color: x.wr >= 0.5 ? 'var(--good)' : 'var(--bad)' } }, F.pct(x.wr)));
-    return h('section.panel', h('h2', 'Против кого'),
+    return h('section.panel',
+      h('div.row', { style: { justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: '10px' } },
+        h('h2', 'Против кого'),
+        h('button.btn.small', { onclick: () => { S.codex.enemy = heroId; setView('codex'); }, title: `Справочник: кого взять против ${heroName(heroId)} и что докупить` }, 'Кого взять против него →')),
       h('h3', 'Неудобные соперники'), c.hard.length ? c.hard.map(line) : h('div.muted.small', 'Нет явно неудобных'),
       h('h3', { style: { marginTop: '14px' } }, 'Удобные соперники'), c.easy.length ? c.easy.map(line) : h('div.muted.small', 'Нет явно удобных'),
       h('div.hint', `Винрейт топов на ${heroName(heroId)} против героя в команде соперника. Иконки — предметы, которые против него берут чаще обычного.`));

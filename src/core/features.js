@@ -6,6 +6,7 @@ const { valueAt } = require('./timeline');
 const { median, quantile } = require('./stats');
 const { isUpgrade, itemFates } = require('./meta');
 const { WINDOW, participationAfter } = require('./spikes');
+const { soloDeaths } = require('./deaths');
 
 const at = (stats, field, min) => valueAt(stats, field, min * 60);
 const lastOf = (stats) => (stats && stats.length ? stats[stats.length - 1] : null);
@@ -167,6 +168,8 @@ function playerFeatures(p, match, assets = null) {
     firstDeathExact: Boolean(p.deaths_t && p.deaths_t.length),
     deathBurst: maxInWindow(dts, 300),
     lastMinutesDeaths: dts.filter((t) => t >= (match.duration_s || 0) - 180).length,
+    // смерти в одиночку после 10:00: null, если маршрутов нет (проверить нельзя)
+    soloDeaths: soloDeaths(match, p),
     acc: shots >= 80 ? last.hit / shots : null,
     hsRate: last && last.hhit >= 40 ? last.hcrit / last.hhit : null,
     heroShotShare: last && last.hit >= 80 ? last.hhit / last.hit : null,

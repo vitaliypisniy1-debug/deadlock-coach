@@ -18,6 +18,7 @@
 
 const { valueAt } = require('./timeline');
 const { N, T, plural } = require('./tipkit');
+const { soloDeathRows, soloDeathsVerifiable } = require('./deaths');
 
 const souls = (n) => `${N(n)} ${plural(n, 'душа', 'души', 'душ')}`;
 // винительный падеж: «потерял 1 551 душу»
@@ -333,6 +334,54 @@ function gameLeaks(c) {
       fix: ['Перед рискованным пушем Walker или дракой проверь размер мешка. Если можно безопасно купить полезный предмет или сохранить души, сравни этот вариант с продолжением пуша.'],
       moments: losses.map((x) => ({ t: x.t, lost: x.lost, text: `умер и потерял ${soulsAcc(x.lost)}` })),
       cost: { souls: total },
+    });
+  }
+
+  // ---------- 4a. Смерти в одиночку ----------
+  // По маршрутам: в момент смерти ни один живой союзник не был ближе 2500 единиц.
+  const solo = soloDeathRows(m, me);
+  if (solo !== null && soloDeathsVerifiable(m, me)) checked('solo_deaths');
+  if (solo && solo.length >= 2) {
+    const lostBy = new Map(observedLosses.map((x) => [x.t, x.lost]));
+    const rows = solo.map((r) => ({ ...r, lost: lostBy.get(r.t) }));
+    const lostKnown = rows.length > 0 && rows.every((r) => Number.isFinite(r.lost));
+    const lostSum = rows.reduce((s, r) => s + (r.lost || 0), 0);
+    const killCount = new Map();
+    for (const r of rows) {
+      const kp = bySlot.get(r.killerSlot);
+      if (kp) killCount.set(kp.hero_id, (killCount.get(kp.hero_id) || 0) + 1);
+    }
+    const killerNames = [...killCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3)
+      .map(([hid, n]) => `${heroName(hid)}${n > 1 ? ` (${n})` : ''}`);
+    out.push({
+      key: 'solo_deaths',
+      area: 'Выживание',
+      level: solo.length >= 3 || lostSum >= 1500 ? 'bad' : 'warn',
+      score: 48 + solo.length * 10 + (lostSum >= 1500 ? 12 : 0),
+      title: 'Гиб вдали от команды',
+      groupTitle: 'Гибнешь в одиночку, когда команда далеко',
+      text: `После 10:00 ты погиб ${solo.length} ${plural(solo.length, 'раз', 'раза', 'раз')}, когда рядом не было ни одного живого союзника (ближе ~8 секунд бега).`
+        + (lostKnown && lostSum >= 400 ? ` Эти смерти стоили тебе ${soulsAcc(lostSum)}.` : '')
+        + (killerNames.length ? ` Убивали: ${killerNames.join(', ')}.` : ''),
+      context: '«В одиночку» — расчёт по маршрутам героев: в момент смерти ни один живой союзник не был ближе 2 500 единиц карты (≈8 с бега). Расстояние по прямой — оценка; в эпизоде проверь, успевала ли помощь дойти и что было видно на миникарте.',
+      fix: [
+        'Не заходи на чужую половину и к Walker без напарника: пока враги живы, фарми рядом с командой или на своей половине.',
+        'Фарми вдали от команды — поглядывай на миникарту: соперники пропали — отходи к своим, даже если лагерь не добит.',
+      ],
+      groupFix: [
+        'Держись напарника, когда идёшь пушить или фармить на чужой половине: в примерах ниже помощь не успевала.',
+        'Соперники пропали с миникарты — отходи к своим, даже если лагерь не добит.',
+      ],
+      moments: rows.map((r) => {
+        const kp = bySlot.get(r.killerSlot);
+        const parts = ['один'];
+        if (kp) parts.push(`убил ${heroName(kp.hero_id)}`);
+        if (r.allyDist === null) parts.push('все союзники были мертвы');
+        else parts.push(`до союзников ${Math.max(1, Math.round(r.allyDist / SPEED))} с бега`);
+        if (r.foes >= 2) parts.push(`соперников рядом: ${r.foes}`);
+        return { t: r.t, x: r.x, y: r.y, lost: Number.isFinite(r.lost) ? r.lost : undefined, text: parts.join(' · ') };
+      }),
+      cost: { deaths: solo.length, souls: lostKnown ? lostSum : 0 },
     });
   }
 
@@ -698,6 +747,7 @@ function leakProfile(games) {
   const goals = {
     lane_trades: { title: 'Не больше одной смерти до 10:00', action: 'После неудачного размена отойди и восстанови здоровье перед следующим.', check: 'После матча посчитай смерти до 10-й минуты.' },
     lost_souls: { title: `Ни одной смерти с потерей ${N(SOUL_LOSS_THRESHOLD)} душ или больше`, action: 'Перед рискованной дракой или пушем Walker проверь, можно ли сохранить души или безопасно купить предмет.', check: 'После матча проверь потерю душ в эпизодах своих смертей, если для них есть данные.' },
+    solo_deaths: { title: 'Не больше одной смерти в одиночку после 10:00', action: 'Не заходи на чужую половину и к объектам без напарника: фарми рядом с командой или на своей половине.', check: 'После матча проверь смерти после 10:00: рядом (ближе ~8 секунд бега) должны быть живые союзники.' },
   };
   let goal = null;
   for (const row of rows) {

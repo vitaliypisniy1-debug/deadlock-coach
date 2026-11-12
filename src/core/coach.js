@@ -138,6 +138,16 @@ const CATALOG = [
     make: () => null,
   },
   {
+    // field — где лежит значение в признаках: ключ цели не совпадает с именем поля,
+    // потому что цель должна находить эпизоды «Ошибок» по тому же ключу (solo_deaths).
+    key: 'solo_deaths', family: 'soloDeaths', field: 'soloDeaths', fmt: N, area: 'Выживание', cmp: 'le', heroSpecific: false,
+    metric: (g) => g.f && g.f.soloDeaths,
+    title: (t) => `Смертей в одиночку после 10:00 — не больше ${t}`,
+    short: 'смерти в одиночку',
+    tip: 'Не заходи на чужую половину и к объектам без напарника: фарми рядом с командой или на своей половине. Соперники пропали с миникарты — отходи к своим, даже если лагерь не добит.',
+    make: (me) => (me === null || me <= 1.5 ? null : { target: Math.max(1, Math.round(me) - 1), gap: Math.min(0.6, (me - 1.5) / 3) }),
+  },
+  {
     key: 'kp', family: 'kp', fmt: P, area: 'Драки', cmp: 'ge', heroSpecific: false,
     metric: (g) => g.f && g.f.kp,
     title: (t) => `Участвовать в ${P(t)} убийств команды`,
@@ -240,7 +250,7 @@ function candidates({ games, topHero, lobby, extra, exclude = new Set(), stretch
   const out = [];
   for (const cat of CATALOG) {
     if (exclude.has(cat.key)) continue;
-    const { me, ref } = stats(cat.key, games, topHero, lobby);
+    const { me, ref } = stats(cat.field || cat.key, games, topHero, lobby);
     let g = stretch ? null : cat.make(me, ref, extra);
     let kind = 'fix';
     if (!g && stretch && cat.stretch) {
@@ -365,21 +375,31 @@ function updateCoach(state, data, { forceNew = false, focusEvidence = null } = {
     if (st.plan) st.archive = (st.archive || []).concat(st.plan.goals.map((g) => ({ ...g, status: g.status === 'done' ? 'done' : 'expired', endedAt: now }))).slice(-60);
     if (loaded.length >= 5) makePlan(forceNew ? 'manual' : st.plan ? 'week' : 'first');
   }
-  const plan = st.plan;
+  let plan = st.plan;
   if (!plan) {
-    return { state: st, view: { plan: null, cards: [], goals: [], events: st.log || [], need: Math.max(0, 5 - loaded.length) } };
+    if (focusEvidence && loaded.length) {
+      // План из одного эпизода: цель появляется сразу, даже если игр меньше пяти.
+      // Остальные цели доберутся, когда наберётся статистика. Прогресс считается
+      // только по играм после этого момента — момент виден игроку в ленте.
+      plan = { createdAt: now, reason: 'episode', goals: [] };
+      st.plan = plan;
+      logEvent({ t: now, kind: 'plan', title: 'Новый план на неделю', text: 'Цель из эпизода. Прогресс считается по играм после этого момента.' });
+    } else {
+      return { state: st, view: { plan: null, cards: [], goals: [], events: st.log || [], need: Math.max(0, 5 - loaded.length) } };
+    }
   }
 
   if (focusEvidence && (plan.focusEvidence?.matchId !== focusEvidence.matchId || plan.focusEvidence?.t !== focusEvidence.t
     || plan.focusEvidence?.key !== focusEvidence.key)) {
     const soulGoal = focusEvidence.key === 'lost_souls';
-    const key = soulGoal ? 'lost_souls' : 'd10';
+    const soloGoal = focusEvidence.key === 'solo_deaths';
+    const key = soulGoal ? 'lost_souls' : soloGoal ? 'solo_deaths' : 'd10';
     const target = soulGoal ? 0 : 1;
     const current = plan.goals.find((g) => g.key === key && g.status === 'active');
     const catalog = CATALOG.find((g) => g.key === key);
     const prior = loaded.filter((g) => g.start_time < now).slice(-20).map(catalog.metric).filter(Number.isFinite);
     const focus = { ...current, key, family: catalog.family, area: catalog.area, short: catalog.short, cmp: catalog.cmp,
-      title: catalog.title(target), target, byHero: null, tip: soulGoal ? catalog.tip : 'После неудачного размена отойди и восстанови здоровье.',
+      title: catalog.title(target), target, byHero: null, tip: soulGoal || soloGoal ? catalog.tip : 'После неудачного размена отойди и восстанови здоровье.',
       baseline: prior.length ? median(prior) : null, status: 'active', startedAt: now, evidence: focusEvidence };
     plan.goals = [focus, ...plan.goals.filter((g) => g.key !== key)];
     plan.focusEvidence = focusEvidence;

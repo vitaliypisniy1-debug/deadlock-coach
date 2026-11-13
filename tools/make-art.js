@@ -135,3 +135,5 @@ divider('divider-deco.svg');
 noise('noise.svg');
 for (const [k, v] of Object.entries(E)) emblem(`emblem-${k}.svg`, v);
 console.log('Готово:', fs.readdirSync(OUT).length, 'файлов в', OUT);
+
+module.exports = { rng, f, save, C, skylineLayer, building, hexPts, OUT };

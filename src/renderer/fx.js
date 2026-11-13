@@ -50,3 +50,58 @@
 
   window.FX = { enter, countUp };
 })();
+
+// ---------- параллакс шапок, наклон карточек, искры на фоне ----------
+(function () {
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce) return;
+  document.addEventListener('pointermove', (e) => {
+    const head = e.target.closest && e.target.closest('.page-head, .dash-banner');
+    if (head) {
+      const r = head.getBoundingClientRect();
+      head.style.setProperty('--px', (((e.clientX - r.left) / r.width) * 2 - 1).toFixed(3));
+      head.style.setProperty('--py', (((e.clientY - r.top) / r.height) * 2 - 1).toFixed(3));
+    }
+    const card = e.target.closest && e.target.closest('.hpick, .hl-tile');
+    if (card) {
+      const r = card.getBoundingClientRect();
+      const k = card.classList.contains('hpick') ? 9 : 4;
+      card.style.setProperty('--ry', (((e.clientX - r.left) / r.width - 0.5) * k).toFixed(2) + 'deg');
+      card.style.setProperty('--rx', ((0.5 - (e.clientY - r.top) / r.height) * k).toFixed(2) + 'deg');
+    }
+  }, { passive: true });
+  document.addEventListener('pointerout', (e) => {
+    const card = e.target.closest && e.target.closest('.hpick, .hl-tile');
+    if (card && !card.contains(e.relatedTarget)) { card.style.setProperty('--rx', '0deg'); card.style.setProperty('--ry', '0deg'); }
+  }, { passive: true });
+
+  // искры: лёгкий холст, 55 частиц, останавливается когда окно скрыто
+  const cv = document.createElement('canvas');
+  cv.id = 'ambient';
+  document.body.prepend(cv);
+  const ctx = cv.getContext('2d');
+  let w = 0, h = 0, parts = [], raf = 0;
+  const resize = () => { w = cv.width = window.innerWidth; h = cv.height = window.innerHeight; };
+  const mk = () => ({ x: Math.random() * w, y: Math.random() * h, r: 0.6 + Math.random() * 1.8, vy: 0.12 + Math.random() * 0.4, ph: Math.random() * 6.28, sp: 0.4 + Math.random(), warm: Math.random() < 0.7, a: 0.12 + Math.random() * 0.45 });
+  resize();
+  parts = Array.from({ length: 55 }, mk);
+  window.addEventListener('resize', resize);
+  const tick = (t) => {
+    ctx.clearRect(0, 0, w, h);
+    for (const p of parts) {
+      p.y -= p.vy; p.x += Math.sin(t / 1800 * p.sp + p.ph) * 0.25;
+      if (p.y < -10) { p.y = h + 10; p.x = Math.random() * w; }
+      const tw = 0.6 + 0.4 * Math.sin(t / 700 * p.sp + p.ph);
+      ctx.beginPath();
+      ctx.fillStyle = p.warm ? `rgba(255,153,102,${(p.a * tw).toFixed(3)})` : `rgba(95,212,238,${(p.a * tw).toFixed(3)})`;
+      ctx.shadowColor = p.warm ? 'rgba(255,122,69,0.8)' : 'rgba(95,212,238,0.8)';
+      ctx.shadowBlur = 8;
+      ctx.arc(p.x, p.y, p.r, 0, 6.283);
+      ctx.fill();
+    }
+    raf = requestAnimationFrame(tick);
+  };
+  const run = () => { if (!raf && !document.hidden) raf = requestAnimationFrame(tick); };
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { cancelAnimationFrame(raf); raf = 0; } else run(); });
+  run();
+})();

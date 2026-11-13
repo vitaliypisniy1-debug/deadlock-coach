@@ -308,7 +308,7 @@ h3 { font: 600 12px/1.2 var(--body); letter-spacing: 0.14em; color: var(--muted)
 .hpick { border-radius: 14px; background: rgba(255, 255, 255, 0.03); border-color: var(--edge); transition: border-color 0.15s, background 0.15s, transform 0.15s var(--ease); }
 .hpick img, .hpick .ph { border-radius: 12px; }
 .hpick:hover:not(:disabled) { border-color: rgba(95, 212, 238, 0.5); transform: translateY(-2px); }
-.hpick.on { border-color: var(--accent); background: rgba(255, 122, 69, 0.14); box-shadow: 0 0 0 1px var(--accent) inset, 0 10px 22px -14px rgba(255, 122, 69, 0.8); }
+.hpick.on { border-color: var(--accent); }
 .hpick.lane { border-color: var(--warn); box-shadow: 0 0 0 1px var(--warn) inset; }
 .hpick i { border-radius: 99px; background: var(--warn); color: #3b2c0a; padding: 2px 7px; }
 .welcome-main { border-radius: 22px; }
@@ -572,7 +572,7 @@ h3 { font: 600 12px/1.2 var(--body); letter-spacing: 0.14em; color: var(--muted)
 
 /* кнопки героев: компактные, с подложкой в цвете героя */
 .hgrid { grid-template-columns: repeat(auto-fill, minmax(82px, 1fr)); gap: 8px; max-height: 360px; }
-.hpick {
+.hpick, .hpick.on, .hpick.lane {
   aspect-ratio: 4 / 5; border-radius: 14px;
   background:
     linear-gradient(180deg, rgba(8, 18, 22, 0) 52%, rgba(8, 18, 22, 0.92) 100%),
@@ -587,3 +587,51 @@ h3 { font: 600 12px/1.2 var(--body); letter-spacing: 0.14em; color: var(--muted)
 @media (max-width: 1020px) { .page-head::before { width: 80px; height: 80px; } .page-head { min-height: 112px; } }
 .leak-focus::before, .panel.kraft::before, .coach-focus .goal::before { opacity: 0.45; width: min(55%, 520px); }
 .dash-banner h1::after { width: 300px; height: 20px; }
+
+/* ==========================================================================
+   Шапки со сценами (у каждого раздела своя), параллакс, живой фон, наклон карточек
+   ========================================================================== */
+.page-head {
+  background:
+    linear-gradient(90deg, rgba(8, 18, 22, 0.97) 24%, rgba(8, 18, 22, 0.72) 50%, rgba(8, 18, 22, 0) 80%),
+    var(--scene) calc(100% + var(--px, 0) * 10px) calc(50% + var(--py, 0) * 6px) / auto 125% no-repeat,
+    var(--panel);
+  min-height: 176px; padding: 28px 32px;
+}
+.page-head::before { content: none; }
+#view-coach { --scene: url('assets/art/scene-coach.svg'); }
+#view-growth { --scene: url('assets/art/scene-growth.svg'); }
+#view-camp { --scene: url('assets/art/scene-matches.svg'); }
+#view-meta { --scene: url('assets/art/scene-meta.svg'); }
+#view-prep { --scene: url('assets/art/scene-prep.svg'); }
+#view-codex { --scene: url('assets/art/scene-codex.svg'); }
+#view-settings { --scene: url('assets/art/scene-settings.svg'); }
+#view-overview { --scene: url('assets/art/scene-home.svg'); }
+#view-camp .page-head.hero-banner, #view-camp .page-head { --scene: url('assets/art/scene-matches.svg'); }
+.page-head h1 { font-size: clamp(38px, 3.8vw, 56px); }
+.dash-banner::before {
+  background: linear-gradient(95deg, #081216 6%, rgba(8, 18, 22, 0.72) 46%, rgba(8, 18, 22, 0.1)), url('assets/art/scene-home.svg') calc(100% + var(--px, 0) * 12px) center / cover no-repeat;
+}
+
+/* живой фон: искры и дымка */
+#ambient { position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0.85; }
+.side, .main { position: relative; z-index: 1; }
+body::before {
+  content: ''; position: fixed; z-index: 0; inset: -20%; pointer-events: none;
+  background: radial-gradient(40% 35% at 25% 30%, rgba(95, 212, 238, 0.07), transparent 70%), radial-gradient(35% 40% at 78% 70%, rgba(255, 122, 69, 0.07), transparent 70%);
+  animation: drift 38s ease-in-out infinite alternate;
+}
+@keyframes drift { from { transform: translate3d(-3%, -2%, 0) scale(1); } to { transform: translate3d(3%, 2%, 0) scale(1.08); } }
+
+/* наклон карточек за курсором */
+.hpick, .hl-tile { transform: perspective(800px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)); transition: transform 0.18s ease-out, box-shadow 0.2s, border-color 0.2s; will-change: transform; }
+.hpick:hover:not(:disabled) { transform: perspective(800px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)) translateY(-3px) scale(1.04); }
+.hpick::after { background: radial-gradient(circle at var(--mx, 50%) var(--my, 0%), rgba(255, 255, 255, 0.28), rgba(var(--hc), 0.3) 35%, transparent 70%); }
+
+/* значок класса героя */
+.hpick .cls { position: absolute; z-index: 2; left: 6px; top: 6px; width: 21px; height: 21px; border-radius: 50%; background: rgba(8, 18, 22, 0.82) center / 13px no-repeat; border: 1px solid rgba(255, 255, 255, 0.22); }
+.hpick .cls.mystic { background-image: url('assets/art/class-mystic.svg'); border-color: #b79cff88; }
+.hpick .cls.marksman { background-image: url('assets/art/class-marksman.svg'); border-color: #5fd4ee88; }
+.hpick .cls.brawler { background-image: url('assets/art/class-brawler.svg'); border-color: #ff996688; }
+.hpick .cls.assassin { background-image: url('assets/art/class-assassin.svg'); border-color: #ff7b7b88; }
+@media (prefers-reduced-motion: reduce) { body::before { animation: none; } #ambient { display: none; } }

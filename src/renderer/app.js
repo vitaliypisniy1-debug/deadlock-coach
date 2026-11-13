@@ -1267,6 +1267,7 @@
     const sel = new Set(multi ? selected : [selected]);
     return h('div.hgrid', list.map((x) => h(`button.hpick${sel.has(x.id) ? '.on' : ''}${lane === x.id ? '.lane' : ''}`, { disabled: disabled.has(x.id) || null, onclick: () => onPick(x.id), title: x.name, style: heroArtStyle(x) },
       (x.card || x.img) ? null : h('span.ph', x.name.slice(0, 2)),
+      x.type ? h('b.cls.' + x.type) : null,
       h('span', x.name),
       lane === x.id ? h('i', 'линия') : null)));
   }

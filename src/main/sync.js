@@ -12,6 +12,7 @@ const { NotFoundError } = require('./api');
 const { playersFromMatches, mergeCandidates, rankOf } = require('../core/discover');
 const { parseSteamInput, vanityOf, resolveVanity } = require('./steamIds');
 const { buildOverview, dashboardStats, rankFromBadges } = require('../core/overview');
+const { gameBadge, tierOfBadge } = require('../core/rank');
 const { gameLeaks, gameHighlights, leakProfile, counterItems, winLink, RANK_BENCH, WIN_LINKS, lossPerDeath, SOUL_LOSS_THRESHOLD } = require('../core/leaks');
 const { soloDeathRows } = require('../core/deaths');
 const { mapData } = require('../core/mapdata');
@@ -1540,7 +1541,11 @@ class Sync {
     const heroName = (hid) => (this.assets && this.assets.heroes[hid] ? this.assets.heroes[hid].name : `Герой ${hid}`);
     const itemName = (iid) => (this.assets && this.assets.items[iid] ? this.assets.items[iid].name : `Предмет ${iid}`);
     const badges = [];
-    for (const x of list) if (x.match && x.me && Array.isArray(x.match.badge) && typeof x.match.badge[x.me.team] === 'number') badges.push(x.match.badge[x.me.team]);
+    for (const x of list) {
+      // значок команды из матча (в свежих рейтинговых он 0), иначе собственный значок игрока из истории
+      const b = x.match && x.me ? gameBadge(x.match, x.me, x.row && x.row.ranked_display_badge) : null;
+      if (b) badges.push(b);
+    }
     // свой ранг — из последней рейтинговой игры (ranked_display_badge), иначе средний по матчам
     const own = list.map((x) => x.row && Number(x.row.ranked_display_badge)).filter((b) => b > 0).pop();
     const rank = own ? { badge: own, tier: Math.floor(own / 10), sub: own % 10, n: 1, own: true } : rankFromBadges(badges);
@@ -1577,11 +1582,11 @@ class Sync {
       };
     });
     // главная повторяющаяся ошибка — в план на игру в оверлее
-    const topLeak = profile.rows[0];
+    const topLeak = profile.rows.find((r) => r.status !== 'observation') || null;
     this.store.write(`leaks-top-${id}.json`, topLeak ? { title: topLeak.title, fix: (topLeak.fix || [])[0] || null, count: topLeak.count, games: profile.games, at: Date.now() } : null);
     return {
       rank,
-      games: games.map(({ f, ...g }) => ({ ...g, leaks: g.leaks.map((l) => ({ key: l.key, area: l.area, level: l.level, title: l.title, text: l.text, context: l.context, fix: l.fix, moments: l.moments, score: l.score })) })),
+      games: games.map(({ f, ...g }) => ({ ...g, leaks: g.leaks.map((l) => ({ key: l.key, area: l.area, level: l.level, status: l.status, title: l.title, text: l.text, context: l.context, fix: l.fix, moments: l.moments, score: l.score })) })),
       fresh: games.filter((g) => g.fresh).length,
       total: games.length,
       profile,
@@ -1670,6 +1675,7 @@ class Sync {
         d: row.player_deaths,
         a: row.player_assists,
         nw: row.net_worth,
+        rankBadge: Number(row.ranked_display_badge) || null,
         pos,
         afterLoss: prevWon === false && gapMin !== null && gapMin <= 60,
         gapMin,
@@ -1697,7 +1703,7 @@ class Sync {
     };
     const tipsCache = new Map();
     const counters = this.counterTable();
-    const tierOf = (g) => (g.match && Array.isArray(g.match.badge) && g.me && typeof g.match.badge[g.me.team] === 'number' ? Math.floor(g.match.badge[g.me.team] / 10) : null);
+    const tierOf = (g) => tierOfBadge(gameBadge(g.match, g.me, g.rankBadge));
     const tipsFor = (g) => {
       if (!g.f || !g.match) return [];
       if (tipsCache.has(g.match_id)) return tipsCache.get(g.match_id);
@@ -1966,7 +1972,7 @@ class Sync {
       const table = picks && picks.tables && picks.tables[me.hero_id];
       const laneVs = table && table.vs ? Object.fromEntries(Object.entries(table.vs).map(([k, v]) => [k, typeof v.pro === 'number' ? v.pro : v.delta])) : null;
       const heroName = (hid) => (this.assets && this.assets.heroes[hid] ? this.assets.heroes[hid].name : `Герой ${hid}`);
-      const tierOf = Array.isArray(m.badge) && typeof m.badge[me.team] === 'number' ? Math.floor(m.badge[me.team] / 10) : null;
+      const tierOf = tierOfBadge(gameBadge(m, me));
       const topHero = await this.topFeaturesByHero();
       const ctx = { m, me, f: playerFeatures(me, m, this.assets), ref: topHero.get(me.hero_id) || null, tier: tierOf, assets: this.assets, counters: this.counterTable(), laneVs, heroName, itemName: nameOf };
       leaks = gameLeaks(ctx);

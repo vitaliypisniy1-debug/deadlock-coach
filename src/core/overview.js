@@ -10,6 +10,7 @@ const { periodTips, basicsFor } = require('./tipsPeriod');
 const { selectTips } = require('./tipkit');
 const { isStandardMatch } = require('./meta');
 const { RANKED_HERO_RULE } = require('./pick');
+const { gameBadge } = require('./rank');
 
 const DAY = 86400;
 const SESSION_GAP = 60 * 60; // больше часа между играми — новая сессия
@@ -37,6 +38,7 @@ function gameFromHistory(m) {
     team: typeof m.player_team === 'number' ? m.player_team : null,
     match_mode: m.match_mode ?? null,
     abandoned: !!(m.team_abandoned || m.abandoned_time_s),
+    badge: Number(m.ranked_display_badge) || null,
   };
 }
 
@@ -305,7 +307,9 @@ function buildOverview({ history, matches, accountId, days = 7, now = Math.floor
     const metrics = playerMetrics(me, m);
     const feat = { ...playerFeatures(me, m, assets), start: g.start_time, match_mode: g.match_mode };
     details.set(g.match_id, { match: m, me, metrics, feat });
-    if (me.team !== null && Array.isArray(m.badge) && typeof m.badge[me.team] === 'number') badges.push(m.badge[me.team]);
+    // значок команды из матча (в свежих рейтинговых матчах он 0), иначе собственный значок игрока из истории
+    const rankBadge = gameBadge(m, me, g.badge);
+    if (rankBadge) badges.push(rankBadge);
     for (const p of m.players) {
       if (p.account_id === accountId || p.abandoned) continue;
       lobbyRows.push(playerMetrics(p, m));

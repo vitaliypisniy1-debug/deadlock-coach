@@ -1775,6 +1775,29 @@ test('counter advice: from hero threats and build profile, no weak recommendatio
   }
 });
 
+test('measured self-healing per hero drives anti-heal advice', () => {
+  const C = require('../src/core/counters');
+  const heal = require('../src/core/data/heroHealing.json');
+  const codex = require('../src/core/data/codexData.json');
+  assert.strictEqual(Object.keys(heal.heroes).length, 44, 'измерено лечение 44 героев');
+  assert.ok(heal.since && heal.matches > 100000 && heal.medianPerMinute > 0, 'окно, число матчей и медиана указаны');
+  for (const [id, x] of Object.entries(heal.heroes)) {
+    assert.ok(codex.heroes[id], `герой ${id} из данных игры`);
+    assert.ok(x.games >= 100 && x.perMinute >= 0 && x.perGame >= 0 && x.rank >= 1 && x.rank <= 44, `лечение героя ${id}`);
+  }
+  const score = (id, n) => (C.counterItemsFor(id, {}).recommended.find((i) => i.name === n) || { score: 0 }).score;
+  // Victor лечит себя сильнее всех, Vindicta почти не лечится: у Victor анти-лечение в рекомендациях, у Vindicta нет
+  assert.ok(score(66, 'Healbane') >= 2.5, 'Victor: Healbane важен');
+  assert.strictEqual(score(3, 'Healbane'), 0, 'Vindicta не лечится — Healbane не советуем');
+  // Shiv лечится ниже медианы по измерению: Healbane слабый запасной вариант
+  assert.ok(score(19, 'Healbane') < score(19, 'Spirit Resilience'), 'Shiv: анти-лечение ниже защиты от Spirit');
+  // строка про лечение есть у каждого героя с числами
+  for (const id of Object.keys(codex.heroes)) {
+    const line = C.counterItemsFor(id, {}).threats.find((t) => t.kind === 'heal');
+    assert.ok(line && /в минуту/.test(line.text), `${codex.heroes[id].name}: измеренное лечение в угрозах`);
+  }
+});
+
 test('hero build profile: top purchases, slot shares, melee and lifesteal flags, small samples', () => {
   const { buildHeroProfile } = require('../src/core/heroProfile');
   const codex = require('../src/core/data/codexData.json');

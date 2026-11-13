@@ -218,3 +218,4 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .ov-grid { grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); gap: 8px; }
 .gh[style*="--art"] { align-self: start; width: 100%; height: auto; min-height: 0; }
 .gh[style*="--art"] { aspect-ratio: auto; height: 124px; flex: none; }
+.gh[style*="--art"] { height: 118px; background: linear-gradient(180deg, rgba(8,18,22,0) 58%, rgba(8,18,22,0.94)), var(--art) center / 100% 100% no-repeat, var(--panel); }

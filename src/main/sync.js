@@ -12,11 +12,16 @@ const { NotFoundError } = require('./api');
 const { playersFromMatches, mergeCandidates, rankOf } = require('../core/discover');
 const { parseSteamInput, vanityOf, resolveVanity } = require('./steamIds');
 const { buildOverview, dashboardStats, rankFromBadges } = require('../core/overview');
-const { gameLeaks, gameHighlights, leakProfile, counterItems, winLink, RANK_BENCH, WIN_LINKS, lossPerDeath, SOUL_LOSS_THRESHOLD } = require('../core/leaks');
+const { gameBadge, tierOfBadge } = require('../core/rank');
+const { heroRoles } = require('../core/roles');
+const { gameRole, gameLeaks, gameHighlights, leakProfile, counterItems, winLink, RANK_BENCH, WIN_LINKS, lossPerDeath, SOUL_LOSS_THRESHOLD } = require('../core/leaks');
 const { soloDeathRows } = require('../core/deaths');
 const { mapData } = require('../core/mapdata');
 const { heroReport } = require('../core/heroReport');
 const { updateCoach } = require('../core/coach');
+const { progressView } = require('../core/progress');
+const { achievementsView } = require('../core/achievements');
+const { T: clockT } = require('../core/tipkit');
 const { macroReview } = require('../core/macro');
 const { myMatchups, heroVs, prepare, heroOutlook } = require('../core/matchups');
 const { proCandidates, versus } = require('../core/versus');
@@ -25,6 +30,9 @@ const { matchTips } = require('../core/tipsMatch');
 const { skillOrder, skillConsensus, compareSkills } = require('../core/skills');
 const { heroPool, pickAdvice, gamePlan, buildPickMeta, heroRole, RANKED_HERO_RULE } = require('../core/pick');
 const { counterCodex } = require('../core/counters');
+const { buildHeroProfile } = require('../core/heroProfile');
+const { RULES } = require('../core/counterRules');
+const codexData = require('../core/data/codexData.json');
 const { matchBuild, buildText, buildFile } = require('../core/buildExport');
 const { encodeBuildCode } = require('../core/gameCode');
 
@@ -1474,10 +1482,57 @@ class Sync {
       }
       pool = await this._codexPool.job;
     }
-    const res = counterCodex(X, { pm, table, assets: this.assets, pool, stale: stale && !!pm });
+    const prof = await this.heroBuildProfile(X, pm);
+    const res = counterCodex(X, { pm, table, assets: this.assets, pool, stale: stale && !!pm, profile: prof.profile });
     if (pmError) res.meta.error = pmError;
+    if (prof.error) res.meta.profileError = prof.error;
+    if (prof.at) res.meta.profileAt = prof.at;
     this._codexCache = { X, pmKey: pmKey(pm), tKey, res };
     return res;
+  }
+
+  // Профиль покупок героя для справочника контрпиков: что на нём обычно собирают.
+  // Тот же ранг и окно, что у меты (pm), чтобы число матчей совпадало с hero-stats.
+  // Кэш на 6 часов в файле; при сбое сети берём сохранённое, иначе профиля нет (рекомендации
+  // тогда строятся только по способностям героя и помечаются как «без профиля покупок»).
+  async heroBuildProfile(X, pm) {
+    if (!pm || !pm.base || !pm.base[X]) return { profile: null };
+    const key = `codexbuild-${X}.json`;
+    const cached = this.store.read(key, null);
+    const fresh = cached && cached.badge === pm.badge && Array.isArray(cached.rows) && Date.now() - cached.at < 6 * 3600e3;
+    let rows = fresh ? cached.rows : null;
+    let at = fresh ? cached.at : null;
+    let games = fresh ? cached.games : null;
+    let since = fresh ? cached.since : null;
+    let error = null;
+    if (!rows) {
+      try {
+        if (typeof this.api.itemStatsAnalytics !== 'function') throw new Error('метод недоступен');
+        const lim = (p) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('таймаут 8 с')), 8000))]);
+        // окно: игры после последнего патча (баланс изменился), если их у героя не меньше 1 000; иначе окно меты
+        since = pm.since;
+        games = pm.base[X][1];
+        if (RULES.patchSince > pm.since) {
+          try {
+            const hs = await lim(this.api.heroStatsAnalytics({ since: RULES.patchSince, badge: pm.badge }));
+            const row = (hs || []).find((r) => Number(r.hero_id) === X);
+            if (row && Number(row.matches) >= 1000) { since = RULES.patchSince; games = Number(row.matches); }
+          } catch {
+            // не вышло — остаёмся на окне меты
+          }
+        }
+        const got = await lim(this.api.itemStatsAnalytics({ heroId: X, since, badge: pm.badge }));
+        rows = got.map((r) => ({ item_id: r.item_id, matches: r.matches, bucket: r.bucket })).filter((r) => r.item_id);
+        at = Date.now();
+        this.store.write(key, { at, badge: pm.badge, since, games, rows });
+      } catch (e) {
+        error = e.message;
+        if (cached && Array.isArray(cached.rows)) { rows = cached.rows; at = cached.at; games = cached.games; since = cached.since; }
+      }
+    }
+    const profile = rows ? buildHeroProfile(rows, { codex: codexData, games: games || pm.base[X][1] }) : null;
+    if (profile) profile.since = since || pm.since;
+    return { profile, error, at };
   }
 
   // ---------- общие помощники для тренера и матчапов ----------
@@ -1540,7 +1595,11 @@ class Sync {
     const heroName = (hid) => (this.assets && this.assets.heroes[hid] ? this.assets.heroes[hid].name : `Герой ${hid}`);
     const itemName = (iid) => (this.assets && this.assets.items[iid] ? this.assets.items[iid].name : `Предмет ${iid}`);
     const badges = [];
-    for (const x of list) if (x.match && x.me && Array.isArray(x.match.badge) && typeof x.match.badge[x.me.team] === 'number') badges.push(x.match.badge[x.me.team]);
+    for (const x of list) {
+      // значок команды из матча (в свежих рейтинговых он 0), иначе собственный значок игрока из истории
+      const b = x.match && x.me ? gameBadge(x.match, x.me, x.row && x.row.ranked_display_badge) : null;
+      if (b) badges.push(b);
+    }
     // свой ранг — из последней рейтинговой игры (ranked_display_badge), иначе средний по матчам
     const own = list.map((x) => x.row && Number(x.row.ranked_display_badge)).filter((b) => b > 0).pop();
     const rank = own ? { badge: own, tier: Math.floor(own / 10), sub: own % 10, n: 1, own: true } : rankFromBadges(badges);
@@ -1556,7 +1615,8 @@ class Sync {
       const fresh = (m.v || 1) >= EXTRACT_V;
       const checked = new Set();
       const leaks = gameLeaks({ m, me, f, ref: topHero.get(me.hero_id) || null, tier, assets: this.assets, counters, laneVs, heroName, itemName, checked });
-      games.push({ match_id: m.match_id, start_time: m.start_time, duration_s: m.duration_s, hero: me.hero_id, won: me.won, k: me.k, d: me.d, a: me.a, fresh, leaks, checked: [...checked], f });
+      const role = gameRole(m, me, f);
+      games.push({ match_id: m.match_id, start_time: m.start_time, duration_s: m.duration_s, hero: me.hero_id, won: me.won, k: me.k, d: me.d, a: me.a, fresh, leaks, checked: [...checked], f, role: role.role, roleFeat: role.feat });
     }
     const profile = leakProfile(games.filter((g) => g.fresh));
     // Привычки до 10:00: твои медианы, твой ранг, высокий ранг и как это связано с победой
@@ -1577,11 +1637,13 @@ class Sync {
       };
     });
     // главная повторяющаяся ошибка — в план на игру в оверлее
-    const topLeak = profile.rows[0];
+    const topLeak = profile.rows.find((r) => r.status !== 'observation') || null;
     this.store.write(`leaks-top-${id}.json`, topLeak ? { title: topLeak.title, fix: (topLeak.fix || [])[0] || null, count: topLeak.count, games: profile.games, at: Date.now() } : null);
     return {
       rank,
-      games: games.map(({ f, ...g }) => ({ ...g, leaks: g.leaks.map((l) => ({ key: l.key, area: l.area, level: l.level, title: l.title, text: l.text, context: l.context, fix: l.fix, moments: l.moments, score: l.score })) })),
+      // рабочая роль на каждом герое — определена автоматически по данным матчей (признаки и доверие внутри)
+      roles: heroRoles(games.filter((g) => g.role).map((g) => ({ hero: g.hero, role: g.role, feat: g.roleFeat }))),
+      games: games.map(({ f, roleFeat, ...g }) => ({ ...g, leaks: g.leaks.map((l) => ({ key: l.key, area: l.area, level: l.level, status: l.status, title: l.title, text: l.text, context: l.context, basis: l.basis, missing: l.missing, fix: l.fix, moments: l.moments, score: l.score })) })),
       fresh: games.filter((g) => g.fresh).length,
       total: games.length,
       profile,
@@ -1644,17 +1706,12 @@ class Sync {
     return out;
   }
 
-  // ---------- личный тренер ----------
-  async coach(accountId, { forceNew = false, evidence = null } = {}) {
-    const id = Number(accountId);
-    const list = await this.myLoadedGames(id, { limit: 40, download: 25, label: 'Тренер смотрит твои матчи' });
-    const heroName = (h) => (this.assets && this.assets.heroes[h] ? this.assets.heroes[h].name : `герой ${h}`);
-    const itemName = (i) => (this.assets && this.assets.items[i] ? this.assets.items[i].name : `предмет ${i}`);
-    // сессии и пауза после поражения
+  // Игры по возрастанию времени с признаками сессии и паузы после поражения.
+  _gamesFrom(list) {
     let prevEnd = null;
     let prevWon = null;
     let pos = 0;
-    const games = list.map(({ row, match, me }) => {
+    return list.map(({ row, match, me }) => {
       const start = Number(row.start_time) || 0;
       const dur = Number(row.match_duration_s) || 0;
       const gapMin = prevEnd === null ? null : (start - prevEnd) / 60;
@@ -1670,6 +1727,7 @@ class Sync {
         d: row.player_deaths,
         a: row.player_assists,
         nw: row.net_worth,
+        rankBadge: Number(row.ranked_display_badge) || null,
         pos,
         afterLoss: prevWon === false && gapMin !== null && gapMin <= 60,
         gapMin,
@@ -1681,6 +1739,15 @@ class Sync {
       prevWon = won;
       return g;
     });
+  }
+
+  // ---------- личный тренер ----------
+  async coach(accountId, { forceNew = false, evidence = null, replaceKey = null } = {}) {
+    const id = Number(accountId);
+    const list = await this.myLoadedGames(id, { limit: 40, download: 25, label: 'Тренер смотрит твои матчи' });
+    const heroName = (h) => (this.assets && this.assets.heroes[h] ? this.assets.heroes[h].name : `герой ${h}`);
+    const itemName = (i) => (this.assets && this.assets.items[i] ? this.assets.items[i].name : `предмет ${i}`);
+    const games = this._gamesFrom(list);
     const lobbyF = [];
     for (const g of games) if (g.match && g.me) for (const p of g.match.players) if (p !== g.me && !p.abandoned) lobbyF.push(playerFeatures(p, g.match, this.assets));
     const lobby = refAll(lobbyF);
@@ -1697,7 +1764,20 @@ class Sync {
     };
     const tipsCache = new Map();
     const counters = this.counterTable();
-    const tierOf = (g) => (g.match && Array.isArray(g.match.badge) && g.me && typeof g.match.badge[g.me.team] === 'number' ? Math.floor(g.match.badge[g.me.team] / 10) : null);
+    const tierOf = (g) => tierOfBadge(gameBadge(g.match, g.me, g.rankBadge));
+    // Ошибки игры: считаем один раз на матч (и для карточек, и для «почему эта цель»).
+    const leakCache = new Map();
+    const leaksOf = (g) => {
+      if (leakCache.has(g.match_id)) return leakCache.get(g.match_id);
+      const checked = new Set();
+      let leaks = [];
+      try {
+        leaks = gameLeaks({ m: g.match, me: g.me, f: g.f, ref: topHero.get(g.hero) || null, tier: tierOf(g), assets: this.assets, counters, heroName, itemName, checked });
+      } catch {}
+      const res = { leaks, checked: [...checked] };
+      leakCache.set(g.match_id, res);
+      return res;
+    };
     const tipsFor = (g) => {
       if (!g.f || !g.match) return [];
       if (tipsCache.has(g.match_id)) return tipsCache.get(g.match_id);
@@ -1705,11 +1785,7 @@ class Sync {
       const lob = refAll(g.match.players.filter((p) => p !== g.me && !p.abandoned).map((p) => playerFeatures(p, g.match, this.assets)));
       const tips = matchTips({ me: g.f, ref, lobby: lob, heroName, itemName, won: g.me.won });
       // ошибки с моментами (лес во время драк, размены, тайминги карты) — в общий список
-      let lk = [];
-      try {
-        lk = gameLeaks({ m: g.match, me: g.me, f: g.f, ref: topHero.get(g.hero) || null, tier: tierOf(g), assets: this.assets, counters, heroName, itemName })
-          .map((l) => ({ title: l.title, text: l.text, tip: l.fix && l.fix[0], area: l.area, level: l.level, score: l.score }));
-      } catch {}
+      const lk = leaksOf(g).leaks.map((l) => ({ title: l.title, text: l.text, tip: l.fix && l.fix[0], area: l.area, level: l.level, score: l.score }));
       const t = tips.concat(lk).sort((a, b) => b.score - a.score);
       tipsCache.set(g.match_id, t);
       return t;
@@ -1729,7 +1805,17 @@ class Sync {
         const killer = m.players.find((p) => p.slot === row.killerSlot);
         focusEvidence = { key: 'solo_deaths', matchId: m.match_id, t: row.t, x: row.x, y: row.y, title: 'Смерть в одиночку',
           text: killer ? `Смерть вдали от команды — убил ${heroName(killer.hero_id)}` : 'Смерть вдали от команды',
-          context: 'В момент смерти ни один живой союзник не был ближе 2 500 единиц карты (≈8 с бега).' };
+          context: 'В момент смерти ни один живой союзник не был ближе 2 500 единиц карты (≈8 с бега по прямой), и никто из союзников не погиб рядом за 10 с до этого. Это расчёт по маршрутам: был ли заход осознанным, из данных не видно.' };
+      } else if (evidence.key === 'survivability_purchase') {
+        const g = me && { match: m, me, f: playerFeatures(me, m, this.assets), hero: me.hero_id };
+        let leak = null;
+        try {
+          leak = g && gameLeaks({ m, me, f: g.f, ref: topHero.get(me.hero_id) || null, tier: tierOf(g), assets: this.assets, counters, heroName, itemName }).find((l) => l.key === 'survivability_purchase');
+        } catch {}
+        const moment = leak && (leak.moments || []).find((x) => x.t === evidence.t);
+        if (!moment) throw new Error('Эту серию смертей не удалось подтвердить в сохранённом матче.');
+        focusEvidence = { key: 'survivability_purchase', matchId: m.match_id, t: moment.t, x: moment.x, y: moment.y, title: 'Серия смертей без живучести',
+          text: `Серия из ${leak.moments.length} смертей с ${clockT((leak.moments[0] || moment).t)} без покупки живучести`, context: leak.context };
       } else {
         const foe = me && m.players.find((p) => p.slot === me.deaths?.find((d) => d[0] === evidence.t)?.[3]);
         if (!foe || foe.team === me.team || me.lane == null || foe.lane !== me.lane || !(evidence.t >= 0 && evidence.t <= 600)) {
@@ -1738,11 +1824,27 @@ class Sync {
         focusEvidence = { matchId: m.match_id, t: evidence.t, title: 'Смерть на линии', text: `Смерть от ${heroName(foe.hero_id)}` };
       }
     }
+    // Признак «после серии смертей куплена живучесть»: 1 — замечания нет, 0 — есть, null — игру проверить нельзя.
+    for (const g of games) {
+      if (!g.f || !g.match || !g.me || (g.match.v || 1) < EXTRACT_V) continue;
+      const r = leaksOf(g);
+      g.f = { ...g.f, survivability_purchase: r.leaks.some((l) => l.key === 'survivability_purchase') ? 0 : r.checked.includes('survivability_purchase') ? 1 : null };
+    }
+    // Как часто повторяется замечание и как связано с победами — основание цели «Почему именно это».
+    let leakStats = {};
+    try {
+      const prof = leakProfile(games.filter((g) => g.f && g.match && g.me && (g.match.v || 1) >= EXTRACT_V).slice(-30).map((g) => {
+        const r = leaksOf(g);
+        return { match_id: g.match_id, start_time: g.start_time, won: g.won, hero: g.hero, leaks: r.leaks, checked: r.checked };
+      }));
+      leakStats = Object.fromEntries(prof.rows.map((r) => [r.key, { title: r.title, count: r.count, eligible: r.eligible, wrWith: r.wrWith, wrWithout: r.wrWithout }]));
+    } catch {}
     const { state: next, view } = updateCoach(state, {
       games,
       topHero,
       lobby,
       extra,
+      leakStats,
       mainMistake: (g) => {
         const t = tipsFor(g).find((x) => x.level === 'bad' || x.level === 'warn');
         return t ? { title: t.title, text: t.text, tip: t.tip, area: t.area } : null;
@@ -1751,11 +1853,50 @@ class Sync {
         const t = tipsFor(g).find((x) => x.level === 'good');
         return t ? { title: t.title } : null;
       },
-    }, { forceNew, focusEvidence });
+    }, { forceNew, focusEvidence, replaceKey: typeof replaceKey === 'string' ? replaceKey : null });
     this.store.write(`coach-${id}.json`, next);
     view.topsReady = topHero.size > 0;
     view.loaded = games.filter((g) => g.f).length;
     return view;
+  }
+
+  // ---------- динамика показателей и достижения ----------
+  // Только сохранённые матчи (без скачивания): динамика, сравнение с топами на твоих героях, достижения.
+  async playerProgress(accountId, { markSeen = false } = {}) {
+    const id = Number(accountId);
+    const list = await this.myLoadedGames(id, { limit: 300, download: 0, label: '' });
+    const heroName = (h) => (this.assets && this.assets.heroes[h] ? this.assets.heroes[h].name : `герой ${h}`);
+    const itemName = (i) => (this.assets && this.assets.items[i] ? this.assets.items[i].name : `предмет ${i}`);
+    const games = this._gamesFrom(list);
+    const loaded = games.filter((g) => g.f);
+    const topHero = await this.topFeaturesByHero();
+    const counters = this.counterTable();
+    // замечания «Ошибок» на игру — для последних 30 свежих игр
+    const tierOf = (g) => (g.match && Array.isArray(g.match.badge) && g.me && typeof g.match.badge[g.me.team] === 'number' ? Math.floor(g.match.badge[g.me.team] / 10) : null);
+    const errors = [];
+    for (const g of loaded.filter((x) => (x.match.v || 1) >= EXTRACT_V).slice(-30)) {
+      try {
+        const leaks = gameLeaks({ m: g.match, me: g.me, f: g.f, ref: topHero.get(g.hero) || null, tier: tierOf(g), assets: this.assets, counters, heroName, itemName });
+        errors.push({ match_id: g.match_id, n: leaks.filter((l) => l.level !== 'good').length });
+      } catch {}
+    }
+    const prog = progressView({ games: loaded, topHero, errors });
+    // выполненные цели тренера (без дублей)
+    const coachState = this.store.read(`coach-${id}.json`, null) || {};
+    const seenDone = new Set();
+    const finished = [];
+    for (const g of [...((coachState.plan && coachState.plan.goals) || []), ...(coachState.archive || [])]) {
+      if (g.status !== 'done') continue;
+      const k = `${g.key}|${g.title}`;
+      if (seenDone.has(k)) continue;
+      seenDone.add(k);
+      finished.push({ title: g.title, doneAt: g.doneAt || g.endedAt || null });
+    }
+    const stored = this.store.read(`achievements-${id}.json`, null) || {};
+    const ach = achievementsView({ games: loaded, finished, progress: prog, prevUnlocked: stored.unlocked || {}, seen: stored.seen || null });
+    const next = { unlocked: ach.unlocked, seen: markSeen ? ach.unlocked : stored.seen || stored.unlocked || ach.unlocked };
+    if (JSON.stringify(next) !== JSON.stringify(stored)) this.store.write(`achievements-${id}.json`, next);
+    return { progress: prog, achievements: ach.items, records: ach.records, anyNew: ach.anyNew, games: loaded.length };
   }
 
   // ---------- матчапы ----------
@@ -1966,7 +2107,7 @@ class Sync {
       const table = picks && picks.tables && picks.tables[me.hero_id];
       const laneVs = table && table.vs ? Object.fromEntries(Object.entries(table.vs).map(([k, v]) => [k, typeof v.pro === 'number' ? v.pro : v.delta])) : null;
       const heroName = (hid) => (this.assets && this.assets.heroes[hid] ? this.assets.heroes[hid].name : `Герой ${hid}`);
-      const tierOf = Array.isArray(m.badge) && typeof m.badge[me.team] === 'number' ? Math.floor(m.badge[me.team] / 10) : null;
+      const tierOf = tierOfBadge(gameBadge(m, me));
       const topHero = await this.topFeaturesByHero();
       const ctx = { m, me, f: playerFeatures(me, m, this.assets), ref: topHero.get(me.hero_id) || null, tier: tierOf, assets: this.assets, counters: this.counterTable(), laneVs, heroName, itemName: nameOf };
       leaks = gameLeaks(ctx);

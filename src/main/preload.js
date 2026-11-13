@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('dc', {
   myMatches: (cachedOnly) => call('my:matches', cachedOnly),
   freshMatches: () => call('my:freshMatches'),
   coach: (opts) => call('coach:get', opts),
+  progress: (opts) => call('progress:get', opts),
   myMatchups: () => call('mu:mine'),
   heroOutlook: (heroId) => call('mu:outlook', heroId),
   heroMatchups: (heroId) => call('mu:hero', heroId),

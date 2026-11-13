@@ -676,7 +676,7 @@ test('coach: plan from weaknesses, checks, closing goals', () => {
   const lobby = refAll(weak.flatMap((g) => g.match.players.slice(1).map((p) => playerFeatures(p, g.match))));
   const r1 = updateCoach(null, { games: weak, topHero, lobby, extra: {}, now: t0 + 12 * 3000 + 100 });
   assert.ok(r1.view.plan, 'план создан');
-  assert.ok(r1.view.goals.length >= 3 && r1.view.goals.length <= 4, `целей ${r1.view.goals.length}`);
+  assert.ok(r1.view.goals.length >= 2 && r1.view.goals.length <= 3, `целей ${r1.view.goals.length}`);
   const fams = r1.view.goals.map((g) => (CATALOG.find((c) => c.key === g.key) || {}).family);
   assert.strictEqual(new Set(fams).size, fams.length, 'нет двух целей про одно и то же');
   const perArea = {};
@@ -687,8 +687,8 @@ test('coach: plan from weaknesses, checks, closing goals', () => {
   const strong = coachGames(1.5, 8, t0 + 12 * 3000 + 600, 800);
   const r2 = updateCoach(r1.state, { games: weak.concat(strong), topHero, lobby, extra: {}, now: t0 + 20 * 3000 + 1000 });
   assert.ok(r2.view.cards.length >= 5 && !r2.view.cards[0].beforePlan, 'карточки после плана');
-  assert.ok(r2.view.goals.some((g) => g.status === 'done'), 'хотя бы одна цель выполнена');
-  assert.ok(r2.view.events.some((e) => e.kind === 'done'), 'сообщение о выполнении');
+  assert.ok(r2.view.goals.some((g) => g.status === 'done') || r2.view.events.some((e) => e.kind === 'step'), 'цель выполнена или пройдена ступень');
+  assert.ok(r2.view.events.some((e) => e.kind === 'done' || e.kind === 'step'), 'сообщение о выполнении');
   const c = checkGame(strong[0], r1.view.goals);
   assert.ok(c.every((x) => x.pass === null || typeof x.pass === 'boolean'));
   // мало игр — плана нет
@@ -696,11 +696,11 @@ test('coach: plan from weaknesses, checks, closing goals', () => {
   assert.strictEqual(r0.view.plan, null);
   assert.ok(r0.view.need > 0);
   console.log('    цели:', r1.view.goals.map((g) => g.title).join(' | '));
-  // старый план из 2 целей добирается до 3–4
+  // старый план из 1 цели добирается до 2–3
   const oldState = JSON.parse(JSON.stringify(r1.state));
-  oldState.plan.goals = oldState.plan.goals.slice(0, 2).map(({ family, kind, ...g }) => g);
+  oldState.plan.goals = oldState.plan.goals.slice(0, 1).map(({ family, kind, ...g }) => g);
   const r3 = updateCoach(oldState, { games: weak, topHero, lobby, extra: {}, now: t0 + 12 * 3000 + 200 });
-  assert.ok(r3.view.goals.filter((g) => g.status === 'active').length >= 3, 'план добран');
+  assert.ok(r3.view.goals.filter((g) => g.status === 'active').length >= 2, 'план добран');
   // выбор: по одному на раздел, потом второй в раздел, одна семья — одна цель
   const pk = pickGoals([
     { key: 'd10', family: 'deaths', area: 'Выживание', gap: 1 },
@@ -709,11 +709,159 @@ test('coach: plan from weaknesses, checks, closing goals', () => {
     { key: 'spikeFights', family: 'spikeUse', area: 'Паверспайки', gap: 0.7 },
     { key: 'firstHugeT', family: 'spike2', area: 'Паверспайки', gap: 0.6 },
     { key: 'lh10', family: 'laneFarm', area: 'Фарм', gap: 0.5 },
-  ]);
+  ], 4);
   assert.deepStrictEqual(pk.map((g) => g.key), ['d10', 'firstBigT', 'lh10', 'spikeFights']);
   // признаки паверспайков считаются
   assert.ok(weak.some((g) => g.f.spikeFights !== undefined) && 'spikeDmg' in weak[0].f);
 });
+test('coach: goal honesty — easy goals skipped, too-hard goals get steps, no calendar expiry', () => {
+  const { candidates, calibrate } = require('../src/core/coach');
+  const now = 1_900_000_000;
+  const mk = (i, f) => ({ match_id: 300 + i, start_time: now - (30 - i) * 3000, hero: 72, f });
+  // обычно 1–2 смерти до 10:00; планка «0» выполнялась в 1 игре из 12 — нужна ступень «не больше 1»
+  const hard = Array.from({ length: 12 }, (_, i) => mk(i, { d10: i === 0 ? 0 : 1 + (i % 2) }));
+  const cand = candidates({ games: hard, topHero: new Map(), lobby: {}, extra: {} }).find((c) => c.key === 'd10');
+  assert.ok(cand, 'цель про смерти до 10:00 предложена');
+  assert.ok(cand.ladder && cand.ladder.steps.length === 2, 'есть ступени');
+  assert.deepStrictEqual(cand.ladder.steps.map((x) => x.target), [1, 0], 'сначала легче, потом нужная планка');
+  assert.strictEqual(cand.target, 1);
+  assert.strictEqual(cand.ladder.i, 0);
+  assert.ok(cand.calib.rate <= 0.15 && cand.calib.n === 12, 'доля выполнения до цели записана');
+  // цель уже выполняется почти всегда — тренировать нечего
+  const easy = Array.from({ length: 10 }, (_, i) => mk(i, { kp: 0.6 }));
+  assert.strictEqual(calibrate({ key: 'kp', cmp: 'ge', target: 0.55, byHero: null, title: 'x', short: 'x' }, CATALOG.find((c) => c.key === 'kp'), easy), null, 'выполняется в 100% игр — не берём');
+  // мало проверенных игр — цель остаётся, но про выборку сказано
+  const few = calibrate({ key: 'kp', cmp: 'ge', target: 0.55, byHero: null, title: 'x', short: 'x' }, CATALOG.find((c) => c.key === 'kp'), easy.slice(0, 3));
+  assert.ok(few && few.calib.n === 3 && !few.ladder);
+  // ступень пройдена → планка выше, счёт заново; потом цель выполнена
+  const state = { plan: { createdAt: now - 40 * 86400, reason: 'first', goals: [{ key: 'd10', family: 'deaths', area: 'Выживание', cmp: 'le', habit: false, kind: 'fix', title: 'Не больше 1 смерти до 10:00', short: 'смерти до 10:00', tip: 't', target: 1, byHero: null, baseline: 2, ref: null, gap: 1, status: 'active', startedAt: now - 20000, ladder: { i: 0, steps: [{ target: 1, byHero: null }, { target: 0, byHero: null }], finalTitle: 'Не умирать до 10:00' } }] }, archive: [], log: [] };
+  const played = (from, n, d10) => Array.from({ length: n }, (_, i) => ({ match_id: 700 + from + i, start_time: now - 15000 + (from + i) * 1000, hero: 72, f: { d10 } }));
+  const base = { topHero: new Map(), lobby: {}, extra: {} };
+  const r1 = updateCoach(state, { ...base, now, games: hard.concat(played(0, 5, 1)) });
+  const g1 = r1.view.goals.find((g) => g.key === 'd10');
+  assert.strictEqual(g1.status, 'active', 'цель не закрыта на первой ступени');
+  assert.strictEqual(g1.target, 0, 'планка выросла');
+  assert.deepStrictEqual([g1.ladderInfo.step, g1.ladderInfo.of], [2, 2]);
+  assert.strictEqual(g1.games, 0, 'счёт игр начат заново');
+  assert.ok(r1.view.events.some((e) => e.kind === 'step'), 'сообщение о пройденной ступени');
+  assert.ok(r1.state.plan.createdAt === state.plan.createdAt, 'план не пересоздан по календарю (прошло 40 дней)');
+  const snap = JSON.stringify(r1.state);
+  const r2 = updateCoach(JSON.parse(snap), { ...base, now: now + 100, games: hard.concat(played(0, 5, 1), played(5, 5, 0)).map((g, i) => (i >= 17 ? { ...g, start_time: now + 10 + i } : g)) });
+  assert.strictEqual(r2.view.goals.find((g) => g.key === 'd10').status, 'done', 'на последней ступени цель закрыта');
+  assert.ok(r2.view.finished.some((f) => f.key === 'd10'), 'в списке выполненных');
+  // смена цели: старая уходит, новая той же темы 14 дней не возвращается
+  const r3 = updateCoach(JSON.parse(snap), { ...base, now: now + 50, games: hard.concat(played(0, 5, 1)) }, { replaceKey: 'd10' });
+  const old = r3.view.goals.find((g) => g.key === 'd10');
+  assert.ok(old.status === 'replaced' && old.userReplaced);
+  assert.ok(!r3.view.goals.some((g) => g.key === 'd10' && g.status === 'active'));
+});
+
+test('coach: survivability goal from episode — pass only for checked games', () => {
+  const now = 1_900_000_000;
+  const evidence = { key: 'survivability_purchase', matchId: 5, t: 1500, title: 'Серия смертей без живучести', text: 'С 25:00 ты погиб 3 раза' };
+  const games = [{ match_id: 5, start_time: now - 600, hero: 72, f: { survivability_purchase: 0 } }];
+  const r = updateCoach(null, { now, games, topHero: new Map(), lobby: {}, extra: {} }, { focusEvidence: evidence });
+  const g = r.view.goals[0];
+  assert.strictEqual(g.key, 'survivability_purchase');
+  assert.strictEqual(g.cmp, 'ge');
+  assert.strictEqual(g.target, 1);
+  assert.strictEqual(g.evidence.t, 1500);
+  assert.strictEqual(g.baseline, 0, 'до цели замечание было');
+  const next = [...games, { match_id: 6, start_time: now + 60, hero: 72, f: { survivability_purchase: 1 } }, { match_id: 7, start_time: now + 120, hero: 72, f: { survivability_purchase: null } }, { match_id: 8, start_time: now + 180, hero: 72, f: { survivability_purchase: 0 } }];
+  const after = updateCoach(r.state, { now: now + 240, games: next, topHero: new Map(), lobby: {}, extra: {} });
+  const goal = after.view.goals.find((x) => x.key === 'survivability_purchase');
+  assert.strictEqual(goal.games, 2, 'игра без возможности проверки не считается');
+  assert.strictEqual(goal.passed, 1);
+  assert.ok(goal.how.includes("3 смерти и больше"));
+  assert.ok(goal.rows.every((x) => !/undefined|NaN/.test(x.text)));
+});
+
+test('coach: why this goal — only measured facts, wins link only with enough games', () => {
+  const now = 1_900_000_000;
+  const games = Array.from({ length: 8 }, (_, i) => ({ match_id: 900 + i, start_time: now - (9 - i) * 1000, hero: 72, f: { d10: 2 } }));
+  const state = { plan: { createdAt: now - 5000, reason: 'first', goals: [{ key: 'd10', family: 'deaths', area: 'Выживание', cmp: 'le', habit: false, kind: 'fix', title: 'Не больше 1 смерти до 10:00', short: 'смерти до 10:00', tip: 't', target: 1, byHero: null, baseline: 2, ref: 1, gap: 1, status: 'active', startedAt: now - 5000 }] }, archive: [], log: [] };
+  const base = { topHero: new Map(), lobby: {}, extra: {}, now, games };
+  const rich = updateCoach(state, { ...base, leakStats: { lane_trades: { count: 12, eligible: 29, wrWith: 0.33, wrWithout: 0.53 } } }).view.goals[0].why;
+  assert.ok(rich.lines.some((l) => l.kind === 'stat' && /12 из 29/.test(l.text)));
+  assert.ok(!rich.lines.some((l) => l.kind === 'compare' && /обычно 2.*— 2/.test(l.text)));
+  assert.ok(rich.lines.some((l) => l.kind === 'link' && /33%.*53%/.test(l.text)));
+  assert.ok(rich.lines.some((l) => l.kind === 'compare'), 'сравнение с топами');
+  assert.ok(/связь, а не доказанная причина/i.test(rich.note));
+  const poor = updateCoach(state, { ...base, leakStats: { lane_trades: { count: 3, eligible: 8, wrWith: 0.2, wrWithout: 0.6 } } }).view.goals[0].why;
+  assert.ok(!poor.lines.some((l) => l.kind === 'stat' || /Побед в этих играх/.test(l.text)), 'мало игр — личные доли и победы не показываем');
+  for (const l of rich.lines.concat(poor.lines)) assert.ok(!/undefined|NaN/.test(l.text), l.text);
+});
+test('progress: trend only with enough games and a real shift; comparison with tops on your heroes', () => {
+  const { progressView, mannWhitneyZ, levelVsTop } = require('../src/core/progress');
+  const lo = [10, 12, 11, 13, 12, 10, 11, 12];
+  assert.ok(mannWhitneyZ(lo, lo.map((v) => v + 8)) > 3, 'явный сдвиг вверх');
+  assert.ok(Math.abs(mannWhitneyZ(lo, lo.slice().reverse())) < 0.5, 'одни и те же значения — без сдвига');
+  assert.strictEqual(levelVsTop(20, 20, 'ge'), 'top');
+  assert.strictEqual(levelVsTop(18, 20, 'ge'), 'near');
+  assert.strictEqual(levelVsTop(10, 20, 'ge'), 'below');
+  assert.strictEqual(levelVsTop(1, 3, 'le'), 'top', 'смертей меньше, чем у топов');
+  assert.strictEqual(levelVsTop(null, 3, 'le'), null);
+  const mk = (i, lh10, d) => ({ match_id: i, start_time: 1_900_000_000 + i * 3000, hero: 72, f: { lh10, d, nw10: 4000 } });
+  const games = Array.from({ length: 30 }, (_, i) => mk(i, i < 15 ? 12 + (i % 3) : 22 + (i % 3), i < 15 ? 4 + (i % 2) : 9 + (i % 2)));
+  const topHero = new Map([[72, { lh10: { n: 20, med: 24 }, d: { n: 20, med: 5 } }], [73, { lh10: { n: 20, med: 24 } }]]);
+  const p = progressView({ games, topHero });
+  const lh = p.indicators.find((x) => x.key === 'lh10');
+  const dd = p.indicators.find((x) => x.key === 'd');
+  assert.strictEqual(lh.trend, 'better');
+  assert.strictEqual(dd.trend, 'worse', 'смертей стало больше — хуже');
+  assert.strictEqual(lh.vsTop, 'near');
+  assert.strictEqual(lh.topText, '24');
+  assert.ok(p.enough && p.better >= 1 && p.worse >= 1);
+  assert.ok(!p.indicators.find((x) => x.key === 'nw10' && x.trend !== 'same'), 'постоянный показатель — без заметных изменений');
+  const few = progressView({ games: games.slice(-12), topHero });
+  assert.ok(few.indicators.every((x) => x.trend === 'few'), 'мало игр — вывода о динамике нет');
+  assert.ok(!few.enough);
+  const noTop = progressView({ games, topHero: new Map() });
+  assert.ok(noTop.indicators.every((x) => x.vsTop === null && x.top === null), 'нет данных топов — сравнения нет');
+  for (const x of p.indicators) assert.ok(!/undefined|NaN/.test(`${x.recentText} ${x.prevText} ${x.topText}`), x.key);
+});
+
+test('achievements: measured only, gaps do not break runs, unlocked ones stay, new ones flagged', () => {
+  const { achievementsView, personalRecords } = require('../src/core/achievements');
+  const t0 = 1_900_000_000;
+  const g = (i, soloDeaths, extra = {}) => ({ match_id: 1000 + i, start_time: t0 + i * 3000, hero: 72, f: soloDeaths === undefined ? {} : { soloDeaths, d10: 1 }, afterLoss: false, gapMin: null, ...extra });
+  // 0,0,(нет данных),0,0,0 → серия 5 (игра без данных пропускается), затем 1 обрывает
+  const games = [g(0, 0), g(1, 0), g(2, undefined), g(3, 0), g(4, 0), g(5, 0), g(6, 1), g(7, 0)];
+  const r = achievementsView({ games, finished: [], now: t0 + 99999 });
+  const solo = r.items.find((x) => x.key === 'solo_free');
+  assert.strictEqual(solo.value, 5);
+  assert.strictEqual(solo.tier, 2, 'серебро: 5 игр подряд');
+  assert.strictEqual(solo.unlocked[1].matchId, 1005, 'ступень открыта на игре, где серия достигла порога');
+  assert.strictEqual(solo.current, 1);
+  assert.strictEqual(solo.next, 8);
+  // цели тренера
+  const fin = [{ title: 'a', doneAt: t0 + 10 }, { title: 'b', doneAt: t0 + 20 }, { title: 'c', doneAt: t0 + 30 }];
+  const goals = achievementsView({ games: [], finished: fin, now: t0 + 99999 }).items.find((x) => x.key === 'goals_done');
+  assert.strictEqual(goals.tier, 2);
+  assert.strictEqual(goals.unlocked[1].t, t0 + 30, 'серебро (3 цели) — дата закрытия третьей цели');
+  // открытое не пропадает, если данных стало меньше; «новое» — пока не просмотрено
+  const first = achievementsView({ games, finished: [], now: t0 + 99999 });
+  assert.ok(first.anyNew);
+  const again = achievementsView({ games: games.slice(0, 3), finished: [], prevUnlocked: first.unlocked, seen: first.unlocked, now: t0 + 99999 });
+  const s2 = again.items.find((x) => x.key === 'solo_free');
+  assert.strictEqual(s2.tier, 2, 'серебро сохранено');
+  assert.ok(!again.anyNew);
+  const unseen = achievementsView({ games, finished: [], prevUnlocked: first.unlocked, seen: {}, now: t0 + 99999 });
+  assert.ok(unseen.anyNew);
+  // победы и заходы ничего не открывают
+  const wins = achievementsView({ games: Array.from({ length: 20 }, (_, i) => ({ match_id: i, start_time: t0 + i, hero: 1, won: true, f: { d10: 3, soloDeaths: 3 } })), finished: [] });
+  assert.ok(wins.items.every((x) => x.tier === 0), 'победы сами по себе ничего не открывают');
+  // паузы после поражения: только игры с известной паузой
+  const rest = achievementsView({ games: Array.from({ length: 6 }, (_, i) => ({ match_id: i, start_time: t0 + i * 5000, hero: 1, f: { d10: 3 }, afterLoss: true, gapMin: i % 2 ? 12 : 3 })), finished: [] }).items.find((x) => x.key === 'rest_after_loss');
+  assert.strictEqual(rest.value, 3);
+  // рекорды: ≥5 прежних игр на герое и +10% к прежнему максимуму
+  const recGames = Array.from({ length: 7 }, (_, i) => ({ match_id: i, start_time: t0 + i, hero: 5, f: { lh10: i === 6 ? 40 : 20 + (i % 2) } }));
+  const rec = personalRecords(recGames);
+  assert.strictEqual(rec.length, 1);
+  assert.deepStrictEqual([rec[0].key, rec[0].value, rec[0].before, rec[0].matchId], ['lh10', 40, 21, 6]);
+  assert.strictEqual(personalRecords(recGames.slice(0, 5)).length, 0, 'меньше 5 прежних игр — рекорда нет');
+});
+
 test('matchups: my record, tops vs heroes, counters, prepare', () => {
   const games = coachGames(0.9, 10, 1_900_000_000).map((g) => ({ match: g.match, me: g.me }));
   const mine = myMatchups(games);
@@ -1591,6 +1739,7 @@ test('survivability purchase: streak of deaths without a vitality item', () => {
   assert.ok(/H26/.test(lk.moments[0].text) && /H27/.test(lk.moments[1].text), 'имена убийц в моментах');
   assert.ok(/Резак/.test(lk.text) && /не в живучесть/.test(lk.text), 'показано, куда ушли души');
   assert.ok(/гипотеза/.test(lk.context), 'помечено как гипотеза, а не факт');
+  assert.ok(/за 4 минуты/.test(lk.text) && !/[.] [а-я]/.test(lk.text), 'серия описана по фактическому сроку, без строчной буквы после точки: ' + lk.text);
   assert.ok(r1.checked.has('survivability_purchase'), 'игра помечена проверяемой');
   assert.ok(!/undefined|NaN/.test(lk.title + lk.text + lk.moments.map((x) => x.text).join('')), 'нет undefined/NaN');
   // серия входит в цель тренера (нужно ≥2 игры с доказательством)
@@ -1599,8 +1748,12 @@ test('survivability purchase: streak of deaths without a vitality item', () => {
   const row = prof.rows.find((x) => x.key === 'survivability_purchase');
   assert.ok(row, 'строка в общем профиле');
   assert.strictEqual(row.deaths, 6);
-  assert.strictEqual(prof.goal.title, 'После серии из трёх смертей — покупка живучести');
-  assert.ok(prof.goal.episode.t >= 0, 'эпизод с моментом смерти');
+  // наблюдение (цена не подтверждена на больших данных): цель тренера не создаёт, уровень «info», «чего не хватает» названо
+  assert.strictEqual(row.status, 'observation');
+  assert.strictEqual(lk.status, 'observation');
+  assert.strictEqual(lk.level, 'info');
+  assert.ok(/Чего не хватает/.test(lk.context), 'сказано, чего не хватает для уверенности');
+  assert.strictEqual(prof.goal, null, 'цель тренера из наблюдения не создаётся');
 
   // 2) живучесть куплена после начала серии — утечки нет
   const r2 = mkMatch({ deaths, items: [[12, 1000, 0, 0], [11, 1020, 0, 0]] });
@@ -1694,28 +1847,127 @@ test('counter codex: picks, items, rules, small samples, stale, hero switch, fal
   assert.ok(pu.rule && pu.rule.threatLabel === 'Режет лечение', 'правило предмета подхвачено по имени');
   assert.ok(!r50.items.purchases.some((x) => x.id === 1), 'популярный предмет — не контрпредмет');
 
-  // 5) механические ответы для сквозных героев (Apollo, Victor, Lash, Infernus)
+  // 5) контрпредметы из угроз: у героя из таблицы — рекомендации с основанием, у героя вне таблицы — молчим
   for (const id of [77, 66, 31, 1]) {
     const res = C.counterCodex(id, { pm, table: {}, assets: as });
-    assert.ok(res.heroRule && res.heroRule.threats.length, `правила героя ${id}`);
-    assert.ok(res.items.mechanics.length >= 2, `механические ответы для героя ${id}`);
-    for (const m of res.items.mechanics) assert.ok(m.why && m.rule && m.confidence === 'likely', 'у ответа есть объяснение и правило');
+    assert.ok(res.heroRule && res.heroRule.threats.length, `угрозы героя ${id}`);
+    assert.ok(res.items.verified && res.items.recommended.length >= 3, `рекомендации для героя ${id}`);
+    for (const m of res.items.recommended) assert.ok(m.why.length && m.src && m.text && m.notEnough, 'у рекомендации есть основание, источник, эффект и ограничение');
   }
-  // Infernus: оговорка про продление горения попаданиями
-  const inf = C.counterCodex(1, { pm, table: {}, assets: as });
-  const dr = inf.items.mechanics.find((m) => m.name === 'Debuff Reducer');
-  assert.ok(dr && /продлевает/.test(dr.why), 'оговорка: горение продлевается попаданиями оружием');
-  // герой без разобранных механик — без выдуманных объяснений
   const noRule = C.counterCodex(42, { pm, table: {}, assets: as });
-  assert.strictEqual(noRule.heroRule, null, 'нет правил — нет heroRule');
-  assert.strictEqual(noRule.items.mechanics.length, 0, 'нет выдуманных механических ответов');
+  assert.strictEqual(noRule.heroRule, null, 'нет героя в таблице — нет heroRule');
+  assert.strictEqual(noRule.items.recommended.length, 0, 'нет выдуманных рекомендаций для героя без проверенных механик');
+  assert.strictEqual(noRule.items.verified, false);
 
-  // 6) правила: версия патча, сборка и точные имена предметов текущего патча
-  assert.ok(RULES.patch === 'Halloween (2026-10-30)' && RULES.build === 6861 && /deadlock\.gs/.test(RULES.source));
+  // 6) правила: сборка и патч, у предметов — эффект, польза и ограничение
+  assert.ok(/Halloween/.test(RULES.patch) && /04/.test(RULES.patch) && RULES.build === 6861);
   for (const n of ['Toxic Bullets', 'Healbane', 'Debuff Reducer', 'Counterspell', 'Slowing Hex', 'Reactive Barrier', 'Spirit Resilience']) {
     assert.ok(RULES.items[n], `правило предмета ${n}`);
     assert.ok(RULES.items[n].text && RULES.items[n].goodVs && RULES.items[n].notEnough, `у ${n} — эффект, польза и ограничение`);
   }
+});
+
+test('counter data: rule numbers match game data, all 44 heroes have verified threats', () => {
+  const { RULES } = require('../src/core/counterRules');
+  const codex = require('../src/core/data/codexData.json');
+  const threats = require('../src/core/data/heroThreats.json');
+  assert.strictEqual(codex.build, RULES.build, 'правила и данные игры — одна сборка');
+  for (const [name, r] of Object.entries(RULES.items)) {
+    const shop = codex.items[name];
+    assert.ok(shop, `${name} есть в магазине build ${codex.build}`);
+    assert.ok(r.src, `у ${name} указан источник`);
+    for (const [k, v] of Object.entries(r.nums || {})) assert.strictEqual(shop.nums[k], v, `${name}: ${k} — число правила совпадает с данными игры (после патча обнови правило)`);
+  }
+  const ids = Object.keys(codex.heroes);
+  assert.strictEqual(ids.length, 44, '44 героя в данных игры');
+  const DMG = ['spirit', 'weapon', 'melee', 'none'];
+  for (const id of ids) {
+    const h = threats.heroes[id];
+    assert.ok(h, `герой ${codex.heroes[id].name} есть в таблице угроз`);
+    assert.strictEqual(h.abilities.length, 4, `${h.name}: четыре способности`);
+    assert.ok(Array.isArray(h.dmg) && h.dmg.length && Array.isArray(h.heal) && typeof h.air === 'boolean', `${h.name}: поля героя`);
+    for (const a of h.abilities) {
+      assert.ok(DMG.includes(a.damage) && Array.isArray(a.cc) && Array.isArray(a.compat) && typeof a.lasting === 'boolean' && a.note, `${h.name}/${a.name}: поля способности`);
+    }
+  }
+});
+
+test('counter advice: from hero threats and build profile, no weak recommendations', () => {
+  const C = require('../src/core/counters');
+  const codex = require('../src/core/data/codexData.json');
+  const rec = (id, profile = null) => C.counterItemsFor(id, { profile }).recommended.map((i) => i.name);
+
+  // Vindicta: сбить с полёта, снять долгие дебаффы, Spirit-урон ульты
+  const vin = rec(3);
+  for (const n of ['Knockdown', 'Phantom Strike', 'Dispel Magic', 'Spirit Resilience']) assert.ok(vin.includes(n), `Vindicta: ${n}`);
+  // Billy: ближний бой и контроль; Dispel Magic не нужен — снимать нечего (мгновенные эффекты)
+  const billy = rec(72);
+  assert.ok(billy.includes('Rebuttal') && billy.includes('Reactive Barrier'), 'Billy: Rebuttal и Reactive Barrier');
+  assert.ok(!billy.includes('Dispel Magic'), 'Billy: Dispel Magic — слабый выбор');
+  // Abrams: лечится — предметы против лечения; контроль — Reactive Barrier
+  const abrams = rec(6);
+  assert.ok(abrams.includes('Healbane') && abrams.includes('Toxic Bullets') && abrams.includes('Reactive Barrier'), 'Abrams: анти-лечение и Reactive Barrier');
+  // Apollo: Slowing Hex глушит его рывки и ульт
+  assert.ok(rec(77).includes('Slowing Hex'), 'Apollo: Slowing Hex');
+
+  // профиль покупок меняет вывод: без пулевой сборки нет Bullet Resilience, с ней — есть
+  const lash = (weapon) => rec(31, { games: 5000, small: false, top: [], slotShare: { weapon, spirit: 1 - weapon - 0.3, vitality: 0.3 }, melee: 0, lifesteal: 0 });
+  assert.ok(!lash(0.12).includes('Bullet Resilience'), 'Lash почти не берёт оружейные предметы');
+  assert.ok(rec(13, { games: 5000, small: false, top: [], slotShare: { weapon: 0.5, spirit: 0.2, vitality: 0.3 }, melee: 0, lifesteal: 0 }).includes('Bullet Resilience'), 'Haze: пули в сборке');
+  // лечение из профиля покупок: у Vindicta своего лечения нет, но вампиризм в сборке даёт анти-лечение
+  const noHeal = { games: 5000, small: false, top: [], slotShare: { weapon: 0.45, spirit: 0.24, vitality: 0.31 }, melee: 0, lifesteal: 0.1 };
+  assert.ok(!rec(3, noHeal).includes('Healbane'));
+  assert.ok(rec(3, { ...noHeal, lifesteal: 0.6 }).includes('Healbane'), 'вампиризм в сборке — предметы против лечения');
+
+  // все 44 героя: есть рекомендации, у каждой — основание, цена и источник, без NaN/undefined
+  for (const id of Object.keys(codex.heroes)) {
+    const r = C.counterItemsFor(id, {});
+    assert.ok(r.verified && r.recommended.length >= 2, `${codex.heroes[id].name}: рекомендации`);
+    for (const i of r.recommended) assert.ok(i.why.length && i.src && Number.isFinite(i.cost) && Number.isFinite(i.score) && i.tier >= 1 && i.tier <= 4, `${codex.heroes[id].name}/${i.name}`);
+    assert.ok(!/NaN|undefined/.test(JSON.stringify(r)), `${codex.heroes[id].name}: нет NaN/undefined`);
+  }
+});
+
+test('measured self-healing per hero drives anti-heal advice', () => {
+  const C = require('../src/core/counters');
+  const heal = require('../src/core/data/heroHealing.json');
+  const codex = require('../src/core/data/codexData.json');
+  assert.strictEqual(Object.keys(heal.heroes).length, 44, 'измерено лечение 44 героев');
+  assert.ok(heal.since && heal.matches > 100000 && heal.medianPerMinute > 0, 'окно, число матчей и медиана указаны');
+  for (const [id, x] of Object.entries(heal.heroes)) {
+    assert.ok(codex.heroes[id], `герой ${id} из данных игры`);
+    assert.ok(x.games >= 100 && x.perMinute >= 0 && x.perGame >= 0 && x.rank >= 1 && x.rank <= 44, `лечение героя ${id}`);
+  }
+  const score = (id, n) => (C.counterItemsFor(id, {}).recommended.find((i) => i.name === n) || { score: 0 }).score;
+  // Victor лечит себя сильнее всех, Vindicta почти не лечится: у Victor анти-лечение в рекомендациях, у Vindicta нет
+  assert.ok(score(66, 'Healbane') >= 2.5, 'Victor: Healbane важен');
+  assert.strictEqual(score(3, 'Healbane'), 0, 'Vindicta не лечится — Healbane не советуем');
+  // Shiv лечится ниже медианы по измерению: Healbane слабый запасной вариант
+  assert.ok(score(19, 'Healbane') < score(19, 'Spirit Resilience'), 'Shiv: анти-лечение ниже защиты от Spirit');
+  // строка про лечение есть у каждого героя с числами
+  for (const id of Object.keys(codex.heroes)) {
+    const line = C.counterItemsFor(id, {}).threats.find((t) => t.kind === 'heal');
+    assert.ok(line && /в минуту/.test(line.text), `${codex.heroes[id].name}: измеренное лечение в угрозах`);
+  }
+});
+
+test('hero build profile: top purchases, slot shares, melee and lifesteal flags, small samples', () => {
+  const { buildHeroProfile } = require('../src/core/heroProfile');
+  const codex = require('../src/core/data/codexData.json');
+  const rows = [['Melee Charge', 900], ['Melee Lifesteal', 850], ['Lifestrike', 800], ['Crushing Fists', 600], ['Close Quarters', 950], ['Extra Spirit', 100]]
+    .map(([n, m]) => ({ item_id: codex.items[n].id, matches: m, bucket: 0 }));
+  const p = buildHeroProfile(rows, { codex, games: 1000 });
+  assert.strictEqual(p.games, 1000);
+  assert.strictEqual(p.small, false);
+  assert.strictEqual(p.top[0].name, 'Close Quarters');
+  assert.strictEqual(p.top[0].share, 0.95);
+  assert.ok(!p.top.some((x) => x.name === 'Extra Spirit'), 'редкая покупка не попадает в топ');
+  assert.ok(p.melee >= 0.5, 'сборка ближнего боя');
+  assert.ok(p.lifesteal >= 0.8, 'вампиризм в сборке');
+  const sum = Object.values(p.slotShare).reduce((s, v) => s + v, 0);
+  assert.ok(Math.abs(sum - 1) < 0.02, 'доли слотов складываются в 100%');
+  assert.strictEqual(buildHeroProfile(rows, { codex, games: 300 }).small, true, 'мало матчей — помечено');
+  assert.strictEqual(buildHeroProfile([], { codex, games: 1000 }), null, 'нет данных — нет профиля');
 });
 
 test('codex lookup: no network on hero switch, saved data on failure', () => withStoreDir(async (dir) => {
@@ -1729,8 +1981,17 @@ test('codex lookup: no network on hero switch, saved data on failure', () => wit
   store.write('assets.json', { v: 8, fetchedAt: Date.now(), heroes: { 5: { id: 5, name: 'H5' }, 6: { id: 6, name: 'H6' } },
     items: { 2: { id: 2, name: 'Toxic Bullets', cost: 1250, tier: 3, slot: 'weapon' } } });
   let calls = 0;
+  let profileCalls = 0;
+  let failProfile = false;
+  const codexItems = require('../src/core/data/codexData.json').items;
   const api = {
-    heroStatsAnalytics: async () => { calls++; return []; },
+    // профиль покупок героя: окно после патча (hero-stats) и покупки (item-stats)
+    heroStatsAnalytics: async ({ since } = {}) => (since === require('../src/core/counterRules').RULES.patchSince ? [{ hero_id: 5, matches: 5000 }, { hero_id: 6, matches: 5000 }] : (calls++, [])),
+    itemStatsAnalytics: async ({ heroId }) => {
+      profileCalls++;
+      if (failProfile) throw new Error('offline');
+      return [{ item_id: codexItems['Rebuttal'].id, matches: 4000, bucket: 0 }, { item_id: codexItems['Healbane'].id, matches: 100, bucket: 0 }];
+    },
     heroCounterAnalytics: async () => { calls++; return []; },
     heroSynergyAnalytics: async () => { calls++; return []; },
     matchHistory: async () => { calls++; throw new Error('offline'); },
@@ -1749,6 +2010,16 @@ test('codex lookup: no network on hero switch, saved data on failure', () => wit
   const again = await sync.codexLookup(null, 5);
   assert.strictEqual(again.enemy, 5);
   assert.strictEqual(calls, 0, 'ни одного запроса к сети при смене героя');
+  assert.strictEqual(profileCalls, 2, 'профиль покупок — по одному запросу на героя, при возврате к герою без сети');
+  assert.ok(a.items.profile && a.items.profile.games === 5000 && a.items.profile.since > 1000, 'профиль построен по окну после патча');
+  assert.strictEqual(a.items.profile.top[0].name, 'Rebuttal', 'в профиле — частая покупка');
+  // профиль сохранён в файле: новый Sync без сети берёт его из кэша
+  failProfile = true;
+  const sync3 = new Sync({ store, api });
+  const d3 = await sync3.codexLookup(null, 5);
+  assert.ok(d3.items.profile && !d3.meta.profileError, 'свежий кэш профиля — без запроса');
+  assert.strictEqual(profileCalls, 2, 'кэш профиля не вызвал сеть');
+  failProfile = false;
 
   // устаревшая мета + сбой сети: показываем сохранённые данные с датой и ошибкой
   store.write('pickmeta.json', { ...pm, at: Date.now() - 8 * 3600e3 });
@@ -1774,25 +2045,28 @@ test('solo deaths: fires without allies nearby, hidden without routes', () => {
       stats: [{ t: 600, nw: 5000, d: 0, g_lost: 0, k: 0, a: 0 }, { t: 1200, nw: 12000, d: 1, g_lost: 700, k: 0, a: 0 }, { t: 1800, nw: 18000, d: 3, g_lost: 1500, k: 0, a: 0 }] });
   }
   const me = players[0];
-  me.d = 3;
-  // смерть до 10:00 — не в счёт; две после — в одиночку (союзники в 6000 единицах)
-  me.deaths = [[200, 0, 0, 6, 0, 0], [1100, 0, 0, 7, 100, 0], [1700, 0, 0, 7, 100, 0]];
-  me.deaths_t = [200, 1100, 1700];
+  me.d = 4;
+  // смерть до 10:00 — не в счёт; три после — в одиночку (союзники в 6000 единицах); порог — выше нормы (3-й квартиль = 2)
+  me.deaths = [[200, 0, 0, 6, 0, 0], [1100, 0, 0, 7, 100, 0], [1400, 0, 0, 7, 100, 0], [1700, 0, 0, 7, 100, 0]];
+  me.deaths_t = [200, 1100, 1400, 1700];
   const pathsP = {};
   for (const p of players) pathsP[p.slot] = mkPath((t) => [p === me ? 0 : 6000, 0, 1, 0, 100]);
   const mm = { match_id: 9002, start_time: 1, duration_s: 1800, players, paths: { step, players: pathsP }, badge: [52, 52],
     dmg: { t: [180, 600, 1800], d: { '7>0': [0, 0, 9000] } } };
   const fm = pf(me, mm, null);
-  assert.strictEqual(fm.soloDeaths, 2, 'две смерти в одиночку');
+  assert.strictEqual(fm.soloDeaths, 3, 'три смерти в одиночку');
   const checked = new Set();
   const leaks = L.gameLeaks({ m: mm, me, f: fm, ref: null, tier: 5, checked, heroName: (x) => `H${x}`, itemName: (x) => `I${x}` });
   const sd = leaks.find((l) => l.key === 'solo_deaths');
   assert.ok(sd, 'правило сработало');
   assert.ok(checked.has('solo_deaths'), 'игра помечена проверяемой');
-  assert.strictEqual(sd.moments.length, 2);
+  assert.strictEqual(sd.moments.length, 3);
   assert.ok(/убил H27/.test(sd.moments[0].text), `кто убил: ${sd.moments[0].text}`);
   assert.ok(/до союзников \d+ с бега/.test(sd.moments[0].text));
-  assert.strictEqual(sd.cost.deaths, 2);
+  assert.strictEqual(sd.cost.deaths, 3);
+  assert.strictEqual(sd.status, 'observation', 'цена не подтверждена — наблюдение');
+  assert.strictEqual(sd.level, 'info');
+  assert.ok(/Цена не подтверждена/.test(sd.context) && /Для сравнения/.test(sd.text), 'норма героя и ранга в тексте, цена названа неподтверждённой');
   assert.ok(!/undefined|NaN/.test(sd.title + sd.text + sd.context + sd.moments.map((x) => x.text).join('')));
 
   // союзник рядом (500 единиц) — не считается одиночеством
@@ -1813,18 +2087,366 @@ test('solo deaths: fires without allies nearby, hidden without routes', () => {
   assert.ok(!lNo.some((l) => l.key === 'solo_deaths'));
   assert.ok(!checked2.has('solo_deaths'), 'без маршрутов игра не считается проверяемой — ложного «нуля ошибок» нет');
 
-  // цель из эпизодов: два матча с одиночными смертями → цель «не больше одной»
+  // наблюдение (цена не подтверждена) цели тренера не создаёт, но остаётся в списке после выводов
   const games = [
     { match_id: 1, won: false, hero: 1, leaks, checked: [...checked] },
     { match_id: 2, won: false, hero: 1, leaks, checked: [...checked] },
     { match_id: 3, won: true, hero: 1, leaks: [], checked: [...checked] },
   ];
   const prof = L.leakProfile(games);
-  assert.strictEqual(prof.goal.key, 'solo_deaths', `цель из ошибки: ${prof.goal.key}`);
-  assert.ok([1100, 1700].includes(prof.goal.episode.t));
-  assert.ok(Number.isFinite(prof.goal.episode.matchId));
+  assert.strictEqual(prof.goal, null, 'цель из наблюдения не создаётся');
   const soloRow = prof.rows.find((r) => r.key === 'solo_deaths');
   assert.deepStrictEqual([soloRow.count, soloRow.eligible], [2, 3], 'частота среди проверяемых игр');
+  assert.strictEqual(soloRow.status, 'observation');
+});
+
+test('errors audit: absent API data is "no data", not zero (buffs and lost souls)', () => {
+  const L = require('../src/core/leaks');
+  const { playerFeatures: pf } = require('../src/core/features');
+  const { majorSoulLosses } = require('../src/core/leaks');
+  const mk = ({ pus, lost }) => {
+    const players = [];
+    for (let i = 0; i < 12; i++) {
+      const team = i < 6 ? 0 : 1;
+      players.push({ account_id: 1 + i, hero_id: 20 + i, team, slot: i, lane: 1, won: team === 1, k: 0, d: i === 0 ? 3 : 1, a: 0, nw: 20000, items: [],
+        deaths: i === 0 ? [[700, 0, 0, 6, 0, 0], [1000, 0, 0, 6, 0, 0], [1300, 0, 0, 6, 0, 0]] : [], deaths_t: i === 0 ? [700, 1000, 1300] : [],
+        pu: pus[i] || [],
+        stats: [{ t: 540, nw: 6000, d: 0, g_lost: 0, g_brk: 600, g_neutral: 600, k: 0, a: 0 },
+          { t: 1800, nw: 24000, d: i === 0 ? 3 : 1, g_lost: i === 0 ? lost : 0, g_brk: 2600, g_neutral: 4000, k: 0, a: 0 }] });
+    }
+    return { match_id: 77, start_time: 1, duration_s: 1800, players, badge: [52, 52], dmg: { t: [180, 1800], d: {} } };
+  };
+  // бафов нет ни у кого — данных нет: null, а не «0 бафов»
+  const none = mk({ pus: {}, lost: 0 });
+  assert.strictEqual(pf(none.players[0], none, null).pu10, null);
+  assert.strictEqual(pf(none.players[0], none, null).pu20, null);
+  // у соседа бафы есть, у меня нет — это настоящий ноль
+  const some = mk({ pus: { 3: [[400, 'hp'], [500, 'spirit']] }, lost: 0 });
+  assert.strictEqual(pf(some.players[0], some, null).pu10, 0);
+  assert.strictEqual(pf(some.players[3], some, null).pu10, 2);
+  assert.strictEqual(pf(some.players[0], some, null).pu20, 0);
+  // игра без данных о бафах не помечается проверяемой для «таймингов»
+  const chk = new Set();
+  L.gameLeaks({ m: none, me: none.players[0], f: pf(none.players[0], none, null), ref: null, tier: 5, checked: chk, heroName: (x) => `H${x}`, itemName: (x) => `I${x}` });
+  assert.ok(!chk.has('map_timings'), 'нет данных о бафах — тайминги не проверены');
+
+  // потери душ: ноль у всех игроков при трёх смертях — данных нет
+  assert.strictEqual(L.lostTracked(none), false);
+  const f0 = pf(none.players[0], none, null);
+  assert.strictEqual(f0.lostEnd, null);
+  assert.strictEqual(f0.lostPerDeath, null);
+  assert.strictEqual(majorSoulLosses(none.players[0], 1800, undefined, none), null);
+  const c0 = new Set();
+  const l0 = L.gameLeaks({ m: none, me: none.players[0], f: f0, ref: null, tier: 5, checked: c0, heroName: (x) => `H${x}`, itemName: (x) => `I${x}` });
+  assert.ok(!c0.has('lost_souls') && !l0.some((l) => l.key === 'lost_souls'), 'нет данных о потерях — ни «чисто», ни ошибки');
+  assert.ok(!L.gameHighlights({ m: none, me: none.players[0], f: f0, ref: null, tier: 5 }).some((x) => x.key === 'souls_safe'), 'нет данных — не хвалим «умирал пустым»');
+  // данные есть — работает как раньше
+  const real = mk({ pus: {}, lost: 1500 });
+  assert.strictEqual(L.lostTracked(real), true);
+  assert.strictEqual(pf(real.players[0], real, null).lostEnd, 1500);
+  assert.strictEqual(majorSoulLosses(real.players[0], 1800, [{ t: 700, lost: 1100 }, { t: 1000, lost: 200 }, { t: 1300, lost: 200 }], real), 1);
+});
+
+test('errors audit: solo deaths ignore a fight, text says N of M, souls are whole numbers', () => {
+  const L = require('../src/core/leaks');
+  const D = require('../src/core/deaths');
+  const { playerFeatures: pf } = require('../src/core/features');
+  assert.strictEqual(L.souls(379.5), '380 душ');
+  assert.strictEqual(L.souls(1), '1 душа');
+  const step = 5;
+  const mkPath = (fn) => Array.from({ length: 400 }, (_, i) => fn(i * step));
+  const players = [];
+  for (let i = 0; i < 12; i++) {
+    const team = i < 6 ? 0 : 1;
+    players.push({ account_id: 1 + i, hero_id: 20 + i, team, slot: i, lane: 1, won: team === 1, k: 0, d: 0, a: 0, nw: 20000, items: [], deaths: [], deaths_t: [], pu: [],
+      stats: [{ t: 600, nw: 5000, d: 0, g_lost: 0, k: 0, a: 0 }, { t: 1800, nw: 18000, d: 3, g_lost: 1500, k: 0, a: 0 }] });
+  }
+  const me = players[0];
+  me.d = 3;
+  me.deaths = [[1100, 0, 0, 7, 100, 0], [1400, 0, 0, 7, 100, 0], [1700, 0, 0, 7, 100, 0]];
+  me.deaths_t = [1100, 1400, 1700];
+  const far = {};
+  for (const p of players) far[p.slot] = mkPath(() => [p === me ? 0 : 6000, 0, 1, 0, 100]);
+  const m = { match_id: 9100, start_time: 1, duration_s: 1800, players, paths: { step, players: far }, badge: [52, 52], dmg: { t: [180, 600, 1800], d: {} } };
+  const rows = D.soloDeathRows(m, me);
+  assert.strictEqual(rows.length, 3);
+  const lk = L.gameLeaks({ m, me, f: pf(me, m, null), ref: null, tier: 5, heroName: (x) => `H${x}`, itemName: (x) => `I${x}` }).find((l) => l.key === 'solo_deaths');
+  assert.ok(/3 из 3 твоих смертей/.test(lk.text), lk.text);
+  assert.strictEqual(lk.level, 'info', 'наблюдение без подтверждённой цены не «bad»');
+  assert.ok(/условность/.test(lk.context), 'порог назван условностью, а не найденной границей');
+
+  // союзник погиб рядом за 4 секунды до моей смерти — это драка, а не одиночный заход
+  const ally = players[1];
+  ally.deaths = [[1096, 400, 0, 7, 0, 0]];
+  ally.deaths_t = [1096];
+  const fight = { ...far, 1: mkPath((t) => [6000, 0, t < 1095 ? 1 : 0, 0, 100]) };
+  const mf = { ...m, paths: { step, players: fight } };
+  assert.deepStrictEqual(D.soloDeathRows(mf, me).map((r) => r.t), [1400, 1700], 'смерть в бою, где только что погиб союзник, не одиночная');
+  // союзник погиб давно (30 с назад) — смерть по-прежнему одиночная
+  ally.deaths = [[1070, 400, 0, 7, 0, 0]];
+  assert.strictEqual(D.soloDeathRows(mf, me).length, 3);
+  // союзник погиб далеко от места моей смерти — тоже не повод считать её командной
+  ally.deaths = [[1096, 9000, 0, 7, 0, 0]];
+  assert.strictEqual(D.soloDeathRows(mf, me).length, 3);
+
+  // 3 из 6 поздних смертей: «info» (наблюдение); больше половины, но не «bad»
+  ally.deaths = [];
+  me.deaths = [[1100, 0, 0, 7, 100, 0], [1200, 5000, 0, 7, 0, 0], [1300, 5000, 0, 7, 0, 0], [1400, 5000, 0, 7, 0, 0], [1500, 0, 0, 7, 100, 0], [1700, 0, 0, 7, 100, 0]];
+  me.d = 6;
+  const mixed = {};
+  for (const p of players) mixed[p.slot] = mkPath(() => [p === me ? 0 : p.team === 0 ? 5000 : 7000, 0, 1, 0, 100]);
+  // союзники стоят в 5 000 от точки (0, 0) и рядом с точкой (5 000, 0) — смерти в (5 000, 0) не одиночные
+  const mw = { ...m, paths: { step, players: mixed } };
+  const lw = L.gameLeaks({ m: mw, me, f: pf(me, mw, null), ref: null, tier: 5, heroName: (x) => `H${x}` }).find((l) => l.key === 'solo_deaths');
+  assert.ok(lw && /3 из 6/.test(lw.text) && lw.level === 'info' && lw.status === 'observation', `${lw && lw.text}`);
+  // две смерти в одиночку — в пределах нормы (3-й квартиль 2): замечания нет
+  me.deaths = [[1100, 0, 0, 7, 100, 0], [1700, 0, 0, 7, 100, 0]];
+  me.d = 2;
+  assert.ok(!L.gameLeaks({ m: mw, me, f: pf(me, mw, null), ref: null, tier: 5, heroName: (x) => `H${x}` }).some((l) => l.key === 'solo_deaths'), 'две смерти — норма героя и ранга');
+});
+
+test('errors audit: win-rate comparison is adjusted for the number of deaths', () => {
+  const L = require('../src/core/leaks');
+  // победа зависит ТОЛЬКО от числа смертей; замечание чаще бывает в играх с большим числом смертей
+  const leak = { key: 'solo_deaths', area: 'Выживание', level: 'warn', title: 'T', text: 'x', fix: [], score: 50, cost: {}, moments: [{ t: 700, text: 'm' }] };
+  const games = [];
+  let id = 0;
+  const add = (d, flagged, won) => games.push({ match_id: ++id, start_time: id, won, hero: 1, d, leaks: flagged ? [leak] : [], checked: ['solo_deaths'] });
+  // 2 смерти: все побеждают; 5: половина; 8: никто. С замечанием: 5 / 15 / 25 игр, без: 25 / 15 / 5
+  for (const [d, nFlag, nNo, winShare] of [[2, 5, 25, 1], [5, 15, 15, 0.5], [8, 25, 5, 0]]) {
+    for (let i = 0; i < nFlag; i++) add(d, true, i < nFlag * winShare);
+    for (let i = 0; i < nNo; i++) add(d, false, i < nNo * winShare);
+  }
+  const row = L.leakProfile(games).rows[0];
+  assert.ok(row.wrWithout - row.wrWith > 0.3, `«в лоб» разница огромная: ${row.wrWith} / ${row.wrWithout}`);
+  assert.ok(row.wrAdj && Math.abs(row.wrAdj.diff) < 0.02, `с поправкой на смерти связи нет: ${row.wrAdj && row.wrAdj.diff}`);
+  assert.ok(Math.abs(row.impact - (row.count / games.length) * 50) < 1e-9, 'влияние не завышено поддельной связью');
+  // настоящая связь (в каждой группе с замечанием проигрывают чаще) — поправка её сохраняет
+  const real = [];
+  let rid = 0;
+  const addR = (d, flagged, won) => real.push({ match_id: ++rid, start_time: rid, won, hero: 1, d, leaks: flagged ? [leak] : [], checked: ['solo_deaths'] });
+  for (const d of [2, 5, 8]) {
+    for (let i = 0; i < 10; i++) addR(d, true, i < 3);
+    for (let i = 0; i < 10; i++) addR(d, false, i < 7);
+  }
+  const rr = L.leakProfile(real).rows[0];
+  assert.ok(rr.wrAdj.diff < -0.35 && rr.wrAdj.diff > -0.45, `настоящая связь сохранена: ${rr.wrAdj.diff}`);
+  assert.ok(rr.impact > (rr.count / real.length) * 50, 'настоящая связь усиливает важность');
+  // число смертей неизвестно — поправки нет, как раньше
+  const noD = games.map(({ d, ...g }) => g);
+  assert.strictEqual(L.leakProfile(noD).rows[0].wrAdj, null);
+});
+
+test('errors audit: died_rich is a lower bound, counter_missing has episodes', () => {
+  const L = require('../src/core/leaks');
+  const { playerFeatures: pf } = require('../src/core/features');
+  const assets = { items: { 12: { id: 12, name: 'Резак', slot: 'weapon', cost: 3000, tier: 3 } } };
+  const players = [];
+  for (let i = 0; i < 12; i++) {
+    const team = i < 6 ? 0 : 1;
+    players.push({ account_id: 1 + i, hero_id: 20 + i, team, slot: i, lane: 1, won: team === 1, k: 0, d: i === 0 ? 2 : 0, a: 0, nw: 20000,
+      items: i === 0 ? [[12, 800, 0, 0]] : [], deaths: i === 0 ? [[1000, 0, 0, 6, 0, 0], [1500, 0, 0, 6, 0, 0]] : [], deaths_t: i === 0 ? [1000, 1500] : [], pu: [],
+      stats: [{ t: 540, nw: 6000, d: 0, g_lost: 0, g_brk: 600, g_neutral: 600, k: 0, a: 0 }, { t: 1800, nw: 30000, d: i === 0 ? 2 : 0, g_lost: 900, g_brk: 2600, g_neutral: 4000, k: 0, a: 0 }] });
+  }
+  const me = players[0];
+  const m = { match_id: 5, start_time: 1, duration_s: 1800, players, badge: [52, 52], dmg: { t: [180, 1800], d: { '6>0': [0, 9000], '7>0': [0, 1000] } } };
+  const counters = { 26: [{ id: 99, lift: 1.9, rateVs: 0.3 }] };
+  const checked = new Set();
+  const leaks = L.gameLeaks({ m, me, f: pf(me, m, assets), ref: null, tier: 5, assets, counters, checked, heroName: (x) => `H${x}`, itemName: (x) => `I${x}` });
+  const rich = leaks.find((l) => l.key === 'died_rich');
+  assert.ok(rich && rich.level === 'info' && rich.status === 'observation', 'богатая смерть: наблюдение, не «ошибка»');
+  assert.ok(/не меньше/.test(rich.text) && !/\d[.,]\d/.test(rich.text), `нижняя граница, целые числа: ${rich.text}`);
+  assert.ok(/гипотеза/.test(rich.context));
+  const cm = leaks.find((l) => l.key === 'counter_missing');
+  assert.ok(cm, 'ответа на героя нет');
+  assert.deepStrictEqual(cm.moments.map((x) => x.t), [1000, 1500], 'эпизоды — смерти от этого героя');
+  assert.ok(/статистика/.test(cm.context) && /доказанный/.test(cm.context), 'не выдаём статистику за причину');
+  assert.ok(!/undefined|NaN/.test(JSON.stringify(leaks)));
+});
+
+test('errors pilot: lane trades is a finding with a measured price; norms by hero and rank; findings first in the profile', () => {
+  const L = require('../src/core/leaks');
+  const { playerFeatures: pf } = require('../src/core/features');
+  // нормы: ячейка героя и ранга, затем запасные варианты
+  assert.ok(L.normFor(0, 5) && L.normFor(0, 5).scope === 'rank', 'нет героя — берём ранг');
+  assert.ok(/обычно/.test(L.normPhrase('Хиро', L.normFor(0, 5), 'solo')), 'фраза нормы');
+  assert.strictEqual(L.normPhrase('Хиро', null, 'solo'), '', 'нет норм — нет фразы');
+  // линия: наша пара (слоты 0, 1) на 1000 душ позади пары соперников к 10:00
+  const players = [];
+  for (let i = 0; i < 12; i++) {
+    const team = i < 6 ? 0 : 1;
+    const lane = [1, 1, 4, 4, 6, 6][i % 6];
+    const nw10 = team === 0 ? (lane === 1 ? 5000 : 6000) : (lane === 1 ? 6000 : 6000);
+    players.push({ account_id: 1 + i, hero_id: 20 + i, team, slot: i, lane, won: team === 1, k: 0, d: i === 0 ? 1 : 0, a: 0, nw: 20000, items: [],
+      deaths: i === 0 ? [[400, 0, 0, 6, 0, 0]] : [], deaths_t: i === 0 ? [400] : [], pu: [],
+      stats: [{ t: 600, nw: nw10, d: i === 0 ? 1 : 0, g_lost: 100, g_brk: 600, g_neutral: 600, k: 0, a: 0 }, { t: 1800, nw: 20000, d: i === 0 ? 1 : 0, g_lost: 100, g_brk: 2600, g_neutral: 4000, k: 0, a: 0 }] });
+  }
+  const me = players[0];
+  const m = { match_id: 7, start_time: 1, duration_s: 1800, players, badge: [0, 0],
+    dmg: { t: [180, 540, 1800], d: { '0>6': [0, 400, 800], '6>0': [0, 2000, 3000] } } };
+  const leaks = L.gameLeaks({ m, me, f: pf(me, m, null), ref: null, tier: 6, heroName: (x) => `H${x}`, itemName: (x) => `I${x}` });
+  const lt = leaks.find((l) => l.key === 'lane_trades');
+  assert.ok(lt, 'размены в пользу врага');
+  assert.strictEqual(lt.status, 'finding');
+  assert.strictEqual(lt.level, 'bad', 'у вывода с подтверждённой ценой уровень сохраняется');
+  assert.strictEqual(lt.facts.laneGap, -1000);
+  assert.ok(/на 1.000 душ меньше/.test(lt.text) && /около 42%/.test(lt.text), `цена в душах и победах: ${lt.text}`);
+  assert.strictEqual(lt.cost.souls, 1000);
+  assert.ok(/Чего не хватает/.test(lt.context), 'сказано, чего не хватает');
+  assert.ok(!/undefined|NaN/.test(JSON.stringify(leaks)));
+  // профиль: вывод идёт раньше наблюдения даже при меньшей важности, а цель тренера — только из вывода
+  const obs = { key: 'solo_deaths', area: 'Выживание', level: 'info', status: 'observation', title: 'T', text: 'x', fix: [], score: 500, cost: {}, moments: [{ t: 700, text: 'm' }] };
+  const games = [1, 2, 3].map((id) => ({ match_id: id, start_time: id, won: id === 1, hero: 1, d: 5, leaks: [lt, obs], checked: ['lane_trades', 'solo_deaths'] }));
+  const prof = L.leakProfile(games);
+  assert.strictEqual(prof.rows[0].key, 'lane_trades');
+  assert.strictEqual(prof.rows[0].status, 'finding');
+  assert.strictEqual(prof.rows[1].status, 'observation');
+  assert.strictEqual(prof.goal.key, 'lane_trades', 'цель — из подтверждённого вывода');
+});
+
+test('errors pilot: farm episodes are shared, observation status and the norm thresholds', () => {
+  const L = require('../src/core/leaks');
+  const { playerFeatures: pf } = require('../src/core/features');
+  const step = 5;
+  const mkPath = (fn) => Array.from({ length: 400 }, (_, i) => fn(i * step));
+  const players = [];
+  for (let i = 0; i < 12; i++) {
+    const team = i < 6 ? 0 : 1;
+    players.push({ account_id: 1 + i, hero_id: 20 + i, team, slot: i, lane: 1, won: team === 1, k: 0, d: 0, a: 0, nw: 20000, items: [], deaths: [], deaths_t: [], pu: [],
+      stats: [{ t: 600, nw: 5000, d: 0, g_lost: 0, k: 0, a: 0 }, { t: 1800, nw: 18000, d: 0, g_lost: 0, k: 0, a: 0 }] });
+  }
+  const me = players[0];
+  // две драки после 10:00: союзники 1 и 2 погибают у (0,0), соперник — одного; я фармлю в 6 000 от места (режим 2 — крипы линии)
+  const fights = [1000, 1400];
+  for (const t of fights) {
+    players[1].deaths.push([t, 0, 0, 6, 0, 0]);
+    players[2].deaths.push([t + 3, 0, 0, 6, 0, 0]);
+    players[7].deaths.push([t + 6, 0, 0, 0, 0, 0]);
+  }
+  const far = {};
+  for (const p of players) far[p.slot] = mkPath(() => [p === me ? 6000 : 0, 0, 1, p === me ? 2 : 0, 100]);
+  const m = { match_id: 9, start_time: 1, duration_s: 1800, players, paths: { step, players: far }, badge: [0, 0], dmg: { t: [180, 600, 1800], d: {} } };
+  const fe = L.farmEpisodes(m, me);
+  assert.strictEqual(fe.missed.length, 2);
+  assert.ok(fe.fightChecks >= 2 && !fe.incompleteFights);
+  const fl = L.gameLeaks({ m, me, f: pf(me, m, null), ref: null, tier: 6, heroName: (x) => `H${x}`, itemName: (x) => `I${x}` }).find((l) => l.key === 'farm_while_fight');
+  assert.ok(fl, 'два эпизода');
+  assert.strictEqual(fl.status, 'observation');
+  assert.strictEqual(fl.level, 'info');
+  assert.ok(/Цена не подтверждена/.test(fl.context) && /фармящим вдали/.test(fl.context), 'цена не подтверждена, причина названа');
+  assert.ok(/Для сравнения/.test(fl.text), 'норма героя и ранга в тексте');
+  // я рядом с дракой (в 1 000 от неё) — эпизодов нет
+  const near = { ...far, 0: mkPath(() => [1000, 0, 1, 2, 100]) };
+  assert.strictEqual(L.farmEpisodes({ ...m, paths: { step, players: near } }, me).missed.length, 0);
+});
+
+test('rank: fresh ranked matches have a zero team badge, the own badge from history is the fallback', () => {
+  const { gameBadge, tierOfBadge } = require('../src/core/rank');
+  const L = require('../src/core/leaks');
+  const me = { team: 1 };
+  assert.strictEqual(gameBadge({ badge: [0, 0] }, me, null), null, 'ноль — не ранг');
+  assert.strictEqual(gameBadge({ badge: [0, 0] }, me, 72), 72, 'значок игрока из истории');
+  assert.strictEqual(gameBadge({ badge: [54, 63] }, me, 72), 63, 'значок команды из матча приоритетнее');
+  assert.strictEqual(gameBadge({ badge: [null, null] }, me, '0'), null);
+  assert.strictEqual(gameBadge(null, me, 71), 71);
+  assert.strictEqual(tierOfBadge(0), null, 'уровень 0 — «неизвестно», а не самый низкий');
+  assert.strictEqual(tierOfBadge(72), 7);
+  // нормы не принимают 0 за «ранги 1–5»
+  assert.notStrictEqual(L.normFor(0, 0).band, 0);
+  assert.strictEqual(L.normFor(0, 0).band, 'any');
+  assert.strictEqual(L.normFor(0, 3).band, 0);
+  assert.strictEqual(L.normFor(0, 8).band, 2);
+  // обзор: матчи с нулевым значком, ранг берётся из истории (ranked_display_badge)
+  const { buildOverview } = require('../src/core/overview');
+  const ME = 777;
+  const now = 2_000_000_000;
+  const history = [];
+  const matches = new Map();
+  for (let i = 0; i < 6; i++) {
+    const start = now - 3 * 86400 + i * 3000;
+    const raw = fakeMatch({ id: 7000 + i, seed: 90 + i, start, accounts: [ME, ...Array.from({ length: 11 }, (_, k) => 2000 + i * 20 + k)], skill: [0.7] });
+    raw.match_info.average_badge_team0 = 0;
+    raw.match_info.average_badge_team1 = 0;
+    const m = extractMatch(raw);
+    matches.set(m.match_id, m);
+    const p = m.players[0];
+    history.push({ match_id: m.match_id, start_time: start, match_duration_s: m.duration_s, hero_id: p.hero_id, player_team: p.team, match_result: m.winning_team, player_kills: p.k, player_deaths: p.d, player_assists: p.a, net_worth: p.nw, last_hits: p.lh, denies: 0, match_mode: 4, game_mode: 1, ranked_display_badge: 72 });
+  }
+  const o = buildOverview({ history, matches, accountId: ME, days: 7, now });
+  assert.ok(o.rank && o.rank.tier === 7 && o.rank.sub === 2, `ранг из истории: ${JSON.stringify(o.rank)}`);
+  const noRow = buildOverview({ history: history.map(({ ranked_display_badge, ...r }) => r), matches, accountId: ME, days: 7, now });
+  assert.strictEqual(noRow.rank, null, 'ни значка команды, ни собственного — ранга нет, а не «ранг 0»');
+});
+
+test('roles: automatic working role from match data, hero summary with confidence', () => {
+  const Rl = require('../src/core/roles');
+  const L = require('../src/core/leaks');
+  const cuts = require('../src/core/data/errorNorms.json').roleCuts;
+  assert.ok(cuts && cuts.dmgShare.p67 > 0 && cuts.takenShare.p67 > 0, 'границы признаков роли есть в нормах');
+  assert.strictEqual(Rl.roleOf({ dmgShare: 0.2 }, null).role, null, 'без границ роль не определяется');
+  assert.strictEqual(Rl.roleOf(null, cuts).role, null);
+  const feat = (o) => ({ dmgShare: 0.16, takenShare: 0.15, healShare: 0.1, nwShare: 0.17, firstEngage: 0.3, vitality: 0.3, ...o });
+  assert.strictEqual(Rl.roleOf(feat({ takenShare: 0.3, firstEngage: 0.6 }), cuts).role, 'initiator');
+  assert.strictEqual(Rl.roleOf(feat({ takenShare: 0.3, firstEngage: null, vitality: 0.5 }), cuts).role, 'initiator', 'живучесть вместо маршрутов');
+  assert.strictEqual(Rl.roleOf(feat({ dmgShare: 0.25 }), cuts).role, 'carry');
+  const sup = Rl.roleOf(feat({ dmgShare: 0.1, healShare: 0.3 }), cuts);
+  assert.strictEqual(sup.role, 'support');
+  assert.ok(sup.why.length >= 2 && sup.why.every((w) => /%/.test(w)), 'названы признаки');
+  assert.strictEqual(Rl.roleOf(feat({}), cuts).role, 'flex');
+  // «первым в бой»: по маршрутам и дракам
+  const step = 5;
+  const mk = (fn) => Array.from({ length: 300 }, (_, i) => fn(i * step));
+  const players = [];
+  for (let i = 0; i < 12; i++) players.push({ slot: i, team: i < 6 ? 0 : 1, deaths: [], k: 0, a: 0, stats: [{ t: 1800, nw: 20000, pdmg: 1000 * (i % 6 + 1), pdmgT: 1000, heal: 0, g_lane: 6000, g_neutral: 3000, g_player: 2000, g_boss: 500, g_brk: 1000 }] });
+  // драка 1000–1010: трое союзников; слот 0 вступает в контакт с героями в 995, слоты 1 и 2 — в 1005
+  const paths = {};
+  for (const p of players) paths[p.slot] = mk((t) => [0, 0, 1, (p.slot === 0 && t >= 995 && t <= 1010) || ((p.slot === 1 || p.slot === 2) && t >= 1005 && t <= 1010) ? 1 : 0, 100]);
+  players[3].deaths = [[1000, 0, 0, 7, 0, 0]]; players[4].deaths = [[1004, 0, 0, 7, 0, 0]]; players[7].deaths = [[1008, 0, 0, 0, 0, 0]];
+  const m = { players, paths: { step, players: paths }, duration_s: 1800 };
+  const eng = Rl.engageStats(m, L.findFights);
+  assert.deepStrictEqual([eng.get(0).fights, eng.get(0).firsts, eng.get(1).firsts], [1, 1, 0], 'первым вступил слот 0');
+  const rf = Rl.roleFeatures(m, players[0], null, L.findFights);
+  assert.ok(Math.abs(rf.dmgShare - 1000 / 21000) < 1e-9 && Math.abs(rf.laneSouls - 0.3) < 1e-9 && Math.abs(rf.bossSouls - 0.025) < 1e-9, 'доли урона и душ по источникам');
+  assert.strictEqual(rf.firstEngage, null, 'меньше трёх драк — «первым» не считаем');
+  // роли на героях: мало данных — роль не называем; согласованность задаёт доверие
+  const g = (hero, role) => ({ hero, role, feat: feat({}) });
+  const list = [...Array(3).fill(0).map(() => g(1, 'carry')), ...Array(12).fill(0).map((_, i) => g(2, i < 10 ? 'carry' : 'flex')), ...Array(8).fill(0).map((_, i) => g(3, ['carry', 'flex', 'initiator', 'support'][i % 4]))];
+  const hr = Object.fromEntries(Rl.heroRoles(list).map((x) => [x.hero, x]));
+  assert.strictEqual(hr[1].role, null);
+  assert.strictEqual(hr[1].confidence, 'мало данных');
+  assert.strictEqual(hr[2].role, 'carry');
+  assert.strictEqual(hr[2].confidence, 'высокое');
+  assert.ok(/^низкое/.test(hr[3].confidence), 'роль меняется — доверие низкое');
+});
+
+test('roles: errors text says the role was chosen automatically and why; role norms are used', () => {
+  const L = require('../src/core/leaks');
+  const { playerFeatures: pf } = require('../src/core/features');
+  const step = 5;
+  const mkPath = (fn) => Array.from({ length: 400 }, (_, i) => fn(i * step));
+  const players = [];
+  for (let i = 0; i < 12; i++) {
+    const team = i < 6 ? 0 : 1;
+    players.push({ account_id: 1 + i, hero_id: 20 + i, team, slot: i, lane: 1, won: team === 1, k: 5, d: 0, a: 5, nw: 20000, items: [], deaths: [], deaths_t: [], pu: [],
+      stats: [{ t: 600, nw: 5000, d: 0, g_lost: 0, pdmg: 3000, pdmgT: 3000, heal: 100, k: 0, a: 0 }, { t: 1800, nw: 18000, d: 0, g_lost: 0, pdmg: i === 0 ? 60000 : 20000, pdmgT: 20000, heal: 1000, g_lane: 6000, k: 5, a: 5 }] });
+  }
+  const me = players[0];
+  me.d = 4;
+  me.deaths = [[1100, 0, 0, 7, 100, 0], [1300, 0, 0, 7, 100, 0], [1500, 0, 0, 7, 100, 0], [1700, 0, 0, 7, 100, 0]];
+  me.deaths_t = [1100, 1300, 1500, 1700];
+  const far = {};
+  for (const p of players) far[p.slot] = mkPath(() => [p === me ? 0 : 6000, 0, 1, 0, 100]);
+  const m = { match_id: 9300, start_time: 1, duration_s: 1800, players, paths: { step, players: far }, badge: [0, 0], dmg: { t: [180, 600, 1800], d: {} } };
+  const role = L.gameRole(m, me, pf(me, m, null));
+  assert.strictEqual(role.role, 'carry', `большая доля урона — керри: ${JSON.stringify(role.why)}`);
+  const sd = L.gameLeaks({ m, me, f: pf(me, m, null), ref: null, tier: 6, heroName: (x) => `H${x}`, itemName: (x) => `I${x}` }).find((l) => l.key === 'solo_deaths');
+  assert.ok(sd, 'четыре смерти в одиночку — выше нормы роли');
+  assert.strictEqual(sd.role, 'carry');
+  assert.ok(/определена автоматически: керри/.test(sd.context) && /% урона команды/.test(sd.context), 'в тексте — роль, что она автоматическая, и признаки');
+  assert.ok(/в роли «керри/.test(sd.text), `норма роли в сравнении: ${sd.text}`);
+  const n = L.normFor(20, 6, 'carry');
+  assert.ok(n.scope === 'role-rank' && n.role === 'carry');
+  assert.strictEqual(L.normFor(20, 6, null).scope === 'role-rank', false);
 });
 
 test('versus: candidates and side by side', () => {

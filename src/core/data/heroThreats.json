@@ -1,0 +1,3075 @@
+{
+  "v": 1,
+  "build": 6861,
+  "patch": "Halloween 2026-10-30 + Minor Update 2026-11-04",
+  "verified": "2026-11-13",
+  "source": "deadlock.wiki (страницы героев, иконки совместимости) + Deadlock API assets build 6861",
+  "heroes": {
+    "1": {
+      "name": "Infernus",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 52,
+      "heal": [
+        "Napalm T2: вампиризм 20% по цели с напалмом",
+        "Concussive Combustion T2: +100% вампиризма взрыва"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Napalm",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "debuffResist"
+          ],
+          "note": "Замедление 28% на 4 с; T3: +17% получаемого урона и −33% лечения цели.",
+          "lasting": true
+        },
+        {
+          "slot": 2,
+          "name": "Flame Dash",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "dispel",
+            "slowingHex"
+          ],
+          "note": "Рывок с огненным следом 30 урона в секунду; 50% сопротивления замедлению; Debuff Resist след не сокращает.",
+          "lasting": false
+        },
+        {
+          "slot": 3,
+          "name": "Afterburn",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "debuffResist",
+            "platedArmor"
+          ],
+          "note": "Попадания оружием накапливают горение (14 урона в секунду); попадания продлевают его, поэтому сокращение длительности помогает мало.",
+          "lasting": true
+        },
+        {
+          "slot": 4,
+          "name": "Concussive Combustion",
+          "damage": "spirit",
+          "cc": [
+            "stun"
+          ],
+          "compat": [
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist"
+          ],
+          "note": "Взрыв через 3.25 с: урон 125, стан 1.25 с в радиусе 12 м; прервать нельзя.",
+          "lasting": false
+        }
+      ]
+    },
+    "2": {
+      "name": "Seven",
+      "dmg": [
+        "spirit",
+        "weapon"
+      ],
+      "weaponDps": 63,
+      "heal": [],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Lightning Ball",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable"
+          ],
+          "note": "Шар молнии: 75 DPS (x0.5 Spirit), радиус 4.25м, 5с. T1 +1 заряд; T2 замедление -28% только с T2 (+1с жизни); T3 +58.5 DPS и +1.75м. Слоу обновляется, Debuff Resist почти не работает.",
+          "lasting": true
+        },
+        {
+          "slot": 2,
+          "name": "Static Charge",
+          "damage": "spirit",
+          "cc": [
+            "stun"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "dispel",
+            "indomitable",
+            "unstoppable"
+          ],
+          "note": "Метка на героя (15м), через 3.5с стан 0.9с и 35 урона (x0.792) в радиусе 5м. T1 КД -20с; T2 +7м радиус, +5м дальность; T3 стан +1.1с и +160 урона.",
+          "lasting": false
+        },
+        {
+          "slot": 3,
+          "name": "Power Surge",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "platedArmor"
+          ],
+          "note": "10с: пули дают шок 10 (x0.14), до 4 прыжков по 10м, раз за очередь. T1 КД -18с; T2 +3м скорость, +8 урона; T3 +10с и -15% Spirit Resist цели. Контроля нет.",
+          "lasting": false
+        },
+        {
+          "slot": 4,
+          "name": "Storm Cloud",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [],
+          "note": "Канал 7с, радиус до 30м, 95 DPS (x0.6), нужна видимость. Fire: удар 75 (x0.5), 7м, через 0.25с отбрасывает врагов (один раз). T1 +55% Bullet Resist; T2 +7с, +10м; T3 +65 DPS.",
+          "lasting": false
+        }
+      ]
+    },
+    "3": {
+      "name": "Vindicta",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": null,
+      "heal": [],
+      "air": true,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Stake",
+          "damage": "spirit",
+          "cc": [
+            "tether",
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist"
+          ],
+          "note": "Привязь 9 м на 1.75 с, замедление 40%; снимается Dispel Magic.",
+          "lasting": true
+        },
+        {
+          "slot": 2,
+          "name": "Flight",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "slowingHex"
+          ],
+          "airConflict": "Plated Armor: источники расходятся",
+          "note": "Полёт 13 с, +10 Spirit-урона за пулю; Slowing Hex не даёт запустить, идущий полёт не прерывает; сбить: Knockdown, Phantom Strike.",
+          "lasting": false
+        },
+        {
+          "slot": 3,
+          "name": "Crow Familiar",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "dispel"
+          ],
+          "note": "Кровотечение от текущего здоровья, −6% сопротивления пулям и Spirit; T1 −35% входящего лечения; снимается Dispel Magic.",
+          "lasting": true
+        },
+        {
+          "slot": 4,
+          "name": "Assassinate",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [],
+          "note": "Снайперский выстрел: Spirit-урон 90 (×0.93) + до 90 (×2.3) по целям ниже 50% здоровья.",
+          "lasting": false
+        }
+      ],
+      "airSource": "deadlock.wiki/Knockdown, раздел Flying Heroes"
+    },
+    "4": {
+      "name": "Lady Geist",
+      "dmg": [
+        "spirit",
+        "weapon"
+      ],
+      "weaponDps": 44,
+      "heal": [
+        "Life Drain: лечит Geist на 100% нанесённого урона (24 DPS база, +13 DPS с T1, 2.5с; с T2 +2.5с); усиливается Healing Booster, режется анти-лечением",
+        "Soul Exchange: обмен здоровьем с врагом; Geist получает минимум 30% здоровья (при обмене проценты меняются местами, иначе Geist получает +макс. здоровья, равное 30% текущего здоровья врага)",
+        "Базовая регенерация здоровья 1/с"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Essence Bomb",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [],
+          "note": "Бомба: 90 урона (x1.35 Spirit), радиус 7м, КД 14с; цена 30% текущего HP самоуроном. T1 -5с КД, T2 +2м радиус и +50 урона, T3 токсичная лужа 30%/с на 6с. Контроля нет.",
+          "lasting": false
+        },
+        {
+          "slot": 2,
+          "name": "Life Drain",
+          "damage": "spirit",
+          "cc": [
+            "tether",
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "debuffResist"
+          ],
+          "note": "Привязь на 2.5с (24 DPS, x0.323 Spirit), дальность 18м, макс. 28м, лечит Geist на 100% урона; замедление цели -32% только пока она получает урон. T1 +13 DPS, T2 +2.5с, T3 +2 заряда.",
+          "lasting": true
+        },
+        {
+          "slot": 3,
+          "name": "Malice",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "debuffResist",
+            "unstoppable"
+          ],
+          "note": "3 кровавых осколка по 23 урона (x0.558 Spirit), стаки до 5: каждый +7% получаемого урона и замедление 12% (4с, затухает), дебафф 9с; цена 9% текущего HP. T1 -3с КД, T2 +25.2 урона и +4 осколка, T3 +8% амп.",
+          "lasting": true
+        },
+        {
+          "slot": 4,
+          "name": "Soul Exchange",
+          "damage": "none",
+          "cc": [
+            "silence",
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "indomitable",
+            "unstoppable"
+          ],
+          "note": "Обмен здоровьем с врагом (5.5м, КД 220с); враг не ниже 30% HP, Geist минимум 30%; чистый урон. Скрытое замедление 56% на 0.25с; 0.1с каст (Counterspell). T1 -50с КД, T2 молчание 25м на 3с (только с T2), T3 бафф на 8с.",
+          "lasting": true
+        }
+      ]
+    },
+    "6": {
+      "name": "Abrams",
+      "dmg": [
+        "weapon",
+        "melee"
+      ],
+      "primary": [
+        "weapon",
+        "melee"
+      ],
+      "weaponDps": 54,
+      "heal": [
+        "Siphon Life: вампиризм 70% (Spirit)",
+        "Infernal Resilience: 13% полученного урона регеном"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Siphon Life",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [],
+          "note": "Spirit 22 в секунду на 4 с в радиусе 8 м, лечит 70%; лечение снижается анти-лечением.",
+          "lasting": false
+        },
+        {
+          "slot": 2,
+          "name": "Shoulder Charge",
+          "damage": "spirit",
+          "cc": [
+            "pull",
+            "stun",
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist",
+            "slowingHex"
+          ],
+          "note": "Таран, стан 0.3 с у стены (T2 +0.8 с), урон 30.",
+          "lasting": true
+        },
+        {
+          "slot": 3,
+          "name": "Infernal Resilience",
+          "damage": "none",
+          "cc": [],
+          "compat": [],
+          "note": "Пассив: 13% полученного урона возвращается регенерацией; снижается анти-лечением.",
+          "lasting": false
+        },
+        {
+          "slot": 4,
+          "name": "Seismic Impact",
+          "damage": "spirit",
+          "cc": [
+            "stun",
+            "knockup"
+          ],
+          "compat": [
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist",
+            "slowingHex"
+          ],
+          "note": "Прыжок и удар: 100 урона, стан 1.6 с; T3 даёт ему Unstoppable 5 с; Dispel не отмечен.",
+          "lasting": false
+        }
+      ]
+    },
+    "7": {
+      "name": "Wraith",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 60,
+      "heal": [
+        "Card Trick: карта Heart лечит 45"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Card Trick",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "debuffResist",
+            "platedArmor"
+          ],
+          "note": "Карты от попаданий: Spirit 45, Heart лечит 45, Club замедляет 24%, Diamond −7% сопротивления пулям и Spirit, Spade +60% бонусного Spirit-урона.",
+          "lasting": true
+        },
+        {
+          "slot": 2,
+          "name": "Project Mind",
+          "damage": "none",
+          "cc": [],
+          "compat": [
+            "slowingHex"
+          ],
+          "note": "Телепорт 25 м, канал 1 с можно прервать; Slowing Hex не даёт его запустить.",
+          "lasting": false
+        },
+        {
+          "slot": 3,
+          "name": "Full Auto",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "platedArmor"
+          ],
+          "note": "+20% скорострельности и бонусный Spirit-урон за пулю 5 с; T3 бесконечные патроны.",
+          "lasting": false
+        },
+        {
+          "slot": 4,
+          "name": "Telekinesis",
+          "damage": "spirit",
+          "cc": [
+            "stun",
+            "slow"
+          ],
+          "compat": [
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist"
+          ],
+          "note": "Поднимает и швыряет, стан на канале 1.25 с, потом замедление 32% на 2.25 с, урон 100.",
+          "lasting": false
+        }
+      ]
+    },
+    "8": {
+      "name": "McGinnis",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 72.4,
+      "heal": [
+        "Medicinal Specter: лечит союзников в радиусе 6м на 25 HP/с (x0.3 дух) 6.5с, КД 50с; не стакается; усиливается Healing Booster, режется снижением лечения; T1 +1.5с, T3 +2% макс. HP/с и +3м"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Mini Turret",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [],
+          "lasting": false,
+          "note": "Турель: 24 урона духа/с (x0.42), 100 HP, жизнь 35с, дальность 30м, КД 18с (заряд 3с). 65% урона по крипам, 30% по объектам. T1 +10 DPS и +10м; T2 +2 заряда; T3 +25% скорострельности. Контроля нет."
+        },
+        {
+          "slot": 2,
+          "name": "Medicinal Specter",
+          "damage": "none",
+          "cc": [],
+          "compat": [],
+          "lasting": false,
+          "note": "Дух лечит союзников 25 HP/с в радиусе 6м, 6.5с, КД 50с; не стакается, эффект держится 1с после выхода. T1 +1.5с; T2 -20с КД, +100% восст. стамины; T3 +2% макс. HP/с, +3м, +40% сопр. духу."
+        },
+        {
+          "slot": 3,
+          "name": "Spectral Wall",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Стена замедляет врагов на 16% на 2.5с; при подрыве 60 урона духа (x0.731); КД 50с; ломается ближним боем. T1 +20% урона McGinnis по задетым 7с; T2 -20с КД; T3 +24% замедления и 2 турели на 8с. Стан на странице 0с."
+        },
+        {
+          "slot": 4,
+          "name": "Heavy Barrage",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Ракеты: 21 урона духа x6/с, 8с, радиус 4.5м, мин. дальность 8.5м, КД 200с; McGinnis замедлена ~38%. Замедление врагов 24% на 1с только с T1; T2 -45с КД, +6с; T3 +2м и +15 урона/ракету."
+        }
+      ]
+    },
+    "10": {
+      "name": "Paradox",
+      "dmg": [
+        "spirit"
+      ],
+      "weaponDps": 51,
+      "heal": [],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Pulse Grenade",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "debuffResist"
+          ],
+          "note": "Импульсы Spirit 35, замедление 20%; стакающийся бонус урона по жертве 4% за стак (Unstoppable убирает замедление, но не бонус).",
+          "lasting": true
+        },
+        {
+          "slot": 2,
+          "name": "Time Wall",
+          "damage": "none",
+          "cc": [
+            "slow",
+            "silence"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist"
+          ],
+          "note": "Стена замедляет врагов на 64% и снаряды; молчание 2.3 с только с T2 — Reactive Barrier и Indomitable срабатывают только после T2.",
+          "lasting": true
+        },
+        {
+          "slot": 3,
+          "name": "Kinetic Carbine",
+          "damage": "spirit",
+          "cc": [
+            "freeze"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "debuffResist"
+          ],
+          "note": "Заряженный выстрел: Spirit-урон от оружия до 76.5, остановка времени 0.25–0.4 с; Plated Armor не влияет.",
+          "lasting": true
+        },
+        {
+          "slot": 4,
+          "name": "Paradoxical Swap",
+          "damage": "spirit",
+          "cc": [
+            "pull"
+          ],
+          "compat": [
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier"
+          ],
+          "note": "Обмен местами через ~1.25 с, урон 150, не прервать; Indomitable очищает эффект.",
+          "lasting": false
+        }
+      ]
+    },
+    "11": {
+      "name": "Dynamo",
+      "dmg": [
+        "spirit",
+        "weapon"
+      ],
+      "weaponDps": 48,
+      "heal": [
+        "Rejuvenating Aurora: лечит себя и союзников в 8 м по 30 в секунду (x0.4 Spirit) 5 с, также союзных миньонов; T3 дополнительно +2.5% макс. здоровья в секунду"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Kinetic Pulse",
+          "damage": "spirit",
+          "cc": [
+            "knockup",
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Волна по земле 16 м шириной 5.5 м: 115 урона (x1.55), подброс 1 с, кд 26 с. Только T2: -15% сопр. пулям и -24% скорости на 4 с. T1 +1 заряд; T3 +135 урона и +20 м."
+        },
+        {
+          "slot": 2,
+          "name": "Quantum Entanglement",
+          "damage": "none",
+          "cc": [],
+          "compat": [
+            "slowingHex"
+          ],
+          "lasting": false,
+          "note": "Телепорт на 10 м за 1.4 с с неуязвимостью к таргету, возвращает стамину, кд 20 с. Альт-каст берёт союзников (13 м). T3 снижает недавние дебаффы на 50% и даёт заряд. Полёта нет."
+        },
+        {
+          "slot": 3,
+          "name": "Rejuvenating Aurora",
+          "damage": "none",
+          "cc": [],
+          "compat": [],
+          "lasting": false,
+          "note": "Канал 5 с: лечение 30/с (x0.4) себе и союзникам в 8 м, рывки и ближний бой не прерывают. T1 +4 м/с; T2 -20 с кд и +1 с; T3 полное движение и +2.5% макс. HP/с. Кд 48 с."
+        },
+        {
+          "slot": 4,
+          "name": "Singularity",
+          "damage": "spirit",
+          "cc": [
+            "stun",
+            "pull"
+          ],
+          "compat": [
+            "reactiveBarrier",
+            "unstoppable"
+          ],
+          "lasting": false,
+          "note": "Канал 2.75 с, радиус 7 м: 75 DPS (x0.28) духом, стан и непрерывное притягивание. Indomitable не срабатывает. T1 +2 м; T2 +0.75 с; T3 +6% макс. HP как урон. Кд 250 с."
+        }
+      ]
+    },
+    "12": {
+      "name": "Kelvin",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 70.9,
+      "heal": [
+        "Frost Grenade: лечит союзников на 60 (скейл 0.8), T1 +30",
+        "Frozen Shelter: союзникам в куполе регенерация 90 (скейл 0.2), T3 +75",
+        "Базовая регенерация здоровья 1"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Frost Grenade",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "unstoppable"
+          ],
+          "note": "2 заряда (7с), КД 30с, радиус 6.5м: 60 урона (скейл 0.6), лечит союзников на 60; врагам замедление 32% на 4с. T1 +30 урона/лечения; T2 -10с КД, замораживает реген стамины; T3 +2м.",
+          "lasting": true
+        },
+        {
+          "slot": 2,
+          "name": "Ice Path",
+          "damage": "none",
+          "cc": [],
+          "compat": [
+            "slowingHex"
+          ],
+          "note": "8с, КД 50с: ледяная дорожка (держится 18с) даёт Kelvin и союзникам (5м) +2м скорость/спринт; у Kelvin 60% сопротивления замедлению. T1 +35% сопр. пулям; T2 -25с КД; T3 +35% духа, +20 духа. Контроля нет.",
+          "lasting": false
+        },
+        {
+          "slot": 3,
+          "name": "Arctic Beam",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable"
+          ],
+          "note": "Луч 5с, 25м, КД 28с: 45 урона/с (скейл 0.38); за 2с замедление до -16% скорости и -20% скорострельности. T1 -20% доп. замедления; T2 +20 DPS; T3 -13с КД, 2 доп. луча. Kelvin замедлен при касте.",
+          "lasting": true
+        },
+        {
+          "slot": 4,
+          "name": "Frozen Shelter",
+          "damage": "none",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "unstoppable"
+          ],
+          "note": "Купол (8м, радиус 10м, 5с, КД 190с): союзникам реген 90, врагам замедление 28%. T1 -30с КД; T2 +1.5с, -20% скорострельности врагов (только с T2); T3 снимает дебаффы (не ульт), +75 регена.",
+          "lasting": true
+        }
+      ]
+    },
+    "13": {
+      "name": "Haze",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 50,
+      "heal": [
+        "Smoke Bomb T3: +50% вампиризма пуль на 5 с"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Sleep Dagger",
+          "damage": "spirit",
+          "cc": [
+            "sleep",
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist"
+          ],
+          "note": "Сон 2.75 с (T2 +1 с), урон 65; ремувер нельзя применять во сне; T1 −10% сопротивления пулям на 6 с после пробуждения, T3 замедление при пробуждении.",
+          "lasting": true
+        },
+        {
+          "slot": 2,
+          "name": "Smoke Bomb",
+          "damage": "none",
+          "cc": [],
+          "compat": [],
+          "note": "Невидимость 8 с, радиус обнаружения 18 м; T3 снимает не-ультовые дебаффы.",
+          "lasting": false
+        },
+        {
+          "slot": 3,
+          "name": "Fixation",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "debuffResist",
+            "platedArmor"
+          ],
+          "note": "Стаки урона по цели от попаданий (хедшот 3 стака), T1: 40 Spirit-урона и замедление 12% каждые 20 стаков; Dispel снимает стаки; Return Fire возвращает урон Fixation.",
+          "lasting": true
+        },
+        {
+          "slot": 4,
+          "name": "Bullet Dance",
+          "damage": "weapon",
+          "cc": [],
+          "compat": [],
+          "note": "165 с, 3.5 с автострельбы по ближним врагам, 30% уклонения от пуль (T3 40%); не подвержена разоружению.",
+          "lasting": false
+        }
+      ]
+    },
+    "14": {
+      "name": "Holliday",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 41.7,
+      "heal": [],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Powder Keg",
+          "damage": "spirit",
+          "cc": [
+            "knockup"
+          ],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "unstoppable"
+          ],
+          "note": "Бочка взрывается: удар 40 + горение 13.3/с 3с, подкидывает (knockup 0.4с), радиус 6м, 2 заряда. T1 -10с КД, T2 +1 заряд, T3 +40 урона/+13.3 горения. Горение складывается.",
+          "lasting": false
+        },
+        {
+          "slot": 2,
+          "name": "Bounce Pad",
+          "damage": "spirit",
+          "cc": [
+            "stun"
+          ],
+          "compat": [
+            "slowingHex"
+          ],
+          "note": "Подбрасывает любого героя; при приземлении удар 60 в радиусе 9м, 22с, воздушный контроль 100%. Стан +0.7с только с T3 (врагам). T2: союзникам +4 м/с на 4с. Отключается Slowing Hex.",
+          "lasting": false
+        },
+        {
+          "slot": 3,
+          "name": "Crackshot",
+          "damage": "weapon",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "platedArmor",
+            "unstoppable"
+          ],
+          "note": "Хедшот: бонус 55 урона оружия (скейл от Spirit), замедление -40% затухающее 2с, КД 20с (вдвое меньше от NPC). T1 -20% замедл., T2 +49.5 урона и -6% пулестойкости 5с, T3 -6с КД.",
+          "lasting": true
+        },
+        {
+          "slot": 4,
+          "name": "Spirit Lasso",
+          "damage": "spirit",
+          "cc": [
+            "pull",
+            "stun"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "indomitable",
+            "unstoppable"
+          ],
+          "note": "Лассо 20м: 80 урона, притягивает цель, стан 2.25с, КД 130с. Bounce Pad продлевает на 1.25с. T1 +80 урона, T2 +0.75с, T3 -40с КД. Warp Stone перед концом отбрасывает врага за Holliday.",
+          "lasting": false
+        }
+      ]
+    },
+    "15": {
+      "name": "Bebop",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 59,
+      "heal": [
+        "Exploding Uppercut T3: 18% недостающего здоровья",
+        "Hyper Beam T3: вампиризм 65% по героям",
+        "ближний бой — Melee Lifesteal"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Exploding Uppercut",
+          "damage": "spirit",
+          "cc": [
+            "knockup"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "debuffResist"
+          ],
+          "note": "Подбрасывает врагов; при приземлении Spirit 75 и −14% скорострельности на 5 с; T2 +30% урона оружия на 9 с.",
+          "lasting": false
+        },
+        {
+          "slot": 2,
+          "name": "Sticky Bomb",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "dispel"
+          ],
+          "note": "Взрыв через 3.5 с, 85 Spirit-урона; Dispel снимает бомбу, но она всё равно взрывается; постоянные стаки урона за попадания и убийства.",
+          "lasting": true
+        },
+        {
+          "slot": 3,
+          "name": "Grapple Arm",
+          "damage": "melee",
+          "cc": [
+            "pull",
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist"
+          ],
+          "note": "Подтягивает первого задетого, замедление 72% на 0.5 с; T1 +20% урона оружия по жертве на 6 с.",
+          "lasting": true
+        },
+        {
+          "slot": 4,
+          "name": "Hyper Beam",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "unstoppable",
+            "debuffResist"
+          ],
+          "note": "Луч до 11 с, 160 Spirit-урона в секунду, замедление 20%; во время луча зависает в воздухе; T3 вампиризм 65%; Debuff Resist почти не работает (замедление обновляется).",
+          "air": true,
+          "lasting": true
+        }
+      ]
+    },
+    "16": {
+      "name": "Calico",
+      "dmg": [
+        "weapon",
+        "spirit",
+        "melee"
+      ],
+      "weaponDps": 78.9,
+      "heal": [
+        "Leaping Slash: лечение 40 (+25 с T1) при попадании по герою (x1.4 Spirit)",
+        "Return to Shadows T3: лечение 450 по завершении",
+        "Ava T2: +15 регенерации здоровья"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Gloom Bombs",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "debuffResist",
+            "dispel"
+          ],
+          "note": "4 бомбы по 45 (x0.644), радиус 3м, КД 14с; повторные попадания 65% урона. T1 КД -3с; T2 -6% Melee Resist на 6с за бомбу (Debuff Resist/Dispel действуют только на это); T3 +3 бомбы. Контроля нет.",
+          "lasting": false
+        },
+        {
+          "slot": 2,
+          "name": "Leaping Slash",
+          "damage": "melee",
+          "cc": [],
+          "compat": [
+            "slowingHex"
+          ],
+          "note": "Рывок (9м) и круговой удар: 60.4 (x0.8 Melee), КД 13с; при попадании по герою лечение 40. T1 +25 лечения; T2 +200 душ за убийство в течение 3с; T3 +90 урона, возврат 50% КД. Slowing Hex отключает.",
+          "lasting": false
+        },
+        {
+          "slot": 3,
+          "name": "Ava",
+          "damage": "none",
+          "cc": [],
+          "compat": [
+            "slowingHex"
+          ],
+          "note": "Облик кошки Ава на 15с: скорость растёт с 30% до 65% за 4с, скрыта на миникарте; урон от героя сбрасывает бонус (КД 6с). T1 +15с; T2 +15 регена, +40% макс. скорости; T3 амп урона до 18%. Slowing Hex отключает.",
+          "lasting": false
+        },
+        {
+          "slot": 4,
+          "name": "Return to Shadows",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "slowingHex"
+          ],
+          "note": "Тень 3с: неуязвима, +20% скорости, урон 150 (x0.609) в 7.5м при входе и возвращении, КД 115с. T1 КД -20с; T2 +75 урона, +20% скорости; T3 лечение 450 и возврат КД остальных. Slowing Hex отключает.",
+          "lasting": false
+        }
+      ]
+    },
+    "17": {
+      "name": "Grey Talon",
+      "dmg": [
+        "spirit",
+        "weapon"
+      ],
+      "weaponDps": 39.2,
+      "heal": [
+        "Rain of Arrows T3: пока в воздухе +30% вампиризма пуль и +30% вампиризма духа (усиливается Healing Booster)"
+      ],
+      "air": true,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Charged Shot",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [],
+          "note": "Заряженная пробивающая стрела: 80 урона, 1 заряд, КД 17с (перезаряд 4с). T1 +1 заряд, T2 +54 урона и -2с задержки, T3 улучшенный скейл и один рикошет. Контроля не накладывает.",
+          "lasting": false
+        },
+        {
+          "slot": 2,
+          "name": "Rain of Arrows",
+          "damage": "weapon",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "unstoppable",
+            "slowingHex"
+          ],
+          "note": "Прыжок и планирование 4с (полёт): мультивыстрел x5, +3 урона оружия. Замедление 24% на 1.5с только с T1. T2 -12с КД, T3 +30% вампиризм пуль/духа и +30% уклонение в воздухе. КД 25с.",
+          "lasting": true
+        },
+        {
+          "slot": 3,
+          "name": "Spirit Snare",
+          "damage": "spirit",
+          "cc": [
+            "slow",
+            "curse",
+            "silence",
+            "disarm"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "dispel",
+            "indomitable",
+            "unstoppable"
+          ],
+          "note": "Ловушка 6.5м (взвод 2с, живёт 22с): 25 урона, проклятие 2.25с, замедление 24%, прерывает, молчание, разоружение. T1 -20с КД, T2 -15% пулестойкости 10с, T3 +1с и +1.5м. КД 34с.",
+          "lasting": true
+        },
+        {
+          "slot": 4,
+          "name": "Guided Owl",
+          "damage": "spirit",
+          "cc": [
+            "stun"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "indomitable",
+            "unstoppable"
+          ],
+          "note": "Управляемая сова (каст 1.5с, канал до 20с): 230 урона, радиус 12м, стан 0.75с, +8 Spirit за убийство. T1 +85 урона, T2 -40с КД, T3 добивает врагов ниже 22% HP. КД 125с.",
+          "lasting": false
+        }
+      ],
+      "airSource": "deadlock.wiki/Knockdown, раздел Flying Heroes"
+    },
+    "18": {
+      "name": "Mo & Krill",
+      "dmg": [
+        "spirit",
+        "weapon"
+      ],
+      "weaponDps": 59.7,
+      "heal": [
+        "Scorn: лечение 1.3x от нанесённого урона по героям и 0.35x от урона по остальным целям",
+        "Combo: вампиризм 0% на базе, T1 даёт +100% вампиризма",
+        "Combo: убийство цели во время или в течение 3 с после канала даёт +50 макс. здоровья навсегда (масштабируется x2 с бунами)"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Scorn",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "debuffResist",
+            "dispel"
+          ],
+          "lasting": true,
+          "note": "45 урона (x0.675 Spirit) в радиусе 9 м, кд 13 с, лечит себя. Можно кастовать в любом занятом состоянии. Только T3: дебафф +15% урона Mo&Krill по цели, стакается, 16 с."
+        },
+        {
+          "slot": 2,
+          "name": "Burrow",
+          "damage": "spirit",
+          "cc": [
+            "slow",
+            "knockup"
+          ],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Подземный ход 5 с: скорость x1.34, 60% сопр. пулям, 30% сопр. духу. При выходе 65 DPS духом за 1.5 с в радиусе 5.5 м, замедление и подброс 1 с. Кд 40 с. Slowing Hex не отключает."
+        },
+        {
+          "slot": 3,
+          "name": "Sand Blast",
+          "damage": "spirit",
+          "cc": [
+            "disarm",
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Песок на 25 м: разоружение 2.5 с и 35 урона. Замедление -28% и дальность рывков -28% только с T2. T1 +45 урона и +5 м; T3 +1.5 с и -25 с кд (кд 40 с)."
+        },
+        {
+          "slot": 4,
+          "name": "Combo",
+          "damage": "spirit",
+          "cc": [
+            "stun"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "indomitable",
+            "unstoppable"
+          ],
+          "lasting": false,
+          "note": "Удержание цели в 4 м, стан на 2.4 с, 35 DPS (x0.54), кд 150 с. Предметы можно использовать во время канала. +50 макс. HP за убийство. T1 +100% вампиризма, T2 -30 с кд и +50% сопр. пулям."
+        }
+      ]
+    },
+    "19": {
+      "name": "Shiv",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 52,
+      "heal": [
+        "Bloodletting: очищает 30% отложенного урона (лечение)"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Serrated Knives",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "debuffResist"
+          ],
+          "note": "Кровотечение по ножам, при полной ярости замедление 28%; урон ярости 4% текущего здоровья.",
+          "lasting": true
+        },
+        {
+          "slot": 2,
+          "name": "Slice and Dice",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "dispel",
+            "debuffResist",
+            "slowingHex"
+          ],
+          "note": "Рывок 12 м, Spirit 75, −6% сопротивления Spirit за стак на 14 с.",
+          "lasting": true
+        },
+        {
+          "slot": 3,
+          "name": "Bloodletting",
+          "damage": "none",
+          "cc": [],
+          "compat": [],
+          "note": "Откладывает 75% входящего урона на 6 с; барьеры не откладываются.",
+          "lasting": false
+        },
+        {
+          "slot": 4,
+          "name": "Killing Blow",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "slowingHex"
+          ],
+          "note": "Рывок на героя, урон 200, казнь ниже 18% здоровья; Slowing Hex не даёт запустить.",
+          "lasting": false
+        }
+      ],
+      "healWeight": 0.4,
+      "healWeightNote": "Лечение Shiv — только очистка части отложенного урона Bloodletting (30%); вампиризма в базе нет, в сборке 20% игр"
+    },
+    "20": {
+      "name": "Ivy",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 60,
+      "heal": [
+        "Kudzu Connection: вампиризм пуль 15% и 35% лечения союзнику",
+        "Stone Form: 6% макс. здоровья"
+      ],
+      "air": true,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Entangling Thorns",
+          "damage": "spirit",
+          "cc": [
+            "slow",
+            "immobilize"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist"
+          ],
+          "note": "Шипы 40 Spirit в секунду, замедление 28% постоянно; иммобилайз только с T3 — Reactive Barrier и Indomitable срабатывают только на T3.",
+          "lasting": true
+        },
+        {
+          "slot": 2,
+          "name": "Kudzu Connection",
+          "damage": "none",
+          "cc": [],
+          "compat": [],
+          "note": "Связь с союзником 12 с: скорострельность, вампиризм 15%, реплика лечения 35%; сбрасывается Cursed Relic и Nullification Burst.",
+          "lasting": false
+        },
+        {
+          "slot": 3,
+          "name": "Stone Form",
+          "damage": "spirit",
+          "cc": [
+            "stun"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist"
+          ],
+          "note": "Каменная форма 3 с, приземление: Spirit 75 и стан 0.75 с; затягивает летающих врагов вниз.",
+          "lasting": false
+        },
+        {
+          "slot": 4,
+          "name": "Air Drop",
+          "damage": "spirit",
+          "cc": [
+            "slow",
+            "silence"
+          ],
+          "compat": [
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist",
+            "slowingHex"
+          ],
+          "note": "Полёт с союзником 21 с, взрыв 115; замедление с T2, молчание с T3 (Reactive Barrier и Indomitable — только с T3).",
+          "air": true,
+          "lasting": true
+        }
+      ]
+    },
+    "25": {
+      "name": "Warden",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 66.1,
+      "heal": [
+        "Last Stand: лечение 75% от урона по героям и 10% от урона по не-героям (пульсы каждые 0.5с, 70 DPS, радиус 12м, 6с)"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Alchemical Flask",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "unstoppable"
+          ],
+          "note": "Колба 60 (x0.63), радиус 5.5м: -16% скорости на 3с, -30% урона оружия на 7с. T1 враги теряют 1 стамину; T2 +35 урона, -25% урона оружия; T3 КД -7с, +2м, -30% скорострельности.",
+          "lasting": true
+        },
+        {
+          "slot": 2,
+          "name": "Willpower",
+          "damage": "none",
+          "cc": [],
+          "compat": [],
+          "note": "Барьер 125 (x0.8) и +20% скорости на 5с. T1 +20% скорости; T2 КД -24с, +2с; T3 +30% Debuff Resistance и лучше масштаб барьера.",
+          "lasting": false
+        },
+        {
+          "slot": 3,
+          "name": "Binding Word",
+          "damage": "spirit",
+          "cc": [
+            "immobilize",
+            "silence"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "dispel",
+            "indomitable",
+            "unstoppable"
+          ],
+          "note": "Проклятие героя (15м): если за 2.8с не уйдёт на 20м, 110 урона (x2.44) и обездвиживание 1.75с. T1 +20% пулевого урона по пойманным; T2 +0.75с; T3 КД -14с и молчание (только с T3).",
+          "lasting": true
+        },
+        {
+          "slot": 4,
+          "name": "Last Stand",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [],
+          "note": "Каст 2с (50% Bullet/Spirit Resist, иммунитет к страху), затем 6с пульсы 70 DPS (x1.3), 12м, лечение 75%/10%. T1 +4м; T2 +50 DPS, КД -40с; T3 +4с, себе Unstoppable и +30% резисты (только при касте).",
+          "lasting": false
+        }
+      ]
+    },
+    "27": {
+      "name": "Yamato",
+      "dmg": [
+        "weapon",
+        "melee",
+        "spirit"
+      ],
+      "weaponDps": 63.2,
+      "heal": [
+        "Crimson Slash: лечение 55 (x1.04 Spirit) при попадании по герою; T2 +6% макс. здоровья; несколько героев не увеличивают лечение",
+        "Shadow Transformation: лечение 15% макс. здоровья за убийство героя (и продление длительности на 2 с)"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Power Slash",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "unstoppable"
+          ],
+          "note": "Канал до 1.4 с, пронзающий удар 22 м: 145 урона (x1.96 Spirit) при полном заряде (30%/50%/100%). Замедление цели только с T1 (+32% на 3 с); T2: -4с КД; T3: +8 м, +150 урона.",
+          "lasting": true
+        },
+        {
+          "slot": 2,
+          "name": "Flying Slash",
+          "damage": "melee",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "unstoppable",
+            "slowingHex"
+          ],
+          "note": "Крюк (23 м) подтягивает Ямато к врагу: 66 урона ближнего боя (x1.2), замедление 40% на 2.5 с. T1: -18с КД; T2: +35 Spirit на 6 с; T3: каст по союзникам, +8 м, 2-й заряд.",
+          "lasting": true
+        },
+        {
+          "slot": 3,
+          "name": "Crimson Slash",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "debuffResist",
+            "dispel"
+          ],
+          "note": "Взмах (13 м), задержка 0.3 с: 55 урона (x0.37 Spirit), -30% скорострельности врагов на 4 с, лечит при попадании по герою. T1: +30% урона ближнего боя на 4 с; T2: +6% макс. HP лечения; T3: -10с КД.",
+          "lasting": false
+        },
+        {
+          "slot": 4,
+          "name": "Shadow Transformation",
+          "damage": "none",
+          "cc": [],
+          "compat": [],
+          "note": "Канал 1.5 с (неуязвима), затем 5 с: способности обновлены и на 60% быстрее, иммунитет к негативным эффектам, +30% сопр. пулям и духу, лечение 15% HP за убийство. T1: +7 урона оружия; T2: +4 м скорость, -30с КД; T3: +3 с.",
+          "lasting": false
+        }
+      ]
+    },
+    "31": {
+      "name": "Lash",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 49,
+      "heal": [
+        "Flog: 40% от урона по героям (T3 +15%)"
+      ],
+      "air": true,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Ground Strike",
+          "damage": "spirit",
+          "cc": [
+            "knockup",
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist"
+          ],
+          "note": "T2: подброс и замедление 40% на 3 с; в воздухе — пикирование, может стянуть летящего врага вниз.",
+          "lasting": true
+        },
+        {
+          "slot": 2,
+          "name": "Grapple",
+          "damage": "none",
+          "cc": [],
+          "compat": [
+            "slowingHex"
+          ],
+          "note": "Рывок самого Lash к цели; контроля нет.",
+          "lasting": false
+        },
+        {
+          "slot": 3,
+          "name": "Flog",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "debuffResist"
+          ],
+          "note": "Урон 65 и лечение 40% от нанесённого по героям; T1 замедление 28%, T2 −30% скорострельности.",
+          "lasting": true
+        },
+        {
+          "slot": 4,
+          "name": "Death Slam",
+          "damage": "spirit",
+          "cc": [
+            "stun",
+            "knockup",
+            "slow"
+          ],
+          "compat": [
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist",
+            "counterspell"
+          ],
+          "note": "Канал 2.3 с, подбрасывает, оглушает и бросает; урон 105; не берёт цели за Cosmic Veil.",
+          "lasting": false
+        }
+      ],
+      "airSource": "deadlock.wiki/Knockdown, раздел Flying Heroes"
+    },
+    "35": {
+      "name": "Viscous",
+      "dmg": [
+        "spirit",
+        "weapon",
+        "melee"
+      ],
+      "weaponDps": 49.2,
+      "heal": [
+        "The Cube: цель (союзник или сам) получает регенерацию 40 HP/с (x0.3 Spirit) на 3 с под защитой от урона; T2 +25 HP/с и +1 с",
+        "Puddle Punch: вампиризм по врагам 0% базово, T2 +60% лайфстила (лечение от урона способности)"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Splatter",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Шар слизи, радиус 5 м: 55 урона духа, 2 отскока (повторные попадания слабее), лужи на 10 с замедляют врагов на 28%; союзники скользят быстрее. T1 +45 урона, T2 -14 с КД, T3 +1 отскок."
+        },
+        {
+          "slot": 2,
+          "name": "The Cube",
+          "damage": "none",
+          "cc": [],
+          "compat": [],
+          "lasting": false,
+          "note": "Куб на 3 с (20 м, можно на себя): цель защищена от урона, не может действовать, регенерация 40 HP/с; потом ускорение. T2 +25 регена. T3: снимает все дебаффы кроме ультов, -20 с КД. Врагам контроль не накладывается."
+        },
+        {
+          "slot": 3,
+          "name": "Puddle Punch",
+          "damage": "melee",
+          "cc": [
+            "knockup",
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Кулак, радиус 4 м, 1 заряд: подбрасывает, 57.8 урона ближнего боя и замедление -24% на 3 с (можно парировать). T1 +1 заряд, T2 +60% лайфстила, T3 -14 с КД и тяжёлый удар. Даёт союзникам контроль в воздухе."
+        },
+        {
+          "slot": 4,
+          "name": "Goo Ball",
+          "damage": "spirit",
+          "cc": [
+            "stun"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "indomitable",
+            "unstoppable"
+          ],
+          "lasting": false,
+          "note": "Шар 11 с: при ударе 110 урона духа и оглушение 0.5 с, +35% сопр. пулям и духу, отскоки от стен, двойной прыжок, скорость 11.3-20.1 м/с; нельзя стрелять. T2 +70 урона. T3 +7 с и стан +0.3 с."
+        }
+      ]
+    },
+    "50": {
+      "name": "Pocket",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 57.1,
+      "heal": [],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Barrage",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "unstoppable"
+          ],
+          "note": "Канал 2с, 4 снаряда по 32 урона в радиусе 4.5м, замедление -24% на 1.5с; попадания дают Pocket усиление урона 6%/стак 15с. При касте в воздухе Pocket парит (левитация). T1 +16 урона, T2 -16с КД.",
+          "lasting": true
+        },
+        {
+          "slot": 2,
+          "name": "Flying Cloak",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "slowingHex"
+          ],
+          "note": "Плащ летит 3.8с, 60 урона по пути, повторное нажатие телепортирует к нему. T1 +70 урона, T2 +5 урона оружия на 6с, T3 +1.6с и -10с КД. Slowing Hex отключает только телепорт (частично).",
+          "lasting": false
+        },
+        {
+          "slot": 3,
+          "name": "Enchanter's Satchel",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "unstoppable"
+          ],
+          "note": "Прячется в чемодан 1.5с, затем 65 урона в радиусе 12м; Pocket разоружён. T1 -5с КД, T2 +90 урона, T3 +1.5с, +4м и -32% скорости и скорострельности врагов на 4с (замедление только с T3).",
+          "lasting": true
+        },
+        {
+          "slot": 4,
+          "name": "Affliction",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "debuffResist"
+          ],
+          "note": "Урон со временем в радиусе 9м: 32/с 10с, нелетальный, 50% по объектам. T1 -35с КД, T2 +3с и +4м, T3 запрещает любое лечение и +13 DPS. Прямого контроля нет. КД 170с.",
+          "lasting": false
+        }
+      ]
+    },
+    "52": {
+      "name": "Mirage",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 40.3,
+      "heal": [
+        "Fire Scarabs: вампиризм 8 HP/с (x0.1 дух) 5с с цели, T1 +7/с; не усиливается Healing Amp, режется снижением лечения, триггерит Healing Tempo"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Fire Scarabs",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "debuffResist",
+            "dispel"
+          ],
+          "lasting": true,
+          "note": "Жуки на цели 5с: крадут 8 HP/с (x0.1 дух) и -20% урона цели; повтор лишь обновляет. 2 заряда, КД 35с. T1 +7/с; T2 +1 заряд, +2с; T3 штраф урона -15% (меньше) и больше духа. Контроля нет."
+        },
+        {
+          "slot": 2,
+          "name": "Dust Devil",
+          "damage": "spirit",
+          "cc": [
+            "knockup",
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "dispel",
+            "indomitable",
+            "unstoppable",
+            "slowingHex"
+          ],
+          "lasting": true,
+          "note": "Вихрь: 65 урона духа, подброс 0.3с, замедление 24% на 3с, радиус 4м, КД 36с; Mirage неуязвим при касте, затем 30% уклонения от пуль 4с. T1 +60 урона; T2 -12с КД, +30% уклонения; T3 перекаст в течение 6с."
+        },
+        {
+          "slot": 3,
+          "name": "Djinn's Mark",
+          "damage": "spirit",
+          "cc": [
+            "slow",
+            "stun"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "dispel",
+            "indomitable",
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Пассив: выстрелы метят цель (до 4 меток, 5с, КД 2.75с), урон 11 удваивается за метку, цель раскрыта 6с. T1 замедление 48% на 0.8с; T2 +20 урона; T3 +1 метка и стан 0.5с на макс. метках (только с T3)."
+        },
+        {
+          "slot": 4,
+          "name": "Traveler",
+          "damage": "none",
+          "cc": [],
+          "compat": [
+            "slowingHex"
+          ],
+          "lasting": false,
+          "note": "Телепорт по миникарте после 3с ожидания; прерывается уроном, станом, обездвиживанием, сном, Movement Silence. После телепорта барьер 400 на 12с. T1 +3м скорости, +20% скорострельности; T2 -65с КД; T3 без прерывания уроном."
+        }
+      ]
+    },
+    "58": {
+      "name": "Vyper",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 94,
+      "heal": [],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Screwjab Dagger",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Кинжал: 50 урона духа, замедление -28%; каждый следующий в ту же цель +25 урона и -12% скорости за стак (до 3 стаков, 10 с). T2: -8% сопротивления пулям (-6% за стак). T3: +2 макс. стака."
+        },
+        {
+          "slot": 2,
+          "name": "Lethal Venom",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "platedArmor"
+          ],
+          "lasting": true,
+          "note": "Яд на 10 м: через 3 с урон духа 20-140 (растёт с потерянным HP, максимум при 30% HP), игнорирует блок Petrify. T1 +31.5 макс. урона. T2: -40% входящему лечению, -12 с КД. T3: пули и ближний бой копят яд."
+        },
+        {
+          "slot": 3,
+          "name": "Slither",
+          "damage": "none",
+          "cc": [],
+          "compat": [],
+          "lasting": false,
+          "note": "Скольжение: +15% дистанции, подъём по склонам, быстрый поворот. T1 +20% дистанции, T2 +2 стамины, T3: барьер 180 на 4 с при скольжении (повтор через 8 с). Урона и контроля нет."
+        },
+        {
+          "slot": 4,
+          "name": "Petrifying Bola",
+          "damage": "spirit",
+          "cc": [
+            "stun",
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "indomitable",
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Болас, радиус 12 м: по области 50 урона духа и замедление 40% на 1.5 с; прямое попадание — Petrify 2.2 с (блок урона, нет действий) и 180 урона. T2: -20 с КД. T3: +1 с и Petrify всей области."
+        }
+      ]
+    },
+    "60": {
+      "name": "Sinclair",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 44.9,
+      "heal": [],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Vexing Bolt",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "dispel",
+            "debuffResist"
+          ],
+          "lasting": true,
+          "note": "Снаряд: урон растёт от 60 (x0.93) до 120 (x1.86) за 2 с; ассистент бьёт на 50%. Повторное нажатие наводит на цель. T1 -25% скорострельности на 5 с; T2 -13 с КД; T3 +126 макс. урона. 50% урона по объектам."
+        },
+        {
+          "slot": 2,
+          "name": "Spectral Assistant",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [],
+          "lasting": false,
+          "note": "Ассистент на 6 с стреляет вместе с оружием: 15 урона (x0.36); перезаряжает оружие; до 2 обменов позициями (Slowing Hex блокирует обмен). T2 +7 с и +5м; T3 +60% скорострельности, +12.6 урона."
+        },
+        {
+          "slot": 3,
+          "name": "Rabbit Hex",
+          "damage": "none",
+          "cc": [
+            "hex"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "indomitable",
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Область 6м, радиус каста 24м, задержка 0.9 с: враги становятся кроликами на 2 с (+36% скорости, действия почти недоступны), урон по ним +15% (x0.0558). T2 +1 с; T3 +7% амп. и +2м; T1 -10 с КД."
+        },
+        {
+          "slot": 4,
+          "name": "Audience Participation",
+          "damage": "none",
+          "cc": [],
+          "compat": [],
+          "lasting": false,
+          "note": "Копирует ультимейт врага на 9 с (дальность 20м, КД копии 60%, иначе 85 с); задержка 1 с. Копия получает апгрейды по тирам этой способности. Контроль и урон определяются копией, у самой способности их нет."
+        }
+      ]
+    },
+    "63": {
+      "name": "Mina",
+      "dmg": [
+        "spirit",
+        "weapon"
+      ],
+      "weaponDps": 29,
+      "heal": [
+        "Rake: лечение за каждую убитую цель, 25 (x0.3 Spirit); T2 +30, T3 усиливает скейлинг Spirit"
+      ],
+      "air": true,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Rake",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [],
+          "note": "Удар зонтом: 60 урона + 6% потерянного здоровья цели, добивает не-героев ниже 60 HP, лечит за убийство. Удержание alt-fire — парение до 4 с (полёт). T2: +30 лечения, -8с КД.",
+          "lasting": false
+        },
+        {
+          "slot": 2,
+          "name": "Sanguine Retreat",
+          "damage": "none",
+          "cc": [],
+          "compat": [
+            "slowingHex"
+          ],
+          "note": "Короткая неуязвимость к таргету, перелёт (9 м) в точку, перекаст в течение 4 с. T1: +25% скорострельности на 8 с и +8 пуль; T2: -10с КД; T3: +1 перекаст, +4 м. Отключается Slowing Hex.",
+          "lasting": false
+        },
+        {
+          "slot": 3,
+          "name": "Love Bites",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "platedArmor",
+            "debuffResist"
+          ],
+          "note": "Пассив: 4 (x0.09 Spirit) урона духа на пулю, накопление даёт укус 45 бонусного урона (КД 10 с на цель). Замедление 24% на 3 с только с T1; T3: -5с КД, +25% скорострельности на 5 с.",
+          "lasting": true
+        },
+        {
+          "slot": 4,
+          "name": "Nox Nostra",
+          "damage": "spirit",
+          "cc": [
+            "silence"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "indomitable",
+            "unstoppable"
+          ],
+          "note": "Рой летучих мышей (40 м): 30 мышей/с, 4.6 урона каждая, молчание 1.25 с. +2 мыши за каждый Love Bite по герою, всего 75. T1: +1.9 урона; T2: -45с КД; T3: +0.5% текущего HP. Можно кастовать Retreat.",
+          "lasting": true
+        }
+      ],
+      "airSource": "deadlock.wiki/Mina (парение до 4 с) и /Phantom_Strike (Mina продолжает лететь на канале)"
+    },
+    "64": {
+      "name": "Drifter",
+      "dmg": [
+        "weapon",
+        "spirit",
+        "melee"
+      ],
+      "weaponDps": 46,
+      "heal": [
+        "Bloodscent T2: 24% недостающего здоровья при убийстве изолированного героя",
+        "Rend получает бонус от Melee Lifesteal"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Rend",
+          "damage": "spirit",
+          "cc": [
+            "silence"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist"
+          ],
+          "note": "Spirit 40 + ближний бой 61.8 вблизи (8 м); T3 молчание 2 с вблизи.",
+          "lasting": true
+        },
+        {
+          "slot": 2,
+          "name": "Stalker's Mark",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "dispel",
+            "debuffResist",
+            "slowingHex"
+          ],
+          "note": "Кровотечение 2% текущего здоровья в секунду; T3 −40% входящего лечения; Slowing Hex глушит только второй каст (телепорт за спину).",
+          "lasting": true
+        },
+        {
+          "slot": 3,
+          "name": "Bloodscent",
+          "damage": "none",
+          "cc": [],
+          "compat": [],
+          "note": "Пассив: +15% урона по изолированным героям, +3% оружия за убийство.",
+          "lasting": false
+        },
+        {
+          "slot": 4,
+          "name": "Eternal Night",
+          "damage": "none",
+          "cc": [],
+          "compat": [],
+          "note": "Тьма вокруг врагов: обзор 15 м на 6.5 с, цели считаются изолированными; контролем не считается.",
+          "lasting": false
+        }
+      ]
+    },
+    "65": {
+      "name": "Venator",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 63,
+      "heal": [],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Consecrating Grenade",
+          "damage": "weapon",
+          "cc": [],
+          "compat": [
+            "dispel",
+            "debuffResist"
+          ],
+          "note": "Горение 3.5 с, горящие цели получают −30% входящего лечения (T3 ещё −20%) и наносят чистый урон рядом.",
+          "lasting": true
+        },
+        {
+          "slot": 2,
+          "name": "Gutshot",
+          "damage": "weapon",
+          "cc": [
+            "stun"
+          ],
+          "compat": [
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist"
+          ],
+          "note": "Урон 60 + бонус у стены, стан 0.6 с только у стены (7 м).",
+          "lasting": false
+        },
+        {
+          "slot": 3,
+          "name": "Hex-Lined Snap Trap",
+          "damage": "spirit",
+          "cc": [
+            "immobilize"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist"
+          ],
+          "note": "Ловушка: иммобилайз 1.25 с, урон 80, раскрытие 6 с; ловушку можно сломать выстрелом.",
+          "lasting": false
+        },
+        {
+          "slot": 4,
+          "name": "Ira Domini",
+          "damage": "weapon",
+          "cc": [],
+          "compat": [
+            "platedArmor"
+          ],
+          "note": "Три болта-хитскана, последний освящённый: +95 чистого урона и казнь ниже 8% здоровья.",
+          "lasting": false
+        }
+      ]
+    },
+    "66": {
+      "name": "Victor",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 70,
+      "heal": [
+        "Pain Battery T3: 15% потерянного здоровья",
+        "Jumpstart: регенерация 100 за 4.5 с",
+        "Shocking Reanimation: воскрешение 50% здоровья"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Pain Battery",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "debuffResist"
+          ],
+          "note": "Заряд набирается уроном (40% макс. здоровья); T1 — замедление 32% на 2 с.",
+          "lasting": true
+        },
+        {
+          "slot": 2,
+          "name": "Jumpstart",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [],
+          "note": "Самоурон 15% текущего здоровья, регенерация и скорость; T3 +50% сопротивления дебаффам.",
+          "lasting": false
+        },
+        {
+          "slot": 3,
+          "name": "Aura of Suffering",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "debuffResist"
+          ],
+          "note": "Spirit-аура 13–58 урона в секунду; T1 замедление 20%, T3 +16% получаемого урона; обновляется каждые 0.25 с, поэтому Debuff Resist почти не работает.",
+          "lasting": true
+        },
+        {
+          "slot": 4,
+          "name": "Shocking Reanimation",
+          "damage": "spirit",
+          "cc": [
+            "stun",
+            "slow"
+          ],
+          "compat": [
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist",
+            "platedArmor"
+          ],
+          "note": "Пассив: воскрешение после смертельного урона, урон 200 и стан 1.5 с, на канале 3 с неуязвим.",
+          "lasting": false
+        }
+      ]
+    },
+    "67": {
+      "name": "Paige",
+      "dmg": [
+        "spirit",
+        "weapon"
+      ],
+      "weaponDps": 64,
+      "heal": [
+        "Rallying Charge: лечит союзников на 125 (x1.6 Spirit), усиливается с расстоянием (макс. 100% на 250 м); T1 +150 лечения; союзники +5 м/с скорости на 9 с"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Bookwyrm",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "dispel"
+          ],
+          "note": "Дракон (радиус 4 м, дальность 20 м): 60 урона (x1.3 Spirit) и огненный след 30 урона/с (x0.3) на 3 с. T1: -12с КД; T2: +1 заряд, +2 с следа, +1 м; T3: +12 м, +100 урона, +30 урона/с.",
+          "lasting": false
+        },
+        {
+          "slot": 2,
+          "name": "Plot Armor",
+          "damage": "none",
+          "cc": [],
+          "compat": [],
+          "note": "Барьер 125 (x1.5 Spirit) на союзника (35 м, можно на себя) на 5 с, +25% урона оружия, пока барьер держится. T1: +14% скорострельности; T2: +100 барьера, +2 с; T3: ещё до 2 союзников.",
+          "lasting": false
+        },
+        {
+          "slot": 3,
+          "name": "Captivating Read",
+          "damage": "spirit",
+          "cc": [
+            "slow",
+            "immobilize"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "dispel",
+            "indomitable",
+            "unstoppable"
+          ],
+          "note": "Зона 7.5 м (30 м): замедление 36% при касте, через 1.25 с взрыв 90 урона (x1.3) и обездвиживание 1 с. T1: -14с КД; T2: +1 с обездвиживания; T3: +2 м, -18% сопр. духа на 6 с.",
+          "lasting": true
+        },
+        {
+          "slot": 4,
+          "name": "Rallying Charge",
+          "damage": "spirit",
+          "cc": [
+            "stun"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "indomitable",
+            "unstoppable"
+          ],
+          "note": "Рыцари проходят через весь город: врагам 125 урона (x1 Spirit) и оглушение 1 с, союзников лечат. Урон и лечение растут с расстоянием. T2: -45с КД; T3: +160 урона, +0.5 с оглушения.",
+          "lasting": false
+        }
+      ]
+    },
+    "69": {
+      "name": "The Doorman",
+      "dmg": [
+        "spirit",
+        "weapon"
+      ],
+      "weaponDps": 38.1,
+      "heal": [],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Call Bell",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Колокол: 40 при ударе + 55 при взрыве (дух), радиус 5.5м; взрыв даёт -28% скорости и -40% точности на 4с; 1 заряд, КД 18с. T1 +1 заряд; T2 +30/+40 урона; T3 +4.5м, жизнь колокола 29с. Unstoppable снимает только замедление."
+        },
+        {
+          "slot": 2,
+          "name": "Doorway",
+          "damage": "none",
+          "cc": [],
+          "compat": [],
+          "lasting": false,
+          "note": "Две связанные двери, дистанция 65м, 15с, КД 45с; игроки и снаряды проходят насквозь. T1 +20с; T2 барьер при первом проходе (значение на странице 0); T3 +30м каст и +40м дистанция. Slowing Hex не отключает."
+        },
+        {
+          "slot": 3,
+          "name": "Luggage Cart",
+          "damage": "spirit",
+          "cc": [
+            "pull",
+            "stun"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "dispel",
+            "indomitable",
+            "unstoppable"
+          ],
+          "lasting": false,
+          "note": "Тележка тащит врагов, 60 урона духа, КД 30с; не станит и не прерывает. T1 +80 урона; T2 +25м и +90 урона о стену; T3 -18с КД и стан 1.25с при ударе о стену (только с T3). Dispel/Unstoppable сбрасывают."
+        },
+        {
+          "slot": 4,
+          "name": "Hotel Guest",
+          "damage": "spirit",
+          "cc": [
+            "stun",
+            "time-slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "indomitable",
+            "unstoppable",
+            "counterspell"
+          ],
+          "lasting": false,
+          "note": "Канал 1с, цель на 6.5с в отеле: 75 урона, при неявке к выходу 125; после возврата 1с затухающий time-slow. КД 140с. T1 -20с КД; T2 +150 урона и стан 1.5с при неявке; T3 Unstoppable у Дворецкого, КД 15с при неявке."
+        }
+      ]
+    },
+    "72": {
+      "name": "Billy",
+      "dmg": [
+        "weapon",
+        "melee"
+      ],
+      "primary": [
+        "weapon",
+        "melee"
+      ],
+      "weaponDps": 74,
+      "heal": [
+        "Ближний бой: Melee Lifesteal и Lifestrike (по данным покупок), Blasted T3 — здоровье от ближнего боя"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Bashdown",
+          "damage": "melee",
+          "cc": [
+            "knockup",
+            "pull"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist"
+          ],
+          "note": "Удар битой: ближний бой + Spirit 35, подброс; мгновенный эффект.",
+          "lasting": false
+        },
+        {
+          "slot": 2,
+          "name": "Rising Ram",
+          "damage": "spirit",
+          "cc": [
+            "knockup"
+          ],
+          "compat": [
+            "slowingHex"
+          ],
+          "note": "Таран в цель с подбросом, Spirit 40; Slowing Hex не даёт запустить.",
+          "lasting": false
+        },
+        {
+          "slot": 3,
+          "name": "Blasted",
+          "damage": "none",
+          "cc": [],
+          "compat": [
+            "dispel",
+            "debuffResist",
+            "platedArmor"
+          ],
+          "note": "Удары ближним восстанавливают патроны и накладывают wrecked 7 с (+10% урона пуль по цели).",
+          "lasting": false
+        },
+        {
+          "slot": 4,
+          "name": "Chain Gang",
+          "damage": "spirit",
+          "cc": [
+            "chain",
+            "pull",
+            "slow"
+          ],
+          "compat": [
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier"
+          ],
+          "note": "Цепи 2.8 с: способности движения заблокированы, затем притягивание, Spirit 120; рвётся без линии видимости ≥1 с, при Ethereal Shift, на зиплайне.",
+          "lasting": true
+        }
+      ]
+    },
+    "76": {
+      "name": "Graves",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 35.3,
+      "heal": [
+        "Вампиризм от пуль 8% (инфобокс)",
+        "Jar of Dead T1: сбор «смерти» лечит на 5 здоровья за подбор"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Jar of Dead",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "debuffResist"
+          ],
+          "note": "4 заряда по 13с; бросок вызывает 4 Deadheads (урон 16, скейл 0.25), копят «смерть» от убийств. T1: лечение 5 за подбор; T2: замедление 24% на 1с (только с T2); T3: +2 Deadheads, +4с.",
+          "lasting": true
+        },
+        {
+          "slot": 2,
+          "name": "Grasping Hands",
+          "damage": "spirit",
+          "cc": [
+            "immobilize"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist"
+          ],
+          "note": "Линия рук (дальность 24м, 5с, КД 34с): урон 90 (скейл 1.6) и иммобилизация 1с, призывает Ghoul. T1 +2с; T2 +90 урона, +10м; T3 +Ghoul, -14с КД, +0.75с иммобилизации.",
+          "lasting": false
+        },
+        {
+          "slot": 3,
+          "name": "Essence Theft",
+          "damage": "none",
+          "cc": [],
+          "compat": [
+            "dispel",
+            "platedArmor"
+          ],
+          "note": "Оружие 4с крадёт у цели урон оружия (до 25%, скейл 0.25) и сопротивление духу (до 10%), макс. 3 цели. T1 +5% духа; T2 +20% урона оружия; T3 +1 цель, все призываемые тоже применяют. Контроля нет.",
+          "lasting": false
+        },
+        {
+          "slot": 4,
+          "name": "Borrowed Decree",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "unstoppable",
+            "debuffResist"
+          ],
+          "note": "Надгробие (КД 140с, 16с) раз в 4с призывает Ghoul; взрыв 115 (скейл 1.27) и замедление 64% на 1.25с. Пассив: способности могут призывать Ghoul. T1 +25% скорость, -15с КД; T2 +10с; T3 +5% тек. HP на смерти.",
+          "lasting": true
+        }
+      ]
+    },
+    "77": {
+      "name": "Apollo",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 49,
+      "heal": [
+        "Riposte T3: 75% вампиризма пуль/духа/ближнего боя по цели 13 с",
+        "Flawless Advance T1: лечение 35 за идеальный удар"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Disengaging Sigil",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "debuffResist",
+            "slowingHex"
+          ],
+          "note": "Замедление 24% на 4 с, прыжок назад.",
+          "lasting": true
+        },
+        {
+          "slot": 2,
+          "name": "Riposte",
+          "damage": "none",
+          "cc": [
+            "immobilize",
+            "disarm"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist"
+          ],
+          "note": "После парирования: неуязвимость 0.3 с и рывок; базово иммобилайз 1.5 с, разоружение, запрет парирования (патчи 30.10 и 04.11); T3 — вампиризм 75% на 13 с.",
+          "lasting": false
+        },
+        {
+          "slot": 3,
+          "name": "Flawless Advance",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "slowingHex"
+          ],
+          "note": "Серия выпадов; T1 лечит 35 за идеальный удар, T2 даёт +60% сопротивления пулям во время выпада.",
+          "lasting": false
+        },
+        {
+          "slot": 4,
+          "name": "Itani Lo Sahn",
+          "damage": "spirit",
+          "cc": [
+            "time-slow"
+          ],
+          "compat": [
+            "unstoppable",
+            "reactiveBarrier",
+            "slowingHex",
+            "counterspell"
+          ],
+          "note": "Враги не могут действовать и лечиться 1.8 с, затем урон 200 (+60% по целям ниже 50% здоровья); Apollo в это время неуязвим; Debuff Resist и Debuff Reducer не помогают; сон прерывать не может.",
+          "lasting": false
+        }
+      ]
+    },
+    "78": {
+      "name": "Deadman Danny",
+      "dmg": [
+        "spirit",
+        "weapon"
+      ],
+      "weaponDps": 60,
+      "heal": [
+        "Chimera Mk1 T2: при попадании по герою лечение и отсутствие самоурона (величина лечения на странице не указана, базово 0)",
+        "Базовая регенерация здоровья 3.25/с; вампиризма в ките нет"
+      ],
+      "air": true,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Strix Salvo",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [],
+          "note": "Линия духовных ракет (27 урона, x0.681 Spirit), помечают врагов (10с); заряженный выстрел по метке снимает её: 45 урона и затухающее замедление 40% на 1.5с. T1 -12с КД, T2 +30/+45 урона, T3 +2 ракеты.",
+          "lasting": true
+        },
+        {
+          "slot": 2,
+          "name": "Chimera Mk1",
+          "damage": "spirit",
+          "cc": [
+            "knockup"
+          ],
+          "compat": [
+            "dispel",
+            "debuffResist",
+            "unstoppable",
+            "reactiveBarrier",
+            "indomitable"
+          ],
+          "note": "Реактивный ранец до 5с (полёт, нагрев); перегрев - пикирование и взрыв 70 spirit + 70 bullet, враги отбрасываются. Без попадания по герою - самостан 1.3с. Reactive Barrier/Indomitable срабатывают у Danny только без попадания.",
+          "lasting": false
+        },
+        {
+          "slot": 3,
+          "name": "Jettison Fuel",
+          "damage": "weapon",
+          "cc": [],
+          "compat": [
+            "dispel",
+            "debuffResist"
+          ],
+          "note": "Струя топлива 2с: 30 DPS (x0.8 Spirit), режет сопротивление пулям -15% на 7с, затем выброс 35 spirit, отбрасывающий самого Danny. T1 -8с КД, T2 +60 урона и +18% скорострельности, T3 -10% сопр. пулям и метка. Контроля врагам нет.",
+          "lasting": false
+        },
+        {
+          "slot": 4,
+          "name": "Close The Deal",
+          "damage": "spirit",
+          "cc": [
+            "stun"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "indomitable",
+            "unstoppable"
+          ],
+          "note": "Хватает врага (10м), взлетает и сбрасывает: 70 spirit (x1), 3 урона/м падения, +55% по целям ниже 50% HP; оба получают урон (25% самоурон). Стан 0.5с; T3 +0.5с. Барьер/Indomitable срабатывают на захват у цели.",
+          "lasting": false
+        }
+      ],
+      "airSource": "deadlock.wiki/Knockdown, раздел Flying Heroes"
+    },
+    "79": {
+      "name": "Rem",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 61.5,
+      "heal": [
+        "Tag Along: всплеск 15% недостающего HP (+0.03 Spirit) и затем 42 HP/с (x0.4 Spirit) 2 с — лечит и Рема, и союзника; прыжок на нового союзника повторяет всплеск (раз на союзника)",
+        "Lil Helpers: лечение крипов 8 HP/с (x0.14 Spirit) в течение 50 с, при касте полностью лечат крипов"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Pillow Toss",
+          "damage": "spirit",
+          "cc": [
+            "knockup",
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Подушка, радиус 5 м: 75 урона духа, сильный отброс 0.4 с, затухающее замедление -36%; попадание снижает КД Tag Along и Naptime на 5 с. T2: -35% скорострельности на 3 с. T3: +100 урона, +1 заряд. Зависает в воздухе."
+        },
+        {
+          "slot": 2,
+          "name": "Tag Along",
+          "damage": "none",
+          "cc": [],
+          "compat": [
+            "slowingHex"
+          ],
+          "lasting": false,
+          "note": "Прыжок на союзника (23 м) и сон на нём 5.5 с: оба получают всплеск лечения 15% недостающего HP и 42 HP/с; Рем неуязвим и не таргетится. T2: +35% к дальности/длительности предметов. T3: +15% и +35 силы духа."
+        },
+        {
+          "slot": 3,
+          "name": "Lil Helpers",
+          "damage": "none",
+          "cc": [],
+          "compat": [],
+          "lasting": false,
+          "note": "Помощники: за героем — 12% сопр. духу и скорость на 8 с; за крипом — 30% урона/сопротивлений и лечение 8 HP/с 50 с. Ломают ящики, берут жертвы, покупают в магазине. T1-T3 по +1 помощнику. Врагам эффектов нет."
+        },
+        {
+          "slot": 4,
+          "name": "Naptime",
+          "damage": "spirit",
+          "cc": [
+            "slow",
+            "sleep"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "indomitable",
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Взгляд сквозь стены 1.9 с, радиус 19 м: замедление и дэша 20%, запрет движ. способностей; затем сон 4 с, при пробуждении 120 урона духа (порог урона 100). T2 +3 м и +0.75 с. T3: -55 с КД, Рем неуязвим при канале."
+        }
+      ]
+    },
+    "80": {
+      "name": "Silver",
+      "dmg": [
+        "weapon",
+        "melee",
+        "spirit"
+      ],
+      "weaponDps": 42,
+      "heal": [
+        "Go For The Throat (оборотень): вампиризм 40% от ближнего урона, T2 +25%",
+        "Lycan Curse: убийство врага лечит 0 + 1 за буны (35 при 35 бунах)",
+        "Lycan Curse: параметр «30% недостающего здоровья как лечение» (условие срабатывания на странице не указано)",
+        "Предметы ближнего боя усиливают лечение (напр. Melee Lifesteal)"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Slam Fire / Go For The Throat",
+          "damage": "weapon",
+          "cc": [],
+          "compat": [],
+          "lasting": false,
+          "note": "Человек: Slam Fire 5 с, мгновенная перезарядка, +300% скорострельности на 3 выстрела, +2.5% тек. HP как урон, -30% точности, кд 25 с. Оборотень: Go For The Throat, 75 ближнего урона, лечение 40%, кд 6.5 с."
+        },
+        {
+          "slot": 2,
+          "name": "Boot Kick / Mauling Leap",
+          "damage": "melee",
+          "cc": [
+            "immobilize"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "dispel",
+            "indomitable",
+            "unstoppable",
+            "slowingHex"
+          ],
+          "lasting": true,
+          "note": "Kick: рывок, 45 урона, краткое обездвиживание и отброс, метка 3 с (+25 духа при выстреле); T3 -35% урона врага 5 с. Leap: 75 урона, -8% сопр. пулям 6 с, 15 DPS духом. Пометки объединены по двум формам."
+        },
+        {
+          "slot": 3,
+          "name": "Entangling Bola / Tail Whack",
+          "damage": "spirit",
+          "cc": [
+            "slow",
+            "silence",
+            "disarm"
+          ],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Bola: 40 урона, замедление -16% на 1.5 с, блок абилок движения и стамины (как Slowing Hex); T3 рикошет на 2 цели. Whack: 45 урона, разоружение 2 с, замедление -24%. Пометки объединены."
+        },
+        {
+          "slot": 4,
+          "name": "Lycan Curse",
+          "damage": "none",
+          "cc": [],
+          "compat": [],
+          "lasting": false,
+          "note": "Пассивно копит кровожадность, при максимуме превращение (3 с авто или вручную), 15 с: +125 здоровья (x15), +1.5 м/с, +60% скорострельности стаками. Заменяет способности и оружие. T3 при убийстве героя обновление."
+        }
+      ]
+    },
+    "81": {
+      "name": "Celeste",
+      "dmg": [
+        "spirit",
+        "weapon"
+      ],
+      "weaponDps": 31,
+      "heal": [
+        "Light Eater: духовный вампиризм 18% (x0.47 Spirit) на 8с от врагов в конусе; T1 +15% (усиливается Healing Booster)",
+        "Базовая регенерация здоровья 1/с"
+      ],
+      "air": true,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Light Eater",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "dispel",
+            "debuffResist",
+            "platedArmor"
+          ],
+          "note": "Конус света 10м: 40 урона, 15 урона при попадании пули, вампиризм 18% на 8с, КД 20с; ближний бой взрывает бонус полностью. T1 +15% вампиризма, T2 -10с КД и +3м, T3 +22 урона.",
+          "lasting": false
+        },
+        {
+          "slot": 2,
+          "name": "Dazzling Trick",
+          "damage": "spirit",
+          "cc": [
+            "silence"
+          ],
+          "compat": [
+            "dispel",
+            "debuffResist",
+            "reactiveBarrier",
+            "indomitable",
+            "unstoppable"
+          ],
+          "note": "Барьер 100 на 4с (блокирует любой урон); при разрушении молчание врагов 1.75с в 14м и урон 50% барьера. КД 38с. T1 +3.5м скорости, T2 +70 барьера, T3 +0.75с молчания, -20с КД, отскок Shining Wonder.",
+          "lasting": true
+        },
+        {
+          "slot": 3,
+          "name": "Radiant Daggers",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [],
+          "note": "Луч света (25м) взрывается через 1.4с: 55 урона в 8м; за каждого героя стак +6% spirit amp (до 6, 30с). 1 заряд, КД 33с. T1 +2 заряда, T2 -22с КД и +70 урона, T3 +9% скорострельности и +5% amp за стак.",
+          "lasting": false
+        },
+        {
+          "slot": 4,
+          "name": "Shining Wonder",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "unstoppable",
+            "counterspell"
+          ],
+          "note": "Шар света: 125 урона, замедление -28% и -22% дистанции рывка на 1.5с, до 8 отскоков (15м), приоритет героев; КД 170с. T1 усиливает замедление (-14%/-14%), T2 +80 урона, T3 +6 отскоков и -30с КД.",
+          "lasting": true
+        }
+      ],
+      "airSource": "deadlock.wiki/Knockdown, раздел Flying Heroes"
+    },
+    "84": {
+      "name": "Rat King",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 58,
+      "heal": [],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Scrap Grenade",
+          "damage": "weapon",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Граната: 3 детонации (60 урона пули, радиус 8 м), замедление 20% на 4 с; финальный взрыв больше и даёт замедление 40% на 4 с. КД 26 с. T3: ещё один большой взрыв. Можно отбить ближним боем."
+        },
+        {
+          "slot": 2,
+          "name": "Rat Swarm",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [
+            "debuffResist",
+            "dispel"
+          ],
+          "lasting": true,
+          "note": "Рой крыс (50 м, 6 с): урон духа 8 за укус, -1% сопротивления пулям за укус, до 5 крыс, дебафф 4 с. Заряд 1, T1 +1 заряд, T2 +4 с дебаффа. Крыс можно сбросить рывком."
+        },
+        {
+          "slot": 3,
+          "name": "Royal Pestments",
+          "damage": "none",
+          "cc": [],
+          "compat": [],
+          "lasting": false,
+          "note": "Барьер 15% макс. здоровья на 6 с, 15% шанс отразить пулю в атакующего. T2 +15% шанс и КД -8 с; T3 ограничивает любой урон до 250 и +10% барьера. Не даёт контроля и лечения."
+        },
+        {
+          "slot": 4,
+          "name": "Rule, Ratannia!",
+          "damage": "weapon",
+          "cc": [
+            "knockup",
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Знамя (радиус 20 м): удар 200 урона пули, подброс и замедление врагов 40% на время флага 12 с, крысы накладывают Rat Swarm. Союзникам скорость, иммунитет к замедлению, -15% урона. КД 180 с."
+        }
+      ]
+    },
+    "85": {
+      "name": "Solomon",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 50,
+      "heal": [],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Setup Bishop",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "debuffResist"
+          ],
+          "lasting": true,
+          "note": "Слон стоит бессрочно; перемещение (альт-огонь) наносит 70 урона духом (x2) и даёт затухающее замедление -30% на 3 с, клетки после задержки 25 (x0.85). T1 +25% замедл.; T3 -5% сопр. духу за удар (до 5 стаков)."
+        },
+        {
+          "slot": 2,
+          "name": "Kingside Knight",
+          "damage": "none",
+          "cc": [],
+          "compat": [
+            "slowingHex"
+          ],
+          "lasting": false,
+          "note": "Союзник-конь: +1 стамина и барьер 80 (x0.8) на 7 с; на себя — барьер x2 без стамины, перемещение 7м. T2 +80 барьера, +1 стамина; T3 два союзника. Самоприменение T3 снимает дебаффы (не ульт и не станы)."
+        },
+        {
+          "slot": 3,
+          "name": "Rook Battery",
+          "damage": "spirit",
+          "cc": [
+            "immobilize"
+          ],
+          "compat": [
+            "dispel",
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist"
+          ],
+          "lasting": true,
+          "note": "Две ладьи: 50 урона (x0.9) и обездвиживание 1 с при попадании, отражаются от стены. T1 -25% скорострельности на 5 с; T2 5% текущего ЗДР уроном; T3 +1 отражение, +0.5 с обездвиж., -10 с КД."
+        },
+        {
+          "slot": 4,
+          "name": "Develop Queen",
+          "damage": "spirit",
+          "cc": [
+            "stun",
+            "slow"
+          ],
+          "compat": [
+            "unstoppable",
+            "indomitable",
+            "reactiveBarrier",
+            "debuffResist"
+          ],
+          "lasting": true,
+          "note": "Ферзь: удар 120 (x1.6) через 0.75 с, затем клетки (через 1.2 с) снова бьют и оглушают на 1.25 с; цели с ЗДР ниже 100 (+5/буну) казнены. Замедление 15% на 1.5 с (T2 +15%); T2 порог +150; T3 +2 хода."
+        }
+      ]
+    },
+    "86": {
+      "name": "Violet",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 46.2,
+      "heal": [
+        "Abstract Landscape: союзники в чернилах получают духовный вампиризм (базовое значение на странице не указано, T2 +25%) и +25 силы духа",
+        "Still Life: эскиз героя класса «Healer» даёт Violet +2% исходящего лечения",
+        "Still Life T1: пока рисует, +15 регенерации здоровья (обновляется на 4 с при подборе эскиза)"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Living Ink",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [],
+          "lasting": false,
+          "note": "Empower: 3 управляемые пули, 120% урона пули + сплэш духа 35, каждое попадание по герою -1.5 с КД способностей. Draw: твёрдый мазок 20 с блокирует снаряды и героев. 2 заряда. T2: +10% скорострельности, до 5 раз."
+        },
+        {
+          "slot": 2,
+          "name": "Flow State",
+          "damage": "spirit",
+          "cc": [
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Кисть оставляет след: союзникам +100% дистанции скольжения, врагам затухающее замедление (до 60%, 2 с) и урон духа 50-100. Повтор: бросок кистью. КД 23 с. T3: союзникам нарастающий амп урона до 20% на 6 с."
+        },
+        {
+          "slot": 3,
+          "name": "Still Life",
+          "damage": "spirit",
+          "cc": [
+            "stun"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "dispel",
+            "indomitable",
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Канал 2.6 с, 25 м: урон духа 30/с, пока смотришь на цель. По завершении эскиза урон 60, стан 0.9 с и эскиз с перманентным бонусом. T2: цель наносит -35% урона; T3: +0.45 с стана, КД -11 с."
+        },
+        {
+          "slot": 4,
+          "name": "Abstract Landscape",
+          "damage": "spirit",
+          "cc": [
+            "silence",
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "indomitable",
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Купол чернил 6 с блокирует обзор, союзникам +25 силы духа и вампиризм. Враги вне купола раскрыты; при выходе урон духа 100, молчание 2 с, замедление 30%. T3: +1.25 с молчания. КД 180 с."
+        }
+      ]
+    },
+    "87": {
+      "name": "Nurse Harrow",
+      "dmg": [
+        "weapon",
+        "spirit"
+      ],
+      "weaponDps": 38,
+      "heal": [
+        "Leech Therapy: подбор пиявок лечит на выпитое здоровье; +0.6 регена и +5% скорострельности за пиявку (макс. 10 стаков, T3 +8)",
+        "Healing Needles: лечит союзников 22 за выстрел (+15% за headshot), T2 +16",
+        "Wretched Vapors: T2 +20% входящего лечения цели",
+        "Базовая регенерация здоровья 0"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Leech Therapy",
+          "damage": "spirit",
+          "cc": [],
+          "compat": [],
+          "note": "Пиявки (6.5м, 5с, КД 30с): 23 урона/с (скейл 0.19) и съедают 0.65с длительности баффов врагов/с. Подобранные лечат Harrow. T1 вытягивают стамину; T2 -10с КД; T3 +1м, +8 стаков. Контроля нет.",
+          "lasting": false
+        },
+        {
+          "slot": 2,
+          "name": "Wretched Vapors",
+          "damage": "none",
+          "cc": [],
+          "compat": [],
+          "note": "На себя/союзника (13м, КД 40с): 4с ускорение 25%, 30% доп. урона откладывается; затем 4с замедление 20% (на цели). T1 -15с КД, +7м; T2 +1с, +20% лечения; T3 +20% скорости, снимает дебаффы (не ульт).",
+          "lasting": false
+        },
+        {
+          "slot": 3,
+          "name": "Healing Needles",
+          "damage": "none",
+          "cc": [],
+          "compat": [],
+          "note": "Шприцы вместо патронов: лечат союзников 22 за выстрел (скейл 0.24), +15% за headshot. Заряды от урона и пиявок. T1 +1 заряд; T2 +16 лечения, 0.6 стамины; T3 +0.4 скейла, +6% к баффам.",
+          "lasting": false
+        },
+        {
+          "slot": 4,
+          "name": "Lurking Terrors",
+          "damage": "spirit",
+          "cc": [
+            "fear",
+            "slow"
+          ],
+          "compat": [
+            "debuffResist",
+            "indomitable",
+            "unstoppable"
+          ],
+          "note": "Канал 7с, 35м, КД 200с: 60 урона/с (скейл 0.3) перед собой; врагов лицом копится страх (1.75с) и бегство 2.2с (+0.1с за пиявку); замедление 30% скорости и стрельбы. T1 -50с КД; T2 +30 DPS; T3 +3с.",
+          "lasting": true
+        }
+      ]
+    },
+    "88": {
+      "name": "Baba",
+      "dmg": [
+        "spirit",
+        "weapon"
+      ],
+      "weaponDps": 28.4,
+      "heal": [
+        "Granny Long Legs T3: +50% вампиризма ближнего боя (лечение триггерит эффект Healing Tempo)"
+      ],
+      "air": false,
+      "abilities": [
+        {
+          "slot": 1,
+          "name": "Threadsap",
+          "damage": "spirit",
+          "cc": [
+            "pull"
+          ],
+          "compat": [
+            "debuffResist",
+            "dispel",
+            "platedArmor"
+          ],
+          "lasting": true,
+          "note": "Нить: урон духа 50, крадёт 10 силы духа за попадание (эффективность 175%, макс. 45), дебафф 16 с; Baba +8 урона духа с пули. Притягивание врагов на 7 м (0.6 с) только с T3 (там же +1 заряд)."
+        },
+        {
+          "slot": 2,
+          "name": "Granny Long Legs",
+          "damage": "spirit",
+          "cc": [
+            "knockup",
+            "slow"
+          ],
+          "compat": [],
+          "lasting": true,
+          "note": "10 с: +5 м скорости, +25% сопротивления дебаффам и ближнему бою, высокий прыжок. Лёгкий ближний бой: отбрасывание; тяжёлый: подброс, урон духа 75, замедление 50% на 2 с. Полёта нет."
+        },
+        {
+          "slot": 3,
+          "name": "Baba's Brew",
+          "damage": "spirit",
+          "cc": [
+            "silence"
+          ],
+          "compat": [
+            "debuffResist",
+            "reactiveBarrier",
+            "dispel",
+            "indomitable",
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Зелье в случайном порядке по циклу: барьер 90 (8 с), молчание 2.75 с или ожог 12/с 8 с со сниженным сопротивлением духу. Радиус 6 м, КД 28 с. T1 +3 м радиуса, T3 +33% эффективности."
+        },
+        {
+          "slot": 4,
+          "name": "Feed The Birds",
+          "damage": "spirit",
+          "cc": [
+            "slow",
+            "hex"
+          ],
+          "compat": [
+            "unstoppable"
+          ],
+          "lasting": true,
+          "note": "Канал 6.5 с, 18 м: хлеб накладывает стакающееся замедление до 32%. В конце голуби бьют духом до 450 и превращают цель в голубя до 2.75 с. Не триггерит Reactive Barrier/Indomitable (вероятно, баг)."
+        }
+      ]
+    }
+  },
+  "coverage": {
+    "heroes": 44
+  },
+  "note": "Таблица собрана по deadlock.wiki (тексты способностей, пометки совместимости) и данным игры build 6861. Типы урона у героев без иконок на вики выведены по множителям Spirit/Weapon; неуверенные места перечислены в side-session-notes.",
+  "counterspellSource": "deadlock.wiki/Counterspell (разделы про Hotel Guest, Death Slam, Itani Lo Sahn, Shining Wonder)"
+}

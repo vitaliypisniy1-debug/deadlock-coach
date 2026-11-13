@@ -1118,6 +1118,7 @@
     } finally {
       S.coach.progressLoading = false;
       if (S.view === 'coach') renderCoach();
+      if (S.view === 'overview') renderOverview();
     }
   }
 
@@ -2155,17 +2156,42 @@
     const histPanel = h('div.panel', h('div.row', h('h2', { style: { margin: 0 } }, 'История матчей'), h('div.grow'), h('span.muted', 'нажми — откроется разбор')),
       h('div.match-list.tall', { style: { marginTop: '12px' } }, matchRows(o.games, { onOpen: (id) => { setView('matches'); openMatch(id); } })));
 
-    // ---- задачи тренера ----
+    // ---- задача от тренера и последнее достижение (разметка по docs/COACH_UI.md, hc-*) ----
     const cd = S.coach.data;
-    const coachPanel = h('section.panel.coach-strip',
-      h('div.row', h('h2', { style: { margin: 0 } }, 'Задачи тренера'), h('div.grow'), h('button.btn.small', { onclick: () => setView('coach') }, 'Открыть тренера', Icon('arrow'))),
-      cd && cd.goals && cd.goals.length
-        ? h('div.cs-goals', cd.goals.filter((g) => g.status === 'active').map((g) => h('button.cs-goal', { onclick: () => setView('coach') },
-          h('span.goal-area', g.area), h('b', g.title),
-          h('div.goal-bar', h('span', { style: { width: `${Math.round((g.rate || 0) * 100)}%` } })),
-          h('span.muted.small', g.games ? `${g.passed} из ${g.games} игр` : 'ещё не проверялась'))))
-        : S.coach.loading ? h('div.muted', { style: { marginTop: '10px' } }, h('span.spin'), ' Тренер составляет план…')
-          : h('div.muted', { style: { marginTop: '10px' } }, cd && !cd.plan ? 'Сыграй ещё пару матчей — тренер составит план.' : 'Открой тренера — он составит план на неделю.'));
+    const coachPanel = document.createDocumentFragment();
+    {
+      const active = cd && cd.goals ? cd.goals.filter((g) => g.status === 'active') : [];
+      const g0 = active[0];
+      if (g0) {
+        coachPanel.append(h('section.hc-goal',
+          h('div.hc-top', h('span.tc-area', g0.area), h('span.tc-spacer'), h('button.btn.small', { onclick: () => setView('coach') }, 'Открыть тренера', Icon('arrow'))),
+          h('h3.hc-title', g0.title),
+          h('div.hc-progress',
+            g0.games ? h('div.tc-bar', h('span', { style: { width: `${Math.round((g0.rate || 0) * 100)}%` } })) : null,
+            h('div.hc-count', g0.games ? [h('b', String(g0.passed)), ` из ${g0.games} игр выполнено`] : 'Игр после старта пока нет'),
+            h('div.hc-close', g0.close && g0.close.of >= 5 ? `До закрытия: 4 из 5, сейчас ${g0.close.passed}` : 'Закроется, когда выполнена в 4 из 5 последних игр')),
+          h('div.hc-foot',
+            g0.streak >= 2 ? h('span.pill', `серия ${g0.streak}`) : null,
+            active.length > 1 ? h('span', `+${active.length - 1} ${plural(active.length - 1, 'запасная', 'запасные', 'запасных')}`) : null)));
+      } else if (S.coach.loading || !cd) {
+        coachPanel.append(skeleton('Тренер составляет цель…'));
+      } else if (!cd.plan) {
+        coachPanel.append(h('div.empty', 'Сыграй ещё пару матчей — тренер составит цель.'));
+      } else {
+        coachPanel.append(h('div.empty', 'Все цели выполнены. Открой тренера — он предложит следующую.'));
+      }
+      // последнее достижение: ступень с самой поздней датой; без достижений строку не выводим
+      const pr = S.coach.progress && S.coach.progressFor === (S.auth && S.auth.accountId) ? S.coach.progress : null;
+      let last = null;
+      if (pr) for (const ach of pr.achievements) for (const u of ach.unlocked) if (!last || u.t > last.u.t) last = { ach, u };
+      if (last) {
+        coachPanel.append(h(`div.hc-ach.t${last.u.tier}`,
+          h('div.ach-medal', Icon('medal')),
+          h('div.hc-ach-text', h('small', 'Последнее достижение'), h('b', `${last.ach.title} · ${last.u.tierName}`)),
+          h('span.muted', dashboardDate(last.u.t)),
+          pr.anyNew ? h('span.pill.hot', 'новое') : null));
+      } else if (!pr && S.auth && !S.coach.progressLoading && S.coach.progressFor !== S.auth.accountId) setTimeout(loadProgress, 0);
+    }
     if (!S.coach.data && !S.coach.loading && S.auth) setTimeout(() => loadCoach(false), 0);
 
     v.replaceChildren(head,

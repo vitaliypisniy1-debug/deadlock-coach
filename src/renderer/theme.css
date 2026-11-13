@@ -852,3 +852,58 @@ body::before {
 .match:hover .hero-ico.crest svg, .dash-hero-row:hover .hero-ico.crest svg, .table tr.click:hover .hero-ico.crest svg { transform: scale(1.08) rotate(-3deg); }
 .hero-cell .hero-ico.crest { width: 48px; height: 48px; }
 .hero-ico.crest.sm { width: 28px; height: 28px; }
+
+/* ==========================================================================
+   Главная: задача от тренера (hc-goal) и последнее достижение (hc-ach). Контракт: docs/COACH_UI.md
+   ========================================================================== */
+.hc-goal { position: relative; display: grid; gap: 12px; padding: 22px 24px; border: 2px solid transparent; border-radius: 20px;
+  background: linear-gradient(160deg, rgba(255, 122, 69, 0.13), rgba(255, 122, 69, 0.02) 55%) padding-box, linear-gradient(var(--panel), var(--panel)) padding-box, linear-gradient(135deg, rgba(255, 153, 102, 0.85), rgba(255, 122, 69, 0.08) 45%, rgba(95, 212, 238, 0.4)) border-box;
+  box-shadow: 0 0 70px -30px rgba(255, 122, 69, 0.6), 0 20px 44px -26px rgba(0, 0, 0, 0.85); margin-bottom: 18px; }
+.hc-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.hc-top .tc-spacer { flex: 1; }
+.hc-title { margin: 0; font: 800 clamp(22px, 2.2vw, 30px)/1.15 var(--display); color: #fff; max-width: 34ch; }
+.hc-progress { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 20px; align-items: end; }
+.hc-progress .tc-bar { grid-column: 1 / -1; }
+.hc-count { color: var(--text-2); }
+.hc-count b { color: #fff; font-size: 18px; }
+.hc-close { color: var(--muted); font-size: 14px; text-align: right; }
+.hc-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: var(--muted); font-size: 14px; }
+
+.hc-ach { --tier: #5b7279; display: grid; grid-template-columns: 44px minmax(0, 1fr) auto auto; gap: 14px; align-items: center; padding: 10px 18px 10px 12px; margin-bottom: 18px; border-radius: 16px; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--edge); }
+.hc-ach.t1 { --tier: #e0955a; }
+.hc-ach.t2 { --tier: #d8e0e6; }
+.hc-ach.t3 { --tier: #ffdc5e; border-color: rgba(255, 220, 94, 0.4); box-shadow: 0 0 36px -20px rgba(255, 220, 94, 0.7); }
+.hc-ach .ach-medal { width: 44px; height: 44px; }
+.hc-ach .ach-medal .ico { width: 22px; height: 22px; }
+.hc-ach-text { color: var(--text-2); font-size: 15px; }
+.hc-ach-text b { color: #fff; }
+.hc-ach-text small { display: block; color: var(--muted); font-size: 12.5px; letter-spacing: 0.1em; text-transform: uppercase; }
+@media (max-width: 900px) { .hc-ach { grid-template-columns: 44px minmax(0, 1fr); } }
+
+/* ==========================================================================
+   Картинки героев: настоящий арт игры, вертикальные кадры по грудь, без обрезки лица
+   ========================================================================== */
+.hero-ico.art {
+  --hc: 255, 122, 69; width: 54px; height: 68px; border-radius: 12px; border: 0; flex: none;
+  background:
+    linear-gradient(180deg, transparent 62%, rgba(8, 18, 22, 0.6)),
+    var(--art, none) center 6% / 118% auto no-repeat,
+    var(--art-shards) center / cover no-repeat,
+    radial-gradient(120% 90% at 50% 0%, rgba(var(--hc), 0.6), rgba(var(--hc), 0.12) 62%, transparent),
+    var(--panel-2);
+  box-shadow: 0 0 0 1px rgba(var(--hc), 0.5), 0 8px 18px -6px rgba(0, 0, 0, 0.7);
+}
+.hero-ico.art.sm, .chip .hero-ico.art, .pill .hero-ico.art { width: 28px; height: 28px; border-radius: 8px; background-size: auto, 168% auto, cover, auto, auto; background-position: 0 0, 50% 4%, center, 0 0, 0 0; }
+.hero-ico.art.lg { width: 84px; height: 104px; border-radius: 16px; }
+.hero-ico.art.xl { width: 104px; height: 130px; border-radius: 18px; background-size: auto, 112% auto, cover, auto, auto; background-position: 0 0, 50% 0, center, 0 0, 0 0; box-shadow: 0 0 0 2px rgba(var(--hc), 0.7), 0 0 36px rgba(var(--hc), 0.4); transform: none; }
+.hero-cell .hero-ico.art { width: 54px; height: 68px; }
+.table td { padding-top: 8px; padding-bottom: 8px; }
+.match { min-height: 84px; grid-template-columns: 54px minmax(0, 1fr) auto; gap: 14px; }
+.match .hero-ico.art { width: 54px; height: 68px; }
+.dash-hero-row { grid-template-columns: 54px minmax(0, 1fr) auto 52px; min-height: 84px; }
+.dash-hero-row .hero-ico.art { width: 54px; height: 68px; }
+.hero-pick { min-height: 76px; }
+.hero-pick .hero-ico.art { width: 44px; height: 56px; border-radius: 10px; }
+.tc-game .hero-ico.art { width: 36px; height: 44px; border-radius: 9px; }
+.match:hover .hero-ico.art, .dash-hero-row:hover .hero-ico.art, .table tr.click:hover .hero-ico.art { box-shadow: 0 0 0 2px rgba(var(--hc), 0.9), 0 12px 24px -6px rgba(var(--hc), 0.55); }
+.match-sub { white-space: normal; line-height: 1.25; }

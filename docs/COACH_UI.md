@@ -75,3 +75,23 @@ section.ach-block                          достижения
 ```
 
 Запасные цели: `.tc-spare .tc-area` больше не растягивается (исправлено).
+
+## Главная: задача от тренера и последнее достижение
+
+Стили готовы (`hc-*`). Состояния «нет плана», «загрузка», «все цели выполнены»: `.empty` (компактный текст) и `skeleton()`.
+
+```
+section.hc-goal                                  вместо блока из 4 карточек: одна главная цель
+  div.hc-top: span.tc-area (область), span.tc-spacer, button.btn.small «Открыть тренера» + Icon('arrow')
+  h3.hc-title                                    название цели
+  div.hc-progress
+    div.tc-bar > span[style=width:%]             passed из games
+    div.hc-count «<b>3</b> из 6 игр выполнено»   div.hc-close «До закрытия: 4 из 5, сейчас 2»
+  div.hc-foot: span.pill (серия N), span «+2 запасные»
+
+div.hc-ach.t0|.t1|.t2|.t3                        мини-строка последнего достижения (если достижений нет, не выводить)
+  div.ach-medal > Icon('medal')
+  div.hc-ach-text: small «Последнее достижение», b название + « · серебро»
+  span.muted дата                                  span.pill.hot «новое» (при anyNew)
+```
+Без фраз про ранг.

@@ -24,7 +24,7 @@
     playerLoading: false,
     top: null,
     busy: false,
-    coach: { data: null, loading: false, error: null, for: null },
+    coach: { data: null, loading: false, error: null, for: null, progress: null, progressFor: null, progressLoading: false },
     growth: { data: null, loading: false, error: null, for: null, open: null },
     prep: newPrep(),
     codex: { enemy: null, data: {}, pending: new Set(), poolOnly: false },
@@ -1096,7 +1096,9 @@
     try {
       S.coach.data = await dc.coach({ forceNew, evidence, replaceKey });
       S.coach.for = S.auth.accountId;
-      if (forceNew) toast('Новый план готов');
+      if (forceNew) toast('Цели пересобраны');
+      if (replaceKey) toast('Цель заменена');
+      loadProgress();
     } catch (e) {
       S.coach.error = e.message;
       // Ошибка валидации эпизода («Отслеживать в тренере») не должна молчать:
@@ -1109,7 +1111,25 @@
     }
   }
 
-  // Разметка по контракту docs/COACH_UI.md (ветка design/redesign): классы tc-*, стили ведёт сессия дизайна.
+  // Динамика показателей и достижения (данные dc.progress, только сохранённые матчи).
+  async function loadProgress() {
+    if (!S.auth || S.coach.progressLoading) return;
+    S.coach.progressLoading = true;
+    try {
+      S.coach.progress = await dc.progress({});
+      S.coach.progressFor = S.auth.accountId;
+      // «новое» показываем при этом показе, а при следующем визите метки уже сняты
+      if (S.coach.progress.anyNew) setTimeout(() => dc.progress({ markSeen: true }).catch(() => {}), 4000);
+    } catch (e) {
+      S.coach.progress = null;
+      S.coach.progressFor = S.auth.accountId; // не повторять запрос по кругу
+    } finally {
+      S.coach.progressLoading = false;
+      if (S.view === 'coach') renderCoach();
+    }
+  }
+
+  // Разметка по контракту docs/COACH_UI.md (ветка design/redesign): классы tc-*, tp-*, ach-*, стили ведёт сессия дизайна.
   const coachTarget = (check) => `${check.cmp === 'ge' ? '≥' : '≤'} ${check.targetText}`;
   const fmtGoal = (g, v) => (g.key === 'firstBigT' || g.key === 'firstHugeT' ? F.time(v) : g.key === 'kp' || g.key === 'spikeFights' ? F.pct(v) : F.num(v));
   const passClass = (pass) => (pass === true ? '.pass' : pass === false ? '.fail' : '.none');
@@ -1192,6 +1212,53 @@
     return h('div.tc-done-item', Icon('circle-check'), h('div', h('b', f.title), parts ? h('span', parts) : null), h('span.muted', f.doneAt ? dashboardDate(f.doneAt) : ''));
   }
 
+  const trendIcon = { better: 'trending-up', worse: 'trending-down', same: 'minus' };
+  const vsTopPill = { top: ['good', 'на уровне топов'], near: ['warn', 'немного ниже'], below: ['bad', 'заметно ниже'] };
+
+  function progressBlock(pr) {
+    const p = pr.progress;
+    const rows = p.indicators.map((i) => ({ label: i.label, area: i.area, recentText: i.recentText, prevText: i.prevText, trend: i.trend, topText: i.topText, vsTop: i.vsTop }));
+    if (p.errors && p.errors.recent !== null && p.errors.recent !== undefined) {
+      const fmtE = (x) => (x === null || x === undefined ? null : String(Math.round(x * 10) / 10).replace('.', ','));
+      rows.push({ label: 'замечаний «Ошибок» на игру', area: 'Ошибки', recentText: fmtE(p.errors.recent), prevText: fmtE(p.errors.prev), trend: p.errors.trend, topText: null, vsTop: null });
+    }
+    return h('section.tp-block',
+      h('div.tp-head', h('h2', 'Динамика показателей'),
+        p.enough ? h('div.tp-summary',
+          h('span.pill.good', `Заметно выросло: ${p.better}`), h('span.pill.bad', `Снизилось: ${p.worse}`), h('span.pill.warn', `Ниже топов: ${p.belowTop}`)) : null),
+      h('p.tp-note', p.note),
+      p.enough ? h('div.tp-table', rows.map((r) => h(`div.tp-row.${r.trend}`,
+        h('div.tp-label', h('b', r.label), h('small', r.area)),
+        h('div.tp-now', r.recentText),
+        h('div.tp-prev', r.prevText === null || r.prevText === undefined ? '—' : r.prevText),
+        r.trend === 'few' ? h('span.pill.low', 'мало игр') : h('span.tp-trend', Icon(trendIcon[r.trend] || 'minus')),
+        r.topText ? h('div.tp-top', r.topText, vsTopPill[r.vsTop] ? h(`span.pill.${vsTopPill[r.vsTop][0]}`, vsTopPill[r.vsTop][1]) : null) : null)))
+        : h('div.empty', `Нужно ещё ${Math.max(1, p.window + p.minEach - p.games)} ${plural(Math.max(1, p.window + p.minEach - p.games), 'игра', 'игры', 'игр')} для сравнения`));
+  }
+
+  function achievementsBlock(pr) {
+    const cards = pr.achievements.map((a) => {
+      const isNew = a.unlocked.some((u) => u.isNew);
+      const pct = a.next ? Math.min(100, Math.round((a.value / a.next) * 100)) : 100;
+      return h(`article.ach-card.t${a.tier}${isNew ? '.new' : ''}`,
+        h('div.ach-medal', Icon('medal')),
+        h('div',
+          h('h3.ach-title', a.title),
+          h('p.ach-cond', a.cond),
+          h('div.ach-bar', h('span', { style: { width: `${pct}%` } })),
+          h('div.ach-meta', h('span', a.next ? `${a.value} из ${a.next}` : `${a.value} · все ступени взяты`), h('span', a.tierName || 'ещё не взято')),
+          a.unlocked.length ? h('div.ach-unlocks', a.unlocked.map((u) => h('button.ach-chip', {
+            onclick: u.matchId ? () => { setView('matches'); openMatch(u.matchId); } : null,
+            title: u.matchId ? 'Открыть матч, на котором получено' : '',
+          }, `${u.tierName} · ${dashboardDate(u.t)}`))) : null));
+    });
+    return h('section.ach-block',
+      h('div.ach-head', h('h2', 'Достижения'), pr.anyNew ? h('span.pill.hot', 'новое') : null),
+      h('div.ach-grid', cards),
+      pr.records && pr.records.length ? h('div.ach-records', pr.records.map((r) => h('div.ach-record', Icon('trophy'),
+        h('div', 'Новый рекорд на ', h('b', heroName(r.hero)), `: ${F.num(r.value)} ${r.label} (было ${F.num(r.before)})`), h('span.muted', dashboardDate(r.t))))) : null);
+  }
+
   function gameCard(c) {
     return h(`button.gcard${c.won ? '.win' : c.won === false ? '.loss' : ''}`, { onclick: () => { setView('matches'); openMatch(c.match_id); }, title: 'Открыть разбор матча' },
       h('div.gcard-head', heroIcon(c.hero),
@@ -1230,6 +1297,8 @@
       h('div', { style: { marginTop: '12px' } }, h('button.btn.primary', { onclick: () => loadCoach(true), disabled: S.coach.loading || null }, 'Подобрать новые цели'))));
     if (spares.length) parts.push(h('div.tc-spares', spares.map(spareGoalCard)));
     if (d.finished && d.finished.length) parts.push(h('div.tc-done', d.finished.slice(0, 8).map(doneItem)));
+    if (S.coach.progress && S.coach.progressFor === S.auth.accountId) parts.push(progressBlock(S.coach.progress), achievementsBlock(S.coach.progress));
+    else if (!S.coach.progressLoading && S.coach.progressFor !== S.auth.accountId) setTimeout(loadProgress, 0);
     parts.push(h('details.tc-details', h('summary', 'Подробности по играм'),
       d.cards.length ? h('div.gcards', { style: { marginTop: '10px' } }, d.cards.slice(0, 10).map(gameCard)) : h('div.muted', 'Игр пока нет.'),
       h('div.row', { style: { marginTop: '12px' } }, h('button.btn.small', { onclick: () => { if (window.confirm('Пересобрать все цели по последним играм? Текущий прогресс уйдёт в историю.')) loadCoach(true); }, disabled: S.coach.loading || null, title: 'Пересчитать цели по последним играм' }, 'Пересобрать все цели'))));

@@ -90,7 +90,8 @@ function threatsOf(hero, profile) {
   const sf = !dmg.includes('spirit') ? 0 : slots ? Math.max(ramp(slots.spirit, 0.45), spirit.length >= 3 ? 0.8 : 0) : (spirit.length >= 2 || !dmg.includes('weapon') ? 1 : 0);
   // без профиля покупок «пули — основной урон» утверждаем только для героев, где это отмечено явно
   const wf = !dmg.includes('weapon') ? 0 : (hero.primary || []).includes('weapon') ? 1 : slots ? ramp(slots.weapon, 0.35) : 0;
-  const lf = (hero.heal || []).length > 0 ? 1 : profile ? ramp(profile.lifesteal, 0.6) : 0;
+  // healWeight < 1 — у героя лечение побочное (например, Shiv: Bloodletting лишь очищает отложенный урон)
+  const lf = Math.max((hero.heal || []).length > 0 ? (hero.healWeight ?? 1) : 0, profile ? ramp(profile.lifesteal, 0.6) : 0);
   const meleeHeavy = mf >= 0.6;
   const spiritHeavy = sf >= 0.6;
   const weaponHeavy = wf >= 0.6;

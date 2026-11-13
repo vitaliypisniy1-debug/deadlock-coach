@@ -25,6 +25,9 @@ const { matchTips } = require('../core/tipsMatch');
 const { skillOrder, skillConsensus, compareSkills } = require('../core/skills');
 const { heroPool, pickAdvice, gamePlan, buildPickMeta, heroRole, RANKED_HERO_RULE } = require('../core/pick');
 const { counterCodex } = require('../core/counters');
+const { buildHeroProfile } = require('../core/heroProfile');
+const { RULES } = require('../core/counterRules');
+const codexData = require('../core/data/codexData.json');
 const { matchBuild, buildText, buildFile } = require('../core/buildExport');
 const { encodeBuildCode } = require('../core/gameCode');
 
@@ -1474,10 +1477,57 @@ class Sync {
       }
       pool = await this._codexPool.job;
     }
-    const res = counterCodex(X, { pm, table, assets: this.assets, pool, stale: stale && !!pm });
+    const prof = await this.heroBuildProfile(X, pm);
+    const res = counterCodex(X, { pm, table, assets: this.assets, pool, stale: stale && !!pm, profile: prof.profile });
     if (pmError) res.meta.error = pmError;
+    if (prof.error) res.meta.profileError = prof.error;
+    if (prof.at) res.meta.profileAt = prof.at;
     this._codexCache = { X, pmKey: pmKey(pm), tKey, res };
     return res;
+  }
+
+  // Профиль покупок героя для справочника контрпиков: что на нём обычно собирают.
+  // Тот же ранг и окно, что у меты (pm), чтобы число матчей совпадало с hero-stats.
+  // Кэш на 6 часов в файле; при сбое сети берём сохранённое, иначе профиля нет (рекомендации
+  // тогда строятся только по способностям героя и помечаются как «без профиля покупок»).
+  async heroBuildProfile(X, pm) {
+    if (!pm || !pm.base || !pm.base[X]) return { profile: null };
+    const key = `codexbuild-${X}.json`;
+    const cached = this.store.read(key, null);
+    const fresh = cached && cached.badge === pm.badge && Array.isArray(cached.rows) && Date.now() - cached.at < 6 * 3600e3;
+    let rows = fresh ? cached.rows : null;
+    let at = fresh ? cached.at : null;
+    let games = fresh ? cached.games : null;
+    let since = fresh ? cached.since : null;
+    let error = null;
+    if (!rows) {
+      try {
+        if (typeof this.api.itemStatsAnalytics !== 'function') throw new Error('метод недоступен');
+        const lim = (p) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('таймаут 8 с')), 8000))]);
+        // окно: игры после последнего патча (баланс изменился), если их у героя не меньше 1 000; иначе окно меты
+        since = pm.since;
+        games = pm.base[X][1];
+        if (RULES.patchSince > pm.since) {
+          try {
+            const hs = await lim(this.api.heroStatsAnalytics({ since: RULES.patchSince, badge: pm.badge }));
+            const row = (hs || []).find((r) => Number(r.hero_id) === X);
+            if (row && Number(row.matches) >= 1000) { since = RULES.patchSince; games = Number(row.matches); }
+          } catch {
+            // не вышло — остаёмся на окне меты
+          }
+        }
+        const got = await lim(this.api.itemStatsAnalytics({ heroId: X, since, badge: pm.badge }));
+        rows = got.map((r) => ({ item_id: r.item_id, matches: r.matches, bucket: r.bucket })).filter((r) => r.item_id);
+        at = Date.now();
+        this.store.write(key, { at, badge: pm.badge, since, games, rows });
+      } catch (e) {
+        error = e.message;
+        if (cached && Array.isArray(cached.rows)) { rows = cached.rows; at = cached.at; games = cached.games; since = cached.since; }
+      }
+    }
+    const profile = rows ? buildHeroProfile(rows, { codex: codexData, games: games || pm.base[X][1] }) : null;
+    if (profile) profile.since = since || pm.since;
+    return { profile, error, at };
   }
 
   // ---------- общие помощники для тренера и матчапов ----------

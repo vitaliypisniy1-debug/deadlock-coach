@@ -288,6 +288,13 @@ class Api {
     return this._analytics('hero-synergy-stats', opts);
   }
 
+  // Покупки на одном герое (для профиля сборки в справочнике контрпиков):
+  // доля матчей героя с покупкой каждого предмета, игры normal, минимальный средний ранг матча.
+  itemStatsAnalytics({ heroId, since, badge }) {
+    const q = [`hero_id=${Number(heroId)}`, 'game_mode=normal', `min_average_badge=${badge}`, `min_unix_timestamp=${since}`];
+    return this.get(`/v1/analytics/item-stats?${q.join('&')}`, { ttlMs: 3 * 3600e3 }).then((r) => (Array.isArray(r) ? r : []));
+  }
+
   ingestSalts(records) {
     return this.post('/v1/matches/salts', records);
   }

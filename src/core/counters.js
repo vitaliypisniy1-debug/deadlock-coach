@@ -17,6 +17,7 @@ const { pairDelta, baseWr, laneSouls } = require('./pick');
 const { RULES, threatLabel } = require('./counterRules');
 const TABLE = safeRequire('./data/heroThreats.json');
 const CODEX = safeRequire('./data/codexData.json');
+const HEAL = safeRequire('./data/heroHealing.json');
 
 function safeRequire(p) {
   try { return require(p); } catch { return null; }
@@ -77,7 +78,7 @@ const names = (abs) => abs.map((a) => a.name).join(', ');
 const ccList = (a) => (a.cc || []).filter((c) => CC_RU[c]).map((c) => CC_RU[c]).join(', ');
 
 // Угрозы героя: разбор таблицы способностей и профиля покупок.
-function threatsOf(hero, profile) {
+function threatsOf(hero, profile, heal) {
   const abs = hero.abilities || [];
   const spirit = abs.filter((a) => a.damage === 'spirit');
   const weapon = abs.filter((a) => a.damage === 'weapon');
@@ -90,7 +91,10 @@ function threatsOf(hero, profile) {
   const sf = !dmg.includes('spirit') ? 0 : slots ? Math.max(ramp(slots.spirit, 0.45), spirit.length >= 3 ? 0.8 : 0) : (spirit.length >= 2 || !dmg.includes('weapon') ? 1 : 0);
   // без профиля покупок «пули — основной урон» утверждаем только для героев, где это отмечено явно
   const wf = !dmg.includes('weapon') ? 0 : (hero.primary || []).includes('weapon') ? 1 : slots ? ramp(slots.weapon, 0.35) : 0;
-  const lf = (hero.heal || []).length > 0 ? 1 : profile ? ramp(profile.lifesteal, 0.6) : 0;
+  // Лечение: измеренное (сколько герой лечит себя в минуту по реальным матчам) важнее описания способностей;
+  // без измерения — список источников (healWeight < 1 — лечение побочное) и вампиризм в сборке.
+  const healBase = heal ? ramp(heal.perMinute, 400) : (hero.heal || []).length > 0 ? (hero.healWeight ?? 1) : 0;
+  const lf = Math.max(healBase, profile ? ramp(profile.lifesteal, 0.6) : 0);
   const meleeHeavy = mf >= 0.6;
   const spiritHeavy = sf >= 0.6;
   const weaponHeavy = wf >= 0.6;
@@ -103,20 +107,21 @@ function threatsOf(hero, profile) {
   };
 }
 
-function threatLines(hero, t, profile) {
+function threatLines(hero, t, profile, heal) {
   const out = [];
   if (t.spiritHeavy) out.push({ kind: 'spirit', text: `Spirit-урон способностями: ${names(t.spirit.slice(0, 4))}.` });
   if (t.weaponHeavy) out.push({ kind: 'weapon', text: `Урон оружием${hero.weaponDps ? ` (около ${hero.weaponDps} в секунду)` : ''} — пули.` });
   if (t.meleeHeavy) out.push({ kind: 'melee', text: `Много бьёт ближним боем${profile && profile.melee >= 0.5 ? ` (предметы ближнего боя в ${pct(profile.melee)} игр)` : ''}.` });
   if (t.cc.length) out.push({ kind: 'control', text: `Контроль: ${t.cc.map((a) => `${a.name} (${ccList(a)})`).join('; ')}.` });
-  if (t.lifesteal) out.push({ kind: 'heal', text: `Лечится: ${(hero.heal || []).length ? hero.heal.join('; ') : `вампиризм в сборке ${pct(profile.lifesteal)} игр`}.` });
+  if (heal) out.push({ kind: 'heal', text: `Лечит себя в среднем ${Math.round(heal.perMinute)} в минуту (${Math.round(heal.perGame)} за игру, ${pct(heal.shareOfTaken)} полученного урона), ${heal.rank}-е место из ${HEAL.heroesCount} героев${(hero.heal || []).length ? `; источники: ${hero.heal.join('; ')}` : ''}.` });
+  else if (t.lifesteal) out.push({ kind: 'heal', text: `Лечится: ${(hero.heal || []).length ? hero.heal.join('; ') : `вампиризм в сборке ${pct(profile.lifesteal)} игр`}.` });
   if (t.air) out.push({ kind: 'air', text: `Летает или парит${t.airAbs.length ? `: ${names(t.airAbs)}` : ''}.` });
   return out;
 }
 
 // Рекомендуемые предметы: каждый — со списком причин (откуда взялась рекомендация).
-function recommendItems(hero, profile) {
-  const t = threatsOf(hero, profile);
+function recommendItems(hero, profile, heal = null) {
+  const t = threatsOf(hero, profile, heal);
   const cand = new Map();
   const add = (name, score, kind, why) => {
     const rule = RULES.items[name];
@@ -137,6 +142,7 @@ function recommendItems(hero, profile) {
     if (compat.includes('indomitable')) add('Indomitable', 1.5 * w(a), 'control', `${a.name}: очищается автоматически`);
     if (compat.includes('unstoppable') && (a.cc || []).some((c) => HARD_CC.has(c) || c === 'slow')) add('Unstoppable', 1 * w(a), 'control', `${a.name}: подавляется активом`);
     if (compat.includes('dispel') && lasting) add('Dispel Magic', 1.2, 'debuff', `${a.name}: долгий эффект можно снять`);
+    if (compat.includes('counterspell')) add('Counterspell', 1.2 * w(a), 'control', `${a.name}: вики описывает защиту парированием (окно 0.8 с)`);
     if (compat.includes('slowingHex')) add('Slowing Hex', 1 * w(a), 'control', `${a.name}: не даст запустить (Slowing Hex глушит)`);
     if (compat.includes('platedArmor') && t.wf >= 0.3) add('Plated Armor', 1 * t.wf, 'weapon', `${a.name}: эффект от пуль отменяется`);
   }
@@ -147,7 +153,7 @@ function recommendItems(hero, profile) {
     add('Phantom Strike', 3.6, 'air', `летает (${flyers}): стягивает на землю`);
   }
   if (t.lf >= 0.3) {
-    const src = (hero.heal || []).length ? 'лечится способностями и вампиризмом' : `вампиризм в сборке (${pct(profile.lifesteal)} игр)`;
+    const src = heal ? `лечит себя ${Math.round(heal.perMinute)} в минуту (${heal.rank}-е место из ${HEAL.heroesCount})` : (hero.heal || []).length ? 'лечится способностями и вампиризмом' : `вампиризм в сборке (${pct(profile.lifesteal)} игр)`;
     add('Healbane', 3 * t.lf, 'heal', src);
     add('Toxic Bullets', 2.8 * t.lf, 'heal', src);
     add('Decay', 1.5 * t.lf, 'heal', src);
@@ -174,7 +180,7 @@ function recommendItems(hero, profile) {
       tier: shop.tier,
       slot: shop.slot,
       cost: shop.cost,
-      score: Math.round(c.score * 10) / 10,
+      score: Math.round(c.score * 100) / 100,
       kind: [...c.kinds][0],
       kindLabel: threatLabel([...c.kinds][0]),
       why: [...new Set(c.why)],
@@ -187,7 +193,7 @@ function recommendItems(hero, profile) {
   // Дешёвый и подходящий — выше: предметы за 800–1 600 душ чуть выше, за 6 400 — чуть ниже.
   const adj = (i) => i.score * (i.cost <= 1600 ? 1.1 : i.cost >= 6400 ? 0.85 : 1);
   items.sort((a, b) => adj(b) - adj(a) || a.cost - b.cost);
-  return { items: items.filter((i) => i.score >= 1).slice(0, 10), threats: threatLines(hero, t, profile), table: t };
+  return { items: items.filter((i) => i.score >= 1).slice(0, 10), threats: threatLines(hero, t, profile, heal), table: t };
 }
 
 // Контрпредметы против выбранного врага.
@@ -207,12 +213,14 @@ function counterItemsFor(enemyId, { table = {}, assets = null, profile = null } 
     };
   });
   const hero = TABLE && TABLE.heroes && TABLE.heroes[X];
-  const rec = hero ? recommendItems(hero, profile) : { items: [], threats: [] };
+  const heal = hero && HEAL && HEAL.heroes ? HEAL.heroes[X] || null : null;
+  const rec = hero ? recommendItems(hero, profile, heal) : { items: [], threats: [] };
   return {
     purchases,
     recommended: rec.items,
     threats: rec.threats,
     verified: !!hero,
+    healing: heal ? { ...heal, of: HEAL.heroesCount, since: HEAL.since, medianPerMinute: HEAL.medianPerMinute } : null,
     abilities: hero ? hero.abilities.map((a) => ({ slot: a.slot, name: a.name, damage: a.damage, cc: a.cc || [], note: a.note })) : null,
     profile: profile ? { games: profile.games, small: profile.small, top: profile.top, slotShare: profile.slotShare, since: profile.since || null } : null,
     mechanics: [], // прежние «механики 4 героев» заменены общими рекомендациями выше

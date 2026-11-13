@@ -1178,7 +1178,9 @@
           "note": "Рывок на героя, урон 200, казнь ниже 18% здоровья; Slowing Hex не даёт запустить.",
           "lasting": false
         }
-      ]
+      ],
+      "healWeight": 0.4,
+      "healWeightNote": "Лечение Shiv — только очистка части отложенного урона Bloodletting (30%); вампиризма в базе нет, в сборке 20% игр"
     },
     "20": {
       "name": "Ivy",
@@ -1460,7 +1462,8 @@
             "unstoppable",
             "indomitable",
             "reactiveBarrier",
-            "debuffResist"
+            "debuffResist",
+            "counterspell"
           ],
           "note": "Канал 2.3 с, подбрасывает, оглушает и бросает; урон 105; не берёт цели за Cosmic Veil.",
           "lasting": false
@@ -2205,7 +2208,8 @@
             "debuffResist",
             "reactiveBarrier",
             "indomitable",
-            "unstoppable"
+            "unstoppable",
+            "counterspell"
           ],
           "lasting": false,
           "note": "Канал 1с, цель на 6.5с в отеле: 75 урона, при неявке к выходу 125; после возврата 1с затухающий time-slow. КД 140с. T1 -20с КД; T2 +150 урона и стан 1.5с при неявке; T3 Unstoppable у Дворецкого, КД 15с при неявке."
@@ -2432,7 +2436,8 @@
           "compat": [
             "unstoppable",
             "reactiveBarrier",
-            "slowingHex"
+            "slowingHex",
+            "counterspell"
           ],
           "note": "Враги не могут действовать и лечиться 1.8 с, затем урон 200 (+60% по целям ниже 50% здоровья); Apollo в это время неуязвим; Debuff Resist и Debuff Reducer не помогают; сон прерывать не может.",
           "lasting": false
@@ -2711,7 +2716,8 @@
           ],
           "compat": [
             "debuffResist",
-            "unstoppable"
+            "unstoppable",
+            "counterspell"
           ],
           "note": "Шар света: 125 урона, замедление -28% и -22% дистанции рывка на 1.5с, до 8 отскоков (15м), приоритет героев; КД 170с. T1 усиливает замедление (-14%/-14%), T2 +80 урона, T3 +6 отскоков и -30с КД.",
           "lasting": true
@@ -3064,5 +3070,6 @@
   "coverage": {
     "heroes": 44
   },
-  "note": "Таблица собрана по deadlock.wiki (тексты способностей, пометки совместимости) и данным игры build 6861. Типы урона у героев без иконок на вики выведены по множителям Spirit/Weapon; неуверенные места перечислены в side-session-notes."
+  "note": "Таблица собрана по deadlock.wiki (тексты способностей, пометки совместимости) и данным игры build 6861. Типы урона у героев без иконок на вики выведены по множителям Spirit/Weapon; неуверенные места перечислены в side-session-notes.",
+  "counterspellSource": "deadlock.wiki/Counterspell (разделы про Hotel Guest, Death Slam, Itani Lo Sahn, Shining Wonder)"
 }

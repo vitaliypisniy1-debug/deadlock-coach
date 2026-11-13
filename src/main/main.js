@@ -478,6 +478,7 @@ function registerIpc() {
     }
   });
   handle('coach:get', async (opts) => sync.coach(authId(), opts || {}));
+  handle('progress:get', async (opts) => sync.playerProgress(authId(), opts || {}));
   handle('my:dashboard', async (cachedOnly) => sync.dashboard(authId(), { cachedOnly: cachedOnly === true }));
   handle('leaks:get', async () => sync.leaks(authId()));
   handle('mu:mine', async () => sync.matchups(authId()));

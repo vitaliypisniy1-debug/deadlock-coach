@@ -207,3 +207,14 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .ov-btn:hover { border-color: rgba(95, 212, 238, 0.55); }
 .ov-search:focus { border-color: var(--ally); box-shadow: 0 0 0 3px rgba(95,212,238,0.2); }
 :focus-visible { outline: 2px solid var(--ally); outline-offset: 2px; }
+
+/* кнопки героев с артом */
+.gh[style*="--art"] { position: relative; justify-content: flex-end; aspect-ratio: 3 / 4; padding: 0; overflow: hidden; background: linear-gradient(180deg, rgba(8,18,22,0) 45%, rgba(8,18,22,0.94)), var(--art) center top / cover no-repeat, var(--panel); }
+.gh[style*="--art"] span { position: relative; padding: 16px 4px 6px; color: #fff; font-size: 11.5px; font-weight: 700; text-shadow: 0 1px 5px #000; }
+.gh[style*="--art"]:hover { transform: translateY(-2px); border-color: var(--accent); }
+.gh[style*="--art"].enemies { box-shadow: inset 0 0 0 2px var(--enemy); }
+.gh[style*="--art"].allies { box-shadow: inset 0 0 0 2px var(--ally); }
+.gh[style*="--art"].me { box-shadow: inset 0 0 0 2px var(--you); }
+.ov-grid { grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); gap: 8px; }
+.gh[style*="--art"] { align-self: start; width: 100%; height: auto; min-height: 0; }
+.gh[style*="--art"] { aspect-ratio: auto; height: 124px; flex: none; }

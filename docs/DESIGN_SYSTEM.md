@@ -29,6 +29,7 @@
 - Таблица: `table.table` (`th.sortable`, `tr.click`, `td.num`, `td.r`), герой в ячейке: `.hero-cell` + `heroIcon()`.
 - Вкладки и переключатель: `.tabs > .tab(.active)`, `.seg > button(.on)`.
 - Список матчей: `.match(.win|.loss)`, `.day-head`.
+- Герои с артом: кнопка выбора `.hpick` (карточка героя с подсветкой цвета героя), плашка `.hero-pick`, строка `.dash-hero-row`. Данные: `style: heroArtStyle(герой)` из `app.js` (CSS-переменные `--art`, `--wide`, `--hc`). Для нового списка героев использовать этот приём, а не маленькую иконку.
 - Шаги: `.step-head > .step-n + h2`, выбор героя: `.hgrid > .hpick(.on|.lane)`.
 - Пустое состояние: `.empty` с `strong`; ожидание: `skeleton()`.
 - Иконки: `Icon('имя')`, имена из `vendor/lucide-icons.js` (например `flame`, `lightbulb`, `refresh-cw`, `arrow-right`, `trophy`, `zap`, `target`, `swords`, `skull`, `clock`).

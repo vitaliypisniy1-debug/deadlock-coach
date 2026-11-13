@@ -64,6 +64,13 @@
     if (hero && hero.img) return h(`img.hero-ico${cls}`, { src: hero.img, alt: '', loading: 'lazy' });
     return h(`div.hero-ico.ph${cls}`, heroName(id).slice(0, 2));
   }
+  // Арты героя из справочника игры (card — вертикальная карточка, wide — фон) и цвет героя для подсветки.
+  const cssUrl = (u) => (u ? `url("${String(u).replace(/["\\]/g, '')}")` : 'none');
+  const heroArtStyle = (hh) => {
+    if (!hh) return null;
+    const c = Array.isArray(hh.color) && hh.color.length === 3 ? hh.color.join(',') : '255,122,69';
+    return `--art: ${cssUrl(hh.card || hh.img)}; --wide: ${cssUrl(hh.wide || hh.card || hh.img)}; --hc: ${c}`;
+  };
   const heroCardStyle = (id) => {
     const hh = S.assets.heroes[id];
     const src = hh && (hh.card || hh.img);
@@ -1258,8 +1265,8 @@
     const order = new Map(mine.map((x, i) => [x.hero_id, i]));
     const list = allHeroes().slice().sort((a, b) => (order.has(a.id) ? order.get(a.id) : 999) - (order.has(b.id) ? order.get(b.id) : 999) || a.name.localeCompare(b.name));
     const sel = new Set(multi ? selected : [selected]);
-    return h('div.hgrid', list.map((x) => h(`button.hpick${sel.has(x.id) ? '.on' : ''}${lane === x.id ? '.lane' : ''}`, { disabled: disabled.has(x.id) || null, onclick: () => onPick(x.id), title: x.name },
-      x.img ? h('img', { src: x.img, alt: '' }) : h('span.ph', x.name.slice(0, 2)),
+    return h('div.hgrid', list.map((x) => h(`button.hpick${sel.has(x.id) ? '.on' : ''}${lane === x.id ? '.lane' : ''}`, { disabled: disabled.has(x.id) || null, onclick: () => onPick(x.id), title: x.name, style: heroArtStyle(x) },
+      (x.card || x.img) ? null : h('span.ph', x.name.slice(0, 2)),
       h('span', x.name),
       lane === x.id ? h('i', 'линия') : null)));
   }
@@ -1885,7 +1892,7 @@
     const deltaText = delta === null ? 'Для сравнения нужно больше матчей с результатом.'
       : `${delta > 0 ? '+' : ''}${delta.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} п. п. к обычному винрейту`;
     const heroRows = h('div.dash-heroes', d.heroes.slice(0, 5).map((x) =>
-      h('button.dash-hero-row', { onclick: () => { setView('myheroes'); openHeroSummary(x.heroId); } },
+      h('button.dash-hero-row', { style: heroArtStyle(S.assets.heroes[x.heroId]), onclick: () => { setView('myheroes'); openHeroSummary(x.heroId); } },
         heroIcon(x.heroId), h('div', h('strong', heroName(x.heroId)), h('div.dash-hero-track', h('span', { style: { width: `${x.games / d.heroes[0].games * 100}%` } }))),
         h('span.muted.small', `${x.games} ${plural(x.games, 'матч', 'матча', 'матчей')} · ${x.wins}–${x.losses}${x.unknown ? ' · без результата: ' + x.unknown : ''}`),
         h('span.num', x.wins + x.losses >= 3 ? F.pct(x.wr) : '—'))));
@@ -2347,7 +2354,7 @@
   function heroModeArea() {
     if (S.my.heroesLoading && !S.my.heroes) return h('div.panel', h('div.row', h('span.spin'), 'Собираю твоих героев…'));
     if (!S.my.heroes || !S.my.heroes.length) return h('div.empty', h('strong', 'Пока нет игр'), 'Сыграй пару матчей — и здесь появится сводка по каждому твоему герою.');
-    const picker = h('div.hero-picker', S.my.heroes.map((x) => h(`button.hero-pick${S.my.hero === x.hero_id ? '.on' : ''}`, { onclick: () => openHeroSummary(x.hero_id), title: x.topGames ? `Игр топов на этом герое: ${x.topGames}` : 'Игр топов на этом герое пока нет' },
+    const picker = h('div.hero-picker', S.my.heroes.map((x) => h(`button.hero-pick${S.my.hero === x.hero_id ? '.on' : ''}`, { style: heroArtStyle(S.assets.heroes[x.hero_id]), onclick: () => openHeroSummary(x.hero_id), title: x.topGames ? `Игр топов на этом герое: ${x.topGames}` : 'Игр топов на этом герое пока нет' },
       heroIcon(x.hero_id),
       h('span.hero-pick-name', heroName(x.hero_id)),
       h('span.hero-pick-meta.num', `${x.games} · ${x.games ? Math.round((x.wins / x.games) * 100) : 0}%`))));

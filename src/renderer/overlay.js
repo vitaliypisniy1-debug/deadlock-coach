@@ -253,7 +253,8 @@
         title: `${x.name}${pool.has(x.id) ? ' · в твоём списке' : ''}`,
         onclick: (e) => assign(x.id, e.shiftKey ? 'me' : S.mode),
         oncontextmenu: (e) => { e.preventDefault(); assign(x.id, 'allies'); },
-      }, heroImg(x.id), h('span', x.name));
+        style: x.card ? `--art: url("${String(x.card).replace(/["\\]/g, '')}")` : null,
+      }, x.card ? null : heroImg(x.id), h('span', x.name));
     }));
   }
 

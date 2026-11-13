@@ -74,7 +74,7 @@
   const heroCardStyle = (id) => {
     const hh = S.assets.heroes[id];
     const src = hh && (hh.card || hh.img);
-    return src ? `--hero-bg: url("${String(src).replace(/"/g, '')}")` : null;
+    return src ? `--hero-bg: url("${String(src).replace(/"/g, '')}"); ${heroArtStyle(hh)}` : null;
   };
   const heroImgSrc = (id) => (S.assets.heroes[id] && S.assets.heroes[id].img) || null;
   function mapPanel(map, focusSlot, title = 'Карта матча', focusName = 'Ты') {
@@ -363,7 +363,7 @@
     const sub = m
       ? `${regionName} · топ-${S.settings.topN} · последние ${m.days} дн. · ${m.totalMatches} ${plural(m.totalMatches, 'матч', 'матча', 'матчей')} · обновлено ${F.ago(S.status ? S.status.lastSync : m.generatedAt)}`
       : `${regionName} · топ-${S.settings.topN} · последние ${S.settings.days} дн.`;
-    const head = h('div.page-head',
+    const head = h(S.metaTab === 'players' ? 'div.page-head.scene-players' : 'div.page-head',
       h('div', h('div.crumbs', `Мета · топ-${S.settings.topN} текущего сезона`), h('h1', S.metaTab === 'players' ? 'Про-игроки' : 'Мета героев'), h('div.sub', sub)),
       h('div.row', S.busy ? h('span.muted.row', h('span.spin'), 'Собираю данные…') : null,
         h('button.btn.primary', { onclick: refreshTop, disabled: S.busy }, Icon('refresh'), 'Обновить данные')));
@@ -1801,6 +1801,7 @@
     const header = h('div.dash-rank-head', rankImg(Math.floor(last.badge / 10), last.badge % 10),
       h('div', h('strong', badgeLabel(last.badge)), h('div.muted.small', `Последняя отметка · ${dashboardDate(last.time)}`)));
     if (points.length === 1) return h('div', header, h('div.hint', 'Для графика нужны хотя бы две отметки.'));
+    if (window.Charts && window.Charts.rankChart) return h('div', header, window.Charts.rankChart(points, { label: badgeLabel, onOpen: openDashboardMatch }), h('div.hint', `${points.length} отметок · ${season ? 'текущий сезон' : 'последние 30 дней'}`));
     const levels = [...new Set(points.map((p) => p.badge))].sort((a, b) => a - b);
     const from = points[0].time;
     const end = last.time;
@@ -2277,7 +2278,7 @@
   function renderCamp() {
     const v = $('view-camp');
     const hero = S.my.mode === 'hero';
-    const head = h('div.page-head', h('div', h('div.crumbs', hero ? 'Моя игра / Мои герои' : 'Моя игра / Мои матчи'), h('h1', hero ? 'Мои герои' : 'Мои матчи'),
+    const head = h(hero ? 'div.page-head.scene-heroes' : 'div.page-head', h('div', h('div.crumbs', hero ? 'Моя игра / Мои герои' : 'Моя игра / Мои матчи'), h('h1', hero ? 'Мои герои' : 'Мои матчи'),
       h('div.sub', hero ? 'Сводка по каждому твоему герою против топов на нём: что получается, что повторяется из игры в игру, матчапы.' : 'Выбери игру — сравню её с топами на том же герое по минутам и покажу, где ты отстаёшь. Можно сравнить бок о бок с матчем про-игрока.')));
     if (!S.auth) {
       const input = h('input.input', { placeholder: 'Ссылка на профиль Steam: …/id/ник или …/profiles/7656…', style: { width: '100%' } });

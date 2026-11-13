@@ -709,3 +709,37 @@ body::before {
 .tc-done-item span { color: var(--muted); font-size: 14px; }
 .tc-details { margin-bottom: 20px; }
 .tc-details > summary { cursor: pointer; font: 600 16px var(--body); color: var(--sky); padding: 10px 2px; }
+
+/* ==========================================================================
+   Правки по замечаниям: без лучей, пустые состояния с иллюстрациями, заставки героев
+   ========================================================================== */
+.leak-focus::before, .panel.kraft::before, .coach-focus .goal::before, .tc-main::before { content: none; }
+.dash-banner h1::after { content: none; }
+
+.empty { --empty-art: url('assets/art/empty-generic.svg'); padding: 28px 24px 30px; }
+.empty::before { content: ''; display: block; width: min(250px, 70%); aspect-ratio: 8 / 5; margin: 0 auto 14px; background: var(--empty-art) center / contain no-repeat; }
+#view-camp .empty { --empty-art: url('assets/art/empty-matches.svg'); }
+#view-codex .empty { --empty-art: url('assets/art/empty-codex.svg'); }
+#view-prep .empty { --empty-art: url('assets/art/empty-codex.svg'); }
+#view-coach .empty { --empty-art: url('assets/art/empty-coach.svg'); }
+#view-growth .empty { --empty-art: url('assets/art/empty-coach.svg'); }
+#view-meta .empty { --empty-art: url('assets/art/empty-meta.svg'); }
+
+/* заставка героя: портрет, фон героя и свечение в его цвете */
+.hero-banner { --hc: 255, 122, 69; position: relative; isolation: isolate; overflow: hidden; }
+.hero-banner::before {
+  content: ''; position: absolute; z-index: -1; inset: 0; background-image: none; filter: none; opacity: 1; mask-image: none; -webkit-mask-image: none;
+  background:
+    linear-gradient(90deg, rgba(8, 18, 22, 0.96) 22%, rgba(8, 18, 22, 0.55) 52%, rgba(8, 18, 22, 0.1) 100%),
+    var(--art, none) 78% 8% / auto 150% no-repeat,
+    radial-gradient(60% 130% at 82% 35%, rgba(var(--hc), 0.5), transparent 70%),
+    var(--wide, none) right center / cover no-repeat;
+}
+.hero-banner::after { content: ''; position: absolute; z-index: -1; left: 0; right: 0; bottom: 0; top: auto; width: auto; height: 3px; background: linear-gradient(90deg, rgb(var(--hc)), transparent 70%); }
+.page-head.hero-banner { background: var(--panel); min-height: 190px; }
+.hero-sum.hero-banner { min-height: 250px; background: var(--panel); }
+.hero-sum.hero-banner .hero-sum-text { max-width: 54ch; text-shadow: 0 1px 10px rgba(0, 0, 0, 0.7); }
+.hero-sum.hero-banner .hero-sum-stats > div { background: rgba(8, 18, 22, 0.72); backdrop-filter: blur(6px); }
+.hero-sum.hero-banner .hero-sum-name { font-size: 46px; text-shadow: 0 4px 28px rgba(var(--hc), 0.6); }
+.page-head.scene-heroes { --scene: url('assets/art/scene-myheroes.svg'); }
+.page-head.scene-players { --scene: url('assets/art/scene-players.svg'); }

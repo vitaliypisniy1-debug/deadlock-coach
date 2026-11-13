@@ -43,3 +43,5 @@
 Собственные арты лежат в `src/renderer/assets/art/` (генератор `tools/make-art.js`, просмотр `assets/art/index.html`): `skyline-*.svg` — силуэты города, `emblem-*.svg` — эмблемы разделов (шапка экрана берёт их через `--emblem` в theme.css), `rays-*.svg` — лучи ар-деко для главных блоков, `hex-grid.svg` и `hero-shards.svg` — подложка карточек героев, `divider-deco.svg`. В CSS доступны переменные `--art-skyline`, `--art-dawn`, `--art-teal`, `--art-rays`, `--art-hex`, `--art-shards`. Новый арт добавляется в генератор, а не рисуется вручную.
 
 Сцены шапок: `assets/art/scene-*.svg` (по одной на раздел, свои композиции, генератор `tools/make-scenes.js`, просмотр `assets/art/scenes.html`); значки классов героев `class-*.svg`. Параллакс шапок, наклон карточек и искры на фоне: `fx.js`.
+
+Графики: `charts-ec.js` (Apache ECharts, `vendor/echarts.min.js`) подменяет lineChart, formChart и добавляет rankChart; прежние SVG-графики в `charts.js` остаются запасными. Пустые состояния: `.empty` получает иллюстрацию по разделу (`assets/art/empty-*.svg`). Заставки героев: `.hero-banner` берёт `--art`, `--wide`, `--hc` из `heroCardStyle()`.

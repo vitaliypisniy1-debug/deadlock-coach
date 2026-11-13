@@ -845,3 +845,10 @@ body::before {
 .match .hero-ico { width: 46px; height: 46px; }
 .match-sub { font-size: 11.5px; }
 .match-sub .res { margin-right: 4px; letter-spacing: 0.03em; }
+
+/* гербы героев в списках и таблицах */
+.hero-ico.crest { background: none; border: 0; box-shadow: none; padding: 0; display: block; flex: none; overflow: visible; }
+.hero-ico.crest svg { display: block; width: 100%; height: 100%; filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.55)); transition: transform 0.2s var(--ease); }
+.match:hover .hero-ico.crest svg, .dash-hero-row:hover .hero-ico.crest svg, .table tr.click:hover .hero-ico.crest svg { transform: scale(1.08) rotate(-3deg); }
+.hero-cell .hero-ico.crest { width: 48px; height: 48px; }
+.hero-ico.crest.sm { width: 28px; height: 28px; }

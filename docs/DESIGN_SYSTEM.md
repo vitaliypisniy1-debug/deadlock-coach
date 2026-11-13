@@ -45,3 +45,5 @@
 Сцены шапок: `assets/art/scene-*.svg` (по одной на раздел, свои композиции, генератор `tools/make-scenes.js`, просмотр `assets/art/scenes.html`); значки классов героев `class-*.svg`. Параллакс шапок, наклон карточек и искры на фоне: `fx.js`.
 
 Графики: `charts-ec.js` (Apache ECharts, `vendor/echarts.min.js`) подменяет lineChart, formChart и добавляет rankChart; прежние SVG-графики в `charts.js` остаются запасными. Пустые состояния: `.empty` получает иллюстрацию по разделу (`assets/art/empty-*.svg`). Заставки героев: `.hero-banner` берёт `--art`, `--wide`, `--hc` из `heroCardStyle()`.
+
+Герои в списках и таблицах: `heroIcon()` рисует герб героя (`crest.js`: форма по классу, цвет героя, буква), крупные портреты `.lg`/`.xl` берут арт героя. Для нового списка героев использовать `heroIcon(id)`.

@@ -17,6 +17,8 @@ const { soloDeathRows } = require('../core/deaths');
 const { mapData } = require('../core/mapdata');
 const { heroReport } = require('../core/heroReport');
 const { updateCoach } = require('../core/coach');
+const { progressView } = require('../core/progress');
+const { achievementsView } = require('../core/achievements');
 const { T: clockT } = require('../core/tipkit');
 const { macroReview } = require('../core/macro');
 const { myMatchups, heroVs, prepare, heroOutlook } = require('../core/matchups');
@@ -1645,17 +1647,12 @@ class Sync {
     return out;
   }
 
-  // ---------- личный тренер ----------
-  async coach(accountId, { forceNew = false, evidence = null, replaceKey = null } = {}) {
-    const id = Number(accountId);
-    const list = await this.myLoadedGames(id, { limit: 40, download: 25, label: 'Тренер смотрит твои матчи' });
-    const heroName = (h) => (this.assets && this.assets.heroes[h] ? this.assets.heroes[h].name : `герой ${h}`);
-    const itemName = (i) => (this.assets && this.assets.items[i] ? this.assets.items[i].name : `предмет ${i}`);
-    // сессии и пауза после поражения
+  // Игры по возрастанию времени с признаками сессии и паузы после поражения.
+  _gamesFrom(list) {
     let prevEnd = null;
     let prevWon = null;
     let pos = 0;
-    const games = list.map(({ row, match, me }) => {
+    return list.map(({ row, match, me }) => {
       const start = Number(row.start_time) || 0;
       const dur = Number(row.match_duration_s) || 0;
       const gapMin = prevEnd === null ? null : (start - prevEnd) / 60;
@@ -1682,6 +1679,15 @@ class Sync {
       prevWon = won;
       return g;
     });
+  }
+
+  // ---------- личный тренер ----------
+  async coach(accountId, { forceNew = false, evidence = null, replaceKey = null } = {}) {
+    const id = Number(accountId);
+    const list = await this.myLoadedGames(id, { limit: 40, download: 25, label: 'Тренер смотрит твои матчи' });
+    const heroName = (h) => (this.assets && this.assets.heroes[h] ? this.assets.heroes[h].name : `герой ${h}`);
+    const itemName = (i) => (this.assets && this.assets.items[i] ? this.assets.items[i].name : `предмет ${i}`);
+    const games = this._gamesFrom(list);
     const lobbyF = [];
     for (const g of games) if (g.match && g.me) for (const p of g.match.players) if (p !== g.me && !p.abandoned) lobbyF.push(playerFeatures(p, g.match, this.assets));
     const lobby = refAll(lobbyF);
@@ -1792,6 +1798,45 @@ class Sync {
     view.topsReady = topHero.size > 0;
     view.loaded = games.filter((g) => g.f).length;
     return view;
+  }
+
+  // ---------- динамика показателей и достижения ----------
+  // Только сохранённые матчи (без скачивания): динамика, сравнение с топами на твоих героях, достижения.
+  async playerProgress(accountId, { markSeen = false } = {}) {
+    const id = Number(accountId);
+    const list = await this.myLoadedGames(id, { limit: 300, download: 0, label: '' });
+    const heroName = (h) => (this.assets && this.assets.heroes[h] ? this.assets.heroes[h].name : `герой ${h}`);
+    const itemName = (i) => (this.assets && this.assets.items[i] ? this.assets.items[i].name : `предмет ${i}`);
+    const games = this._gamesFrom(list);
+    const loaded = games.filter((g) => g.f);
+    const topHero = await this.topFeaturesByHero();
+    const counters = this.counterTable();
+    // замечания «Ошибок» на игру — для последних 30 свежих игр
+    const tierOf = (g) => (g.match && Array.isArray(g.match.badge) && g.me && typeof g.match.badge[g.me.team] === 'number' ? Math.floor(g.match.badge[g.me.team] / 10) : null);
+    const errors = [];
+    for (const g of loaded.filter((x) => (x.match.v || 1) >= EXTRACT_V).slice(-30)) {
+      try {
+        const leaks = gameLeaks({ m: g.match, me: g.me, f: g.f, ref: topHero.get(g.hero) || null, tier: tierOf(g), assets: this.assets, counters, heroName, itemName });
+        errors.push({ match_id: g.match_id, n: leaks.filter((l) => l.level !== 'good').length });
+      } catch {}
+    }
+    const prog = progressView({ games: loaded, topHero, errors });
+    // выполненные цели тренера (без дублей)
+    const coachState = this.store.read(`coach-${id}.json`, null) || {};
+    const seenDone = new Set();
+    const finished = [];
+    for (const g of [...((coachState.plan && coachState.plan.goals) || []), ...(coachState.archive || [])]) {
+      if (g.status !== 'done') continue;
+      const k = `${g.key}|${g.title}`;
+      if (seenDone.has(k)) continue;
+      seenDone.add(k);
+      finished.push({ title: g.title, doneAt: g.doneAt || g.endedAt || null });
+    }
+    const stored = this.store.read(`achievements-${id}.json`, null) || {};
+    const ach = achievementsView({ games: loaded, finished, progress: prog, prevUnlocked: stored.unlocked || {}, seen: stored.seen || null });
+    const next = { unlocked: ach.unlocked, seen: markSeen ? ach.unlocked : stored.seen || stored.unlocked || ach.unlocked };
+    if (JSON.stringify(next) !== JSON.stringify(stored)) this.store.write(`achievements-${id}.json`, next);
+    return { progress: prog, achievements: ach.items, records: ach.records, anyNew: ach.anyNew, games: loaded.length };
   }
 
   // ---------- матчапы ----------

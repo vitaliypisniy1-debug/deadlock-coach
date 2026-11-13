@@ -730,4 +730,4 @@ function updateCoach(state, data, { forceNew = false, focusEvidence = null, repl
   };
 }
 
-module.exports = { updateCoach, checkGame, candidates, pickGoals, chooseGoals, calibrate, CATALOG, GOALS_MAX, GOALS_MIN };
+module.exports = { updateCoach, checkGame, candidates, pickGoals, chooseGoals, calibrate, fmtOf, CATALOG, GOALS_MAX, GOALS_MIN };

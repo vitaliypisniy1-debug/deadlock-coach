@@ -756,6 +756,26 @@ test('coach: goal honesty — easy goals skipped, too-hard goals get steps, no c
   assert.ok(!r3.view.goals.some((g) => g.key === 'd10' && g.status === 'active'));
 });
 
+test('coach: survivability goal from episode — pass only for checked games', () => {
+  const now = 1_900_000_000;
+  const evidence = { key: 'survivability_purchase', matchId: 5, t: 1500, title: 'Серия смертей без живучести', text: 'С 25:00 ты погиб 3 раза' };
+  const games = [{ match_id: 5, start_time: now - 600, hero: 72, f: { survivability_purchase: 0 } }];
+  const r = updateCoach(null, { now, games, topHero: new Map(), lobby: {}, extra: {} }, { focusEvidence: evidence });
+  const g = r.view.goals[0];
+  assert.strictEqual(g.key, 'survivability_purchase');
+  assert.strictEqual(g.cmp, 'ge');
+  assert.strictEqual(g.target, 1);
+  assert.strictEqual(g.evidence.t, 1500);
+  assert.strictEqual(g.baseline, 0, 'до цели замечание было');
+  const next = [...games, { match_id: 6, start_time: now + 60, hero: 72, f: { survivability_purchase: 1 } }, { match_id: 7, start_time: now + 120, hero: 72, f: { survivability_purchase: null } }, { match_id: 8, start_time: now + 180, hero: 72, f: { survivability_purchase: 0 } }];
+  const after = updateCoach(r.state, { now: now + 240, games: next, topHero: new Map(), lobby: {}, extra: {} });
+  const goal = after.view.goals.find((x) => x.key === 'survivability_purchase');
+  assert.strictEqual(goal.games, 2, 'игра без возможности проверки не считается');
+  assert.strictEqual(goal.passed, 1);
+  assert.ok(goal.how.includes("3 смерти и больше"));
+  assert.ok(goal.rows.every((x) => !/undefined|NaN/.test(x.text)));
+});
+
 test('coach: why this goal — only measured facts, wins link only with enough games', () => {
   const now = 1_900_000_000;
   const games = Array.from({ length: 8 }, (_, i) => ({ match_id: 900 + i, start_time: now - (9 - i) * 1000, hero: 72, f: { d10: 2 } }));

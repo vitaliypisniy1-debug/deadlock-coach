@@ -2920,7 +2920,7 @@
       h('div.hint', `Основание — «${goal.reason}» в ${goal.count} из ${goal.eligible} матчей, которые можно было проверить.`),
       h('div.row',
         h('button.btn.small', { onclick: () => openGrowthEpisode(goal.episode) }, `Открыть эпизод · ${F.time(goal.episode.t)}`),
-        ['lane_trades', 'lost_souls', 'solo_deaths'].includes(goal.key) ? h('button.btn.small', { disabled: S.coach.loading || null, onclick: () => {
+        ['lane_trades', 'lost_souls', 'solo_deaths', 'survivability_purchase'].includes(goal.key) ? h('button.btn.small', { disabled: S.coach.loading || null, onclick: () => {
           loadCoach(false, { ...goal.episode, key: goal.key === 'lane_trades' ? undefined : goal.key });
           setView('coach');
         } }, 'Отслеживать в тренере') : null)) : null;

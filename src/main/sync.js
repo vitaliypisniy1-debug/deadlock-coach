@@ -17,6 +17,7 @@ const { soloDeathRows } = require('../core/deaths');
 const { mapData } = require('../core/mapdata');
 const { heroReport } = require('../core/heroReport');
 const { updateCoach } = require('../core/coach');
+const { T: clockT } = require('../core/tipkit');
 const { macroReview } = require('../core/macro');
 const { myMatchups, heroVs, prepare, heroOutlook } = require('../core/matchups');
 const { proCandidates, versus } = require('../core/versus');
@@ -1739,6 +1740,16 @@ class Sync {
         focusEvidence = { key: 'solo_deaths', matchId: m.match_id, t: row.t, x: row.x, y: row.y, title: 'Смерть в одиночку',
           text: killer ? `Смерть вдали от команды — убил ${heroName(killer.hero_id)}` : 'Смерть вдали от команды',
           context: 'В момент смерти ни один живой союзник не был ближе 2 500 единиц карты (≈8 с бега).' };
+      } else if (evidence.key === 'survivability_purchase') {
+        const g = me && { match: m, me, f: playerFeatures(me, m, this.assets), hero: me.hero_id };
+        let leak = null;
+        try {
+          leak = g && gameLeaks({ m, me, f: g.f, ref: topHero.get(me.hero_id) || null, tier: tierOf(g), assets: this.assets, counters, heroName, itemName }).find((l) => l.key === 'survivability_purchase');
+        } catch {}
+        const moment = leak && (leak.moments || []).find((x) => x.t === evidence.t);
+        if (!moment) throw new Error('Эту серию смертей не удалось подтвердить в сохранённом матче.');
+        focusEvidence = { key: 'survivability_purchase', matchId: m.match_id, t: moment.t, x: moment.x, y: moment.y, title: 'Серия смертей без живучести',
+          text: `Серия из ${leak.moments.length} смертей с ${clockT((leak.moments[0] || moment).t)} без покупки живучести`, context: leak.context };
       } else {
         const foe = me && m.players.find((p) => p.slot === me.deaths?.find((d) => d[0] === evidence.t)?.[3]);
         if (!foe || foe.team === me.team || me.lane == null || foe.lane !== me.lane || !(evidence.t >= 0 && evidence.t <= 600)) {
@@ -1746,6 +1757,12 @@ class Sync {
         }
         focusEvidence = { matchId: m.match_id, t: evidence.t, title: 'Смерть на линии', text: `Смерть от ${heroName(foe.hero_id)}` };
       }
+    }
+    // Признак «после серии смертей куплена живучесть»: 1 — замечания нет, 0 — есть, null — игру проверить нельзя.
+    for (const g of games) {
+      if (!g.f || !g.match || !g.me || (g.match.v || 1) < EXTRACT_V) continue;
+      const r = leaksOf(g);
+      g.f = { ...g.f, survivability_purchase: r.leaks.some((l) => l.key === 'survivability_purchase') ? 0 : r.checked.includes('survivability_purchase') ? 1 : null };
     }
     // Как часто повторяется замечание и как связано с победами — основание цели «Почему именно это».
     let leakStats = {};

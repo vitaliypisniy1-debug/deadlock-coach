@@ -24,7 +24,7 @@ const T_DOWN = (step) => (me, ref) => (me === null || ref === null || me <= ref 
 
 const CATALOG = [
   {
-    key: 'd10', family: 'deaths', fmt: (v) => D1(v), area: 'Выживание', cmp: 'le', heroSpecific: false,
+    key: 'd10', family: 'deaths', fmt: (v) => D1(v), area: 'Выживание', cmp: 'le', heroSpecific: false, focusTarget: 1,
     metric: (g) => g.f && g.f.d10,
     title: (t) => (t === 0 ? 'Не умирать до 10:00' : `Не больше ${t} ${plural(t, 'смерти', 'смертей', 'смертей')} до 10:00`),
     short: 'смерти до 10:00',
@@ -130,7 +130,7 @@ const CATALOG = [
     stretch: T_UP(50),
   },
   {
-    key: 'lost_souls', family: 'soulRisk', fmt: N, area: 'Выживание', cmp: 'le', heroSpecific: false,
+    key: 'lost_souls', family: 'soulRisk', fmt: N, area: 'Выживание', cmp: 'le', heroSpecific: false, focusTarget: 0,
     metric: (g) => g.match && g.me ? majorSoulLosses(g.me, g.match.duration_s) : null,
     title: () => `Ни одной смерти с потерей ${N(SOUL_LOSS_THRESHOLD)} душ или больше`,
     short: 'смерти с крупной потерей душ',
@@ -140,12 +140,22 @@ const CATALOG = [
   {
     // field — где лежит значение в признаках: ключ цели не совпадает с именем поля,
     // потому что цель должна находить эпизоды «Ошибок» по тому же ключу (solo_deaths).
-    key: 'solo_deaths', family: 'soloDeaths', field: 'soloDeaths', fmt: N, area: 'Выживание', cmp: 'le', heroSpecific: false,
+    key: 'solo_deaths', family: 'soloDeaths', field: 'soloDeaths', fmt: N, area: 'Выживание', cmp: 'le', heroSpecific: false, focusTarget: 1,
     metric: (g) => g.f && g.f.soloDeaths,
     title: (t) => `Смертей в одиночку после 10:00 — не больше ${t}`,
     short: 'смерти в одиночку',
     tip: 'Не заходи на чужую половину и к объектам без напарника: фарми рядом с командой или на своей половине. Соперники пропали с миникарты — отходи к своим, даже если лагерь не добит.',
     make: (me) => (me === null || me <= 1.5 ? null : { target: Math.max(1, Math.round(me) - 1), gap: Math.min(0.6, (me - 1.5) / 3) }),
+  },
+  {
+    // Цель из эпизода «Ошибок»: после серии из 3+ смертей — предмет живучести. Метрика: 1 — замечания нет
+    // (серии не было или живучесть куплена), 0 — замечание есть, нет значения — игру проверить нельзя.
+    key: 'survivability_purchase', family: 'survivability', field: 'survivability_purchase', fmt: (v) => (v >= 1 ? 'без замечаний' : 'есть замечание'), area: 'Предметы', cmp: 'ge', heroSpecific: false, focusTarget: 1,
+    metric: (g) => g.f && g.f.survivability_purchase,
+    title: () => 'После серии из трёх смертей — купить предмет живучести',
+    short: 'живучесть после серии смертей',
+    tip: 'После двух смертей подряд проверь остаток душ и купи предмет живучести (здоровье, сопротивление, барьер) до следующей драки, а не после неё.',
+    make: () => null,
   },
   {
     key: 'kp', family: 'kp', fmt: P, area: 'Драки', cmp: 'ge', heroSpecific: false,
@@ -223,6 +233,7 @@ const ACT = {
   neu9: 'Бери ближний лесной лагерь сразу, как он появился.',
   brk9: 'Между волнами заходи за коробками там, где безопасно.',
   lost_souls: 'Перед рискованным пушем проверь мешок душ — потрать или отойди.',
+  survivability_purchase: 'После двух смертей подряд купи предмет живучести до следующей драки.',
   solo_deaths: 'Не ходи один на чужую половину и к объектам — держись рядом с командой.',
   kp: 'Смотри на карту и иди на ближайшую драку.',
   dmgMin: 'Когда враг рядом — стреляй по нему, а не по крипам.',
@@ -236,9 +247,10 @@ const HOW = {
   solo_deaths: 'После каждой игры считаем смерти после 10:00, когда ближайший живой союзник был дальше ~8 секунд бега.',
   lost_souls: 'После каждой игры смотрим, сколько душ потеряно при каждой смерти.',
   d10: 'После каждой игры считаем твои смерти до 10:00.',
+  survivability_purchase: 'Считаем игры, где после 10:00 было 3 смерти и больше: смотрим, была ли серия смертей подряд и куплен ли предмет живучести от 1 250 душ после её начала. Остальные игры и игры без данных не считаются.',
 };
 // Какое правило «Ошибок» стоит за целью (для основания «в N из M игр»).
-const LEAK_OF = { d10: 'lane_trades', solo_deaths: 'solo_deaths', lost_souls: 'lost_souls' };
+const LEAK_OF = { d10: 'lane_trades', solo_deaths: 'solo_deaths', lost_souls: 'lost_souls', survivability_purchase: 'survivability_purchase' };
 // Ключ связи с победой у игроков твоего уровня (WIN_LINKS).
 const WINLINK_OF = { d10: 'd9', pu10: 'pu10', neu9: 'neu9', brk9: 'brk9' };
 
@@ -532,15 +544,14 @@ function updateCoach(state, data, { forceNew = false, focusEvidence = null, repl
 
   if (focusEvidence && (plan.focusEvidence?.matchId !== focusEvidence.matchId || plan.focusEvidence?.t !== focusEvidence.t
     || plan.focusEvidence?.key !== focusEvidence.key)) {
-    const soulGoal = focusEvidence.key === 'lost_souls';
-    const soloGoal = focusEvidence.key === 'solo_deaths';
-    const key = soulGoal ? 'lost_souls' : soloGoal ? 'solo_deaths' : 'd10';
-    const target = soulGoal ? 0 : 1;
+    // Цель из эпизода: ключ эпизода «Ошибок» совпадает с ключом каталога; эпизод на линии (без ключа) — смерти до 10:00.
+    const catalog = CATALOG.find((g) => g.key === focusEvidence.key && g.focusTarget !== undefined) || CATALOG.find((g) => g.key === 'd10');
+    const key = catalog.key;
+    const target = catalog.focusTarget;
     const current = plan.goals.find((g) => g.key === key && g.status === 'active');
-    const catalog = CATALOG.find((g) => g.key === key);
     const prior = loaded.filter((g) => g.start_time < now).slice(-20).map(catalog.metric).filter(Number.isFinite);
     const focus = { ...current, key, family: catalog.family, area: catalog.area, short: catalog.short, cmp: catalog.cmp,
-      title: catalog.title(target), target, byHero: null, tip: soulGoal || soloGoal ? catalog.tip : 'После неудачного размена отойди и восстанови здоровье.',
+      title: catalog.title(target), target, byHero: null, tip: key === 'd10' ? 'После неудачного размена отойди и восстанови здоровье.' : catalog.tip,
       baseline: prior.length ? median(prior) : null, status: 'active', startedAt: now, evidence: focusEvidence };
     plan.goals = [focus, ...plan.goals.filter((g) => g.key !== key)];
     plan.focusEvidence = focusEvidence;

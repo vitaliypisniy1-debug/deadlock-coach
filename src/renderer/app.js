@@ -1863,7 +1863,7 @@
     const banner = h(`section.dash-banner${localArt ? '.painted' : ''}`,
       backdrop ? h('img.dash-hero-bg', { src: backdrop, alt: '', onerror: (e) => { e.currentTarget.hidden = true; } }) : null,
       portrait ? h('img.dash-hero-art', { src: portrait, alt: '', onerror: (e) => { e.currentTarget.hidden = true; } }) : null,
-      h('div.dash-banner-copy', h('h1', 'Привет, ', h('span.dash-name', S.auth.name?.trim() || 'игрок')),
+      h('div.dash-banner-copy', h('h1', ...(/[p{L}p{N}]/u.test(S.auth.name?.trim() || '') ? ['Привет, ', h('span.dash-name', S.auth.name.trim())] : ['Привет!'])),
         d ? h('div.dash-week', `${d.week.games} ${plural(d.week.games, 'матч', 'матча', 'матчей')} · ${d.hours.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} ч · ${d.heroes.length} ${plural(d.heroes.length, 'герой', 'героя', 'героев')} за 7 дней`) : null,
         latest ? h('div.dash-latest', `Последний матч · ${heroName(latest.hero_id)} · ${dashboardDate(latest.start_time)}`) : null,
         h('div.row.dash-banner-actions',
@@ -1945,7 +1945,7 @@
     const v = $('view-overview');
     const periodSeg = seg([[3, '3 дня'], [7, '7 дней'], [14, '14 дней']], S.ov.days, (d) => { S.ov.days = d; loadOverviewDetails(); });
     const head = h('div.page-head',
-      h('div', h('div.crumbs', 'Моя игра / Главная'), h('h1', S.auth && S.auth.name ? `Привет, ${S.auth.name.trim() || 'игрок'}` : 'Главная'), h('div.sub', 'Твоя форма за последние дни, цифры против игроков твоего уровня, задачи тренера и над чем работать.')),
+      h('div', h('div.crumbs', 'Моя игра / Главная'), h('h1', S.auth && /[p{L}p{N}]/u.test(S.auth.name?.trim() || '') ? `Привет, ${S.auth.name.trim()}` : 'Главная'), h('div.sub', 'Твоя форма за последние дни, цифры против игроков твоего уровня, задачи тренера и над чем работать.')),
       h('div.row', S.auth ? h('button.btn.small', { onclick: () => { S.dashboard.details = false; renderOverview(); } }, 'На главную') : null,
         S.ov.loading ? h('span.muted.row', h('span.spin'), 'Считаю…') : null, periodSeg,
         h('button.btn.small.icon', { onclick: loadOverviewDetails, title: 'Обновить', 'aria-label': 'Обновить', disabled: S.ov.loading }, Icon('refresh'))));

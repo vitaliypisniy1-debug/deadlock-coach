@@ -471,3 +471,6 @@ h3 { font: 600 12px/1.2 var(--body); letter-spacing: 0.14em; color: var(--muted)
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-delay: 0s !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }
+
+/* метка «мало данных»: нейтральная, не красит результат в плюс или минус */
+.pill.low { background: transparent; border: 1px dashed var(--line-2); color: var(--muted); }

@@ -180,4 +180,29 @@ const hex = (x, y, R, rot = 0) => [0, 1, 2, 3, 4, 5].map((k) => { const a = Math
   ic('brawler', '#ff9966', '<path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z"/>');
   ic('assassin', '#ff7b7b', '<path d="M5 19L17 7M14 5l5 0 0 5M5 19l3-1M5 19l1-3"/>');
 }
+// иллюстрации пустых состояний (320x200)
+{
+  const EW = 320, EH = 200;
+  const ed = `<defs><radialGradient id="h"><stop offset="0" stop-color="${C.sun}" stop-opacity="0.7"/><stop offset="1" stop-color="${C.sun}" stop-opacity="0"/></radialGradient><radialGradient id="o"><stop offset="0" stop-color="${C.orange}" stop-opacity="0.45"/><stop offset="1" stop-color="${C.orange}" stop-opacity="0"/></radialGradient><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${C.sky}"/><stop offset="1" stop-color="${C.orange2}"/></linearGradient><filter id="gl" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="2.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>`;
+  const ew = (name, body) => save(name, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${EW} ${EH}">${ed}${body}</svg>`);
+  const ground = `<ellipse cx="160" cy="176" rx="130" ry="10" fill="#000" opacity="0.35"/>`;
+  // generic: фонарь и два окна
+  { const r = rng(2); let s = ground + `<circle cx="226" cy="40" r="12" fill="${C.cream}" opacity="0.9"/><circle cx="231" cy="37" r="11" fill="#081216"/>`;
+    for (let i = 0; i < 14; i++) s += `<circle cx="${f(20 + r() * 280)}" cy="${f(10 + r() * 80)}" r="${f(0.6 + r() * 1.2)}" fill="${C.cream}" opacity="${f(0.2 + r() * 0.5)}"/>`;
+    s += `<rect x="40" y="90" width="64" height="86" fill="#0c1d23" stroke="${C.teal2}"/><rect x="214" y="70" width="70" height="106" fill="#0c1d23" stroke="${C.teal2}"/>`;
+    [[52, 102], [76, 102], [52, 130], [76, 150], [226, 84], [252, 84], [252, 118], [226, 148]].forEach(([x, y], i) => { s += `<rect x="${x}" y="${y}" width="14" height="18" fill="${i % 3 === 0 ? C.sun : '#12303a'}" opacity="${i % 3 === 0 ? 0.85 : 1}"/>`; });
+    s += `<circle cx="160" cy="76" r="46" fill="url(#h)"/><g stroke="${C.teal2}" stroke-width="4" fill="none" stroke-linecap="round"><path d="M160 176V84"/><path d="M160 84c0-14 14-14 22-6"/></g><circle cx="182" cy="78" r="6" fill="${C.sun}" filter="url(#gl)"/><path d="M148 176h24" stroke="${C.teal2}" stroke-width="5" stroke-linecap="round"/>`;
+    ew('empty-generic.svg', s); }
+  // Выбери матч: плёнка и «плей»
+  ew('empty-matches.svg', ground + `<circle cx="160" cy="92" r="70" fill="url(#o)"/><g filter="url(#gl)" fill="none" stroke="url(#g)" stroke-width="4" stroke-linejoin="round"><circle cx="160" cy="92" r="46"/><path d="M148 72l30 20-30 20z" fill="${C.orange}" fill-opacity="0.35"/></g><g fill="#12303a" stroke="${C.teal2}"><rect x="40" y="150" width="240" height="22" rx="3"/></g>${[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((i) => `<rect x="${48 + i * 20}" y="155" width="10" height="5" rx="1.5" fill="#081216"/><rect x="${48 + i * 20}" y="164" width="10" height="5" rx="1.5" fill="#081216"/>`).join('')}<path d="M70 60l-26 16 26 16" fill="none" stroke="${C.orange2}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" filter="url(#gl)"/>`);
+  // Выбери соперника: контур героя и лупа
+  ew('empty-codex.svg', ground + `<circle cx="160" cy="96" r="72" fill="url(#o)"/><g filter="url(#gl)" fill="#0c1d23" stroke="${C.sky}" stroke-width="3.5" stroke-dasharray="7 6" stroke-linecap="round"><circle cx="160" cy="78" r="26"/><path d="M104 172c4-40 26-58 56-58s52 18 56 58z"/></g><g filter="url(#gl)" fill="none" stroke="${C.orange2}" stroke-width="5" stroke-linecap="round"><circle cx="210" cy="64" r="22" fill="#081216" fill-opacity="0.7"/><path d="M226 80l26 26"/></g><text x="203" y="73" font-family="serif" font-weight="700" font-size="26" fill="${C.orange2}">?</text>`);
+  // Тренер: цель ждёт
+  ew('empty-coach.svg', ground + `<circle cx="160" cy="92" r="76" fill="url(#o)"/><g filter="url(#gl)" fill="none" stroke-width="4"><circle cx="160" cy="92" r="58" stroke="${C.sky}"/><circle cx="160" cy="92" r="38" stroke="${C.orange2}"/><circle cx="160" cy="92" r="18" stroke="${C.sky}"/><circle cx="160" cy="92" r="6" fill="${C.orange}" stroke="none"/></g><path d="M58 150C100 120 130 100 154 94" stroke="${C.orange2}" stroke-width="3" stroke-dasharray="3 8" stroke-linecap="round" fill="none"/>`);
+  // Игроки: пустой подиум и прожектор
+  ew('empty-players.svg', `<polygon points="150,0 170,0 230,170 100,170" fill="#fff" opacity="0.08"/>` + ground + `<ellipse cx="160" cy="170" rx="80" ry="9" fill="${C.sun}" opacity="0.25"/><g fill="#12303a" stroke="${C.teal2}"><rect x="96" y="132" width="60" height="38"/><rect x="156" y="112" width="60" height="58"/><rect x="216" y="146" width="40" height="24"/></g><g font-family="serif" font-weight="700" font-size="22" fill="${C.cream}" opacity="0.6"><text x="120" y="158">2</text><text x="180" y="146">1</text><text x="230" y="166" font-size="16">3</text></g><g filter="url(#gl)" fill="none" stroke="${C.orange2}" stroke-width="3.5" stroke-linejoin="round"><path d="M172 112c-1-14 2-22 14-22s15 8 14 22z" stroke-dasharray="5 5"/></g>`);
+  // Данные: радар
+  ew('empty-meta.svg', ground + `<circle cx="160" cy="92" r="80" fill="url(#o)"/><g fill="none" stroke="${C.sky}" stroke-opacity="0.45" stroke-width="1.5"><circle cx="160" cy="92" r="64"/><circle cx="160" cy="92" r="42"/><circle cx="160" cy="92" r="20"/><path d="M160 28v128M96 92h128"/></g><path d="M160 92L160 28A64 64 0 0 1 218 62Z" fill="${C.sky}" opacity="0.22"/><line x1="160" y1="92" x2="218" y2="62" stroke="${C.sky}" stroke-width="2.5" filter="url(#gl)"/><circle cx="120" cy="120" r="4" fill="${C.orange2}" filter="url(#gl)"/><circle cx="190" cy="124" r="3" fill="${C.orange2}" opacity="0.6"/>`);
+}
+
 console.log('Сцены готовы');

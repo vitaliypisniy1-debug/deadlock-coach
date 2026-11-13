@@ -71,7 +71,7 @@
   const heroArtStyle = (hh) => {
     if (!hh) return null;
     const c = Array.isArray(hh.color) && hh.color.length === 3 ? hh.color.join(',') : '255,122,69';
-    return `--art: ${cssUrl(hh.card || hh.img)}; --wide: ${cssUrl(hh.wide || hh.card || hh.img)}; --hc: ${c}`;
+    return `--art: ${cssUrl(hh.card || hh.img)}; --icon: ${cssUrl(hh.img || hh.card)}; --wide: ${cssUrl(hh.wide || hh.card || hh.img)}; --hc: ${c}`;
   };
   const heroCardStyle = (id) => {
     const hh = S.assets.heroes[id];

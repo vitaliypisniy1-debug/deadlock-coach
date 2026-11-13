@@ -927,3 +927,41 @@ body::before {
 .ob-body .ob-label { font: 600 12px var(--body); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
 .ob-chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .ob-chips .btn { min-height: 30px; padding: 0 12px; font-size: 13px; }
+
+/* ==========================================================================
+   Арты героев без обрезки: карточка игры 280x380, показываем целиком; для мелких мест квадратная иконка
+   ========================================================================== */
+.hero-ico.art, .hero-ico.art.lg, .hero-ico.art.xl {
+  background-size: auto, 100% 100%, cover, auto, auto; background-position: 0 0, center, center, 0 0, 0 0;
+}
+.hero-ico.art { width: 54px; height: 73px; }
+.hero-ico.art.lg { width: 84px; height: 114px; }
+.hero-ico.art.xl { width: 104px; height: 141px; }
+.hero-cell .hero-ico.art, .match .hero-ico.art, .dash-hero-row .hero-ico.art { width: 54px; height: 73px; }
+.hero-pick .hero-ico.art { width: 44px; height: 60px; }
+.tc-game .hero-ico.art { width: 36px; height: 49px; }
+.match { min-height: 90px; }
+.dash-hero-row { min-height: 90px; }
+.hero-pick { min-height: 82px; }
+/* мелкие места: квадратная иконка героя, не вырезка из карточки */
+.hero-ico.art.sm, .chip .hero-ico.art, .pill .hero-ico.art, .map-row .hero-ico.art {
+  width: 28px; height: 28px; border-radius: 8px;
+  background: var(--icon, none) center / cover no-repeat, radial-gradient(120% 90% at 50% 0%, rgba(var(--hc), 0.6), transparent), var(--panel-2);
+}
+/* карточки выбора: пропорции карточки игры, ничего не режется */
+.hpick, .hpick.on, .hpick.lane {
+  aspect-ratio: 14 / 19;
+  background:
+    linear-gradient(180deg, rgba(8, 18, 22, 0) 58%, rgba(8, 18, 22, 0.92) 100%),
+    var(--art, none) center / 100% 100% no-repeat,
+    var(--art-shards) center / cover no-repeat,
+    radial-gradient(120% 90% at 50% 0%, rgba(var(--hc), 0.55), rgba(var(--hc), 0.12) 60%, transparent 85%),
+    var(--panel-2);
+}
+.hero-ico.art.lg, .hero-ico.art.xl {
+  background:
+    var(--art, none) center / 100% 100% no-repeat,
+    var(--art-shards) center / cover no-repeat,
+    radial-gradient(120% 90% at 50% 0%, rgba(var(--hc), 0.65), rgba(var(--hc), 0.14) 62%, transparent),
+    var(--panel-2);
+}

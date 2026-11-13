@@ -2916,7 +2916,7 @@
     // ---------- главное сейчас ----------
     const top = rows[0];
     const goal = d.profile.goal;
-    const nextGoal = goal ? h('section.panel', h('h2', 'Цель на следующий матч'), h('b', goal.title),
+    const nextGoal = goal ? h('section.panel.kraft', h('h2', 'Цель на следующий матч'), h('b', goal.title),
       h('p', goal.action), h('div.hint', goal.check),
       h('div.hint', `Основание — «${goal.reason}» в ${goal.count} из ${goal.eligible} матчей, которые можно было проверить.`),
       h('div.row',

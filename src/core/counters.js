@@ -142,6 +142,7 @@ function recommendItems(hero, profile, heal = null) {
     if (compat.includes('indomitable')) add('Indomitable', 1.5 * w(a), 'control', `${a.name}: очищается автоматически`);
     if (compat.includes('unstoppable') && (a.cc || []).some((c) => HARD_CC.has(c) || c === 'slow')) add('Unstoppable', 1 * w(a), 'control', `${a.name}: подавляется активом`);
     if (compat.includes('dispel') && lasting) add('Dispel Magic', 1.2, 'debuff', `${a.name}: долгий эффект можно снять`);
+    if (compat.includes('counterspell')) add('Counterspell', 1.2 * w(a), 'control', `${a.name}: вики описывает защиту парированием (окно 0.8 с)`);
     if (compat.includes('slowingHex')) add('Slowing Hex', 1 * w(a), 'control', `${a.name}: не даст запустить (Slowing Hex глушит)`);
     if (compat.includes('platedArmor') && t.wf >= 0.3) add('Plated Armor', 1 * t.wf, 'weapon', `${a.name}: эффект от пуль отменяется`);
   }
@@ -179,7 +180,7 @@ function recommendItems(hero, profile, heal = null) {
       tier: shop.tier,
       slot: shop.slot,
       cost: shop.cost,
-      score: Math.round(c.score * 10) / 10,
+      score: Math.round(c.score * 100) / 100,
       kind: [...c.kinds][0],
       kindLabel: threatLabel([...c.kinds][0]),
       why: [...new Set(c.why)],

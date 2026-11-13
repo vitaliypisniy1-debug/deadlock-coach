@@ -43,3 +43,35 @@ details.tc-details > summary «Подробности по играм» + .gcard
 
 Состояния: загрузка, ошибка, мало данных, нет активных целей, не вошёл в Steam: общие `.empty`, `.note`, `skeleton()`. «Мало данных» внутри цели: `.pill.low`.
 Убраны: кольцо процента, плитки «целей закрыто / игр разобрано», «План до …», «Сообщения тренера», «Прошлые цели».
+
+## Динамика показателей и достижения
+
+Стили готовы (классы `tp-*` и `ach-*` в `theme.css`). Подписи по решению владельца: без фраз «ты на уровне ранга N», сравнение только «с топами на тех же героях».
+
+```
+section.tp-block                           динамика
+  div.tp-head: h2 «Динамика показателей», div.tp-summary > span.pill.good «Заметно выросло: N», span.pill.bad «Снизилось: M», span.pill.warn «Ниже топов: K»
+  p.tp-note                                подпись progress.note
+  div.tp-table
+    div.tp-row.better|.worse|.same|.few    по показателю
+      div.tp-label: b (label) + small (area)
+      div.tp-now (recentText)
+      div.tp-prev (prevText; «было» дорисовывает CSS)
+      span.tp-trend > Icon('trending-up'|'trending-down'|'minus')   при few: .pill.low «мало игр» вместо иконки
+      div.tp-top (topText; «топы» дорисовывает CSS) + span.pill.good «на уровне топов» | .pill.warn «немного ниже» | .pill.bad «заметно ниже» (по vsTop); без topText блок не выводить
+  состояние enough=false: .empty «Нужно ещё N игр для сравнения»
+
+section.ach-block                          достижения
+  div.ach-head: h2 «Достижения»  (+ span.pill.hot «новое» при anyNew)
+  div.ach-grid > article.ach-card.t0|.t1|.t2|.t3 (+ .new если есть isNew)
+    div.ach-medal > Icon('medal')          цвет ступени задаёт CSS (бронза t1, серебро t2, золото t3)
+    div
+      h3.ach-title
+      p.ach-cond                           условие следующей ступени
+      div.ach-bar > span[style=width:%]    value / next
+      div.ach-meta: span «3 из 5», span «серебро»
+      div.ach-unlocks > button.ach-chip «бронза · 12 нояб.»   клик открывает матч (matchId)
+  div.ach-records > div.ach-record: Icon('trophy'), div «Новый рекорд на <b>герой</b>: значение (было …)», span.muted дата
+```
+
+Запасные цели: `.tc-spare .tc-area` больше не растягивается (исправлено).

@@ -95,3 +95,19 @@ div.hc-ach.t0|.t1|.t2|.t3                        мини-строка посл�
   span.muted дата                                  span.pill.hot «новое» (при anyNew)
 ```
 Без фраз про ранг.
+
+## «Ошибки»: блок «Наблюдения» (по заявке сессии «Ошибки»)
+
+Стили `ob-*` готовы. Выводы остаются в «Все замечания», наблюдения (status 'observation') выносятся в отдельный блок под ним. Пусто: `.empty` «Наблюдений нет». Мало данных: `.pill.low`.
+
+```
+section.ob-block
+  div.ob-head: h2 «Наблюдения», span.pill.low «пока не выводы»
+  p.ob-note                          «Это связи по данным, а не доказанные причины»
+  div.ob-list > details.ob-item
+    summary: span(b заголовок + small область), span.ob-count «N из M матчей», span.pill.low «наблюдение»
+    div.ob-body
+      div.ob-label «Основание» + p
+      div.ob-label «Чего не хватает для уверенности» + p
+      div.ob-chips > button.btn.small «12:27» ... (эпизоды с таймингами)
+```

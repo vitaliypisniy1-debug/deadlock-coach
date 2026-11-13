@@ -1645,7 +1645,7 @@ class Sync {
   }
 
   // ---------- личный тренер ----------
-  async coach(accountId, { forceNew = false, evidence = null } = {}) {
+  async coach(accountId, { forceNew = false, evidence = null, replaceKey = null } = {}) {
     const id = Number(accountId);
     const list = await this.myLoadedGames(id, { limit: 40, download: 25, label: 'Тренер смотрит твои матчи' });
     const heroName = (h) => (this.assets && this.assets.heroes[h] ? this.assets.heroes[h].name : `герой ${h}`);
@@ -1698,6 +1698,19 @@ class Sync {
     const tipsCache = new Map();
     const counters = this.counterTable();
     const tierOf = (g) => (g.match && Array.isArray(g.match.badge) && g.me && typeof g.match.badge[g.me.team] === 'number' ? Math.floor(g.match.badge[g.me.team] / 10) : null);
+    // Ошибки игры: считаем один раз на матч (и для карточек, и для «почему эта цель»).
+    const leakCache = new Map();
+    const leaksOf = (g) => {
+      if (leakCache.has(g.match_id)) return leakCache.get(g.match_id);
+      const checked = new Set();
+      let leaks = [];
+      try {
+        leaks = gameLeaks({ m: g.match, me: g.me, f: g.f, ref: topHero.get(g.hero) || null, tier: tierOf(g), assets: this.assets, counters, heroName, itemName, checked });
+      } catch {}
+      const res = { leaks, checked: [...checked] };
+      leakCache.set(g.match_id, res);
+      return res;
+    };
     const tipsFor = (g) => {
       if (!g.f || !g.match) return [];
       if (tipsCache.has(g.match_id)) return tipsCache.get(g.match_id);
@@ -1705,11 +1718,7 @@ class Sync {
       const lob = refAll(g.match.players.filter((p) => p !== g.me && !p.abandoned).map((p) => playerFeatures(p, g.match, this.assets)));
       const tips = matchTips({ me: g.f, ref, lobby: lob, heroName, itemName, won: g.me.won });
       // ошибки с моментами (лес во время драк, размены, тайминги карты) — в общий список
-      let lk = [];
-      try {
-        lk = gameLeaks({ m: g.match, me: g.me, f: g.f, ref: topHero.get(g.hero) || null, tier: tierOf(g), assets: this.assets, counters, heroName, itemName })
-          .map((l) => ({ title: l.title, text: l.text, tip: l.fix && l.fix[0], area: l.area, level: l.level, score: l.score }));
-      } catch {}
+      const lk = leaksOf(g).leaks.map((l) => ({ title: l.title, text: l.text, tip: l.fix && l.fix[0], area: l.area, level: l.level, score: l.score }));
       const t = tips.concat(lk).sort((a, b) => b.score - a.score);
       tipsCache.set(g.match_id, t);
       return t;
@@ -1738,11 +1747,21 @@ class Sync {
         focusEvidence = { matchId: m.match_id, t: evidence.t, title: 'Смерть на линии', text: `Смерть от ${heroName(foe.hero_id)}` };
       }
     }
+    // Как часто повторяется замечание и как связано с победами — основание цели «Почему именно это».
+    let leakStats = {};
+    try {
+      const prof = leakProfile(games.filter((g) => g.f && g.match && g.me && (g.match.v || 1) >= EXTRACT_V).slice(-30).map((g) => {
+        const r = leaksOf(g);
+        return { match_id: g.match_id, start_time: g.start_time, won: g.won, hero: g.hero, leaks: r.leaks, checked: r.checked };
+      }));
+      leakStats = Object.fromEntries(prof.rows.map((r) => [r.key, { title: r.title, count: r.count, eligible: r.eligible, wrWith: r.wrWith, wrWithout: r.wrWithout }]));
+    } catch {}
     const { state: next, view } = updateCoach(state, {
       games,
       topHero,
       lobby,
       extra,
+      leakStats,
       mainMistake: (g) => {
         const t = tipsFor(g).find((x) => x.level === 'bad' || x.level === 'warn');
         return t ? { title: t.title, text: t.text, tip: t.tip, area: t.area } : null;
@@ -1751,7 +1770,7 @@ class Sync {
         const t = tipsFor(g).find((x) => x.level === 'good');
         return t ? { title: t.title } : null;
       },
-    }, { forceNew, focusEvidence });
+    }, { forceNew, focusEvidence, replaceKey: typeof replaceKey === 'string' ? replaceKey : null });
     this.store.write(`coach-${id}.json`, next);
     view.topsReady = topHero.size > 0;
     view.loaded = games.filter((g) => g.f).length;

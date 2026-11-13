@@ -660,7 +660,7 @@ function gameLeaks(c) {
     const roleNote = roleInfo.role && (l.key === 'solo_deaths' || l.key === 'farm_while_fight')
       ? `Роль в этой игре определена автоматически: ${ROLE_LABELS[roleInfo.role]} (${roleInfo.why.join('; ')}); от неё зависит норма для сравнения.`
       : '';
-    return { ...l, role: roleInfo.role, status: finding ? 'finding' : 'observation', level: finding ? l.level : 'info', context: [l.context, roleNote, miss].filter(Boolean).join(' ') || undefined };
+    return { ...l, role: roleInfo.role, status: finding ? 'finding' : 'observation', level: finding ? l.level : 'info', context: [l.context, roleNote, miss].filter(Boolean).join(' ') || undefined, basis: [l.context, roleNote].filter(Boolean).join(' ') || null, missing: miss || null };
   }).sort((a, b) => b.score - a.score);
 }
 
@@ -939,7 +939,7 @@ function leakProfile(games) {
       let e = by.get(l.key);
       if (!e) by.set(l.key, (e = { key: l.key, status: 'observation', area: l.area, title: l.groupTitle || l.title, fix: l.groupFix || l.fix, games: [], souls: 0, deaths: 0, allyDeaths: 0, statues: 0, score: 0 }));
       if (l.status !== 'observation') e.status = 'finding';
-      e.games.push({ match_id: g.match_id, start_time: g.start_time, won: g.won, hero: g.hero, title: l.title, text: l.text, context: l.context || null, extra: l.extra || null, moments: (l.moments || []).slice(0, 4), score: l.score });
+      e.games.push({ match_id: g.match_id, start_time: g.start_time, won: g.won, hero: g.hero, title: l.title, text: l.text, context: l.context || null, basis: l.basis || null, missing: l.missing || null, extra: l.extra || null, moments: (l.moments || []).slice(0, 4), score: l.score });
       e.souls += (l.cost && l.cost.souls) || 0;
       e.deaths += (l.cost && l.cost.deaths) || 0;
       e.allyDeaths += (l.cost && l.cost.allyDeaths) || 0;

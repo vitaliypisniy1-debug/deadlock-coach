@@ -1590,7 +1590,7 @@ class Sync {
       rank,
       // рабочая роль на каждом герое — определена автоматически по данным матчей (признаки и доверие внутри)
       roles: heroRoles(games.filter((g) => g.role).map((g) => ({ hero: g.hero, role: g.role, feat: g.roleFeat }))),
-      games: games.map(({ f, roleFeat, ...g }) => ({ ...g, leaks: g.leaks.map((l) => ({ key: l.key, area: l.area, level: l.level, status: l.status, title: l.title, text: l.text, context: l.context, fix: l.fix, moments: l.moments, score: l.score })) })),
+      games: games.map(({ f, roleFeat, ...g }) => ({ ...g, leaks: g.leaks.map((l) => ({ key: l.key, area: l.area, level: l.level, status: l.status, title: l.title, text: l.text, context: l.context, basis: l.basis, missing: l.missing, fix: l.fix, moments: l.moments, score: l.score })) })),
       fresh: games.filter((g) => g.fresh).length,
       total: games.length,
       profile,

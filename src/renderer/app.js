@@ -2839,19 +2839,33 @@
     }, h('b.num', F.time(mo.t)), h('span', mo.text))));
   }
 
+  // Сравнение «в лоб» смешивает замечание с общим числом смертей: поэтому рядом — сравнение матчей с похожим числом смертей.
+  function wrAdjNote(row) {
+    const a = row.wrAdj;
+    if (!a) return null;
+    const pp = Math.round(a.diff * 100);
+    const txt = Math.abs(a.diff) < 0.05
+      ? `Если сравнивать матчи с похожим числом смертей, разница в доле побед небольшая (${pp > 0 ? '+' : ''}${pp} п.п.): связь этого замечания с результатом не подтверждена.`
+      : a.diff < 0
+        ? `Если сравнивать матчи с похожим числом смертей, с этим замечанием побед на ${Math.abs(pp)} п.п. меньше.`
+        : `Если сравнивать матчи с похожим числом смертей, с этим замечанием побед на ${pp} п.п. больше: на поражения оно не указывает.`;
+    return h('div.hint', txt);
+  }
+  const wrBad = (row) => (row.wrAdj ? row.wrAdj.diff < -0.05 : row.wrWith < row.wrWithout - 0.05);
+
   function wrCompare(row) {
     if (row.wrWith === null || row.wrWithout === null) return null;
     if (Math.abs(row.wrWith - row.wrWithout) < 0.05) {
-      return h('div.wr-same', `В разобранных матчах доля побед близкая — ${F.pct(row.wrWith)} с этим эпизодом и ${F.pct(row.wrWithout)} без него.`);
+      return h('div.wr-same', `В разобранных матчах доля побед близкая — ${F.pct(row.wrWith)} с этим эпизодом и ${F.pct(row.wrWithout)} без него.`, wrAdjNote(row));
     }
     const bar = (label, v, cls) => h('div.wr-line', h('span.wr-label', label), h('div.wr-track', h(`span.${cls}`, { style: { width: `${Math.max(3, Math.round(v * 100))}%` } })), h('b.num', F.pct(v)));
-    return h('div.wr-compare', h('div.hint', 'Доля побед в разобранных матчах'), bar('с замечанием', row.wrWith, 'bad'), bar('без замечания', row.wrWithout, 'good'));
+    return h('div.wr-compare', h('div.hint', 'Доля побед в разобранных матчах'), bar('с замечанием', row.wrWith, 'bad'), bar('без замечания', row.wrWithout, 'good'), wrAdjNote(row));
   }
 
   function leakCost(row) {
     const parts = [];
     if (row.souls) parts.push(h('span.pill.bad', `≈ ${F.num(row.souls)} ${plural(row.souls, 'душа', 'души', 'душ')} мимо`));
-    if (row.deaths) parts.push(h('span.pill.bad', `${row.deaths} ${plural(row.deaths, 'смерть', 'смерти', 'смертей')} на линии`));
+    if (row.deaths) parts.push(h('span.pill.bad', `${row.deaths} ${plural(row.deaths, 'смерть', 'смерти', 'смертей')} ${row.key === 'lane_trades' ? 'на линии' : 'в этих эпизодах'}`));
     if (row.allyDeaths) parts.push(h('span.pill.bad', `${row.allyDeaths} ${plural(row.allyDeaths, 'смерть', 'смерти', 'смертей')} союзников`));
     if (row.statues) parts.push(h('span.pill.warn', `${row.statues} ${plural(row.statues, 'баф', 'бафа', 'бафов')} мимо`));
     return parts.length ? h('div.leak-cost', parts) : null;
@@ -2870,7 +2884,7 @@
           heroIcon(g.hero, '.sm'),
           h('div.grow',
             h('div.leak-ex-head', h('b', heroName(g.hero)), h(`span.res.${g.won ? 'win' : 'loss'}`, g.won ? 'победа' : 'поражение'), h('span.dim', F.ago(g.start_time))),
-            moments.length ? null : exampleBody(g))),
+            moments.length && !(g.extra && g.extra.items) ? null : exampleBody(g))),
         moments.length ? momentChips({ moments }, (_i, mo) => openGrowthEpisode({ ...mo, matchId: g.match_id, title: g.title, context: g.context })) : null,
         g.context ? h('div.hint.analysis-context', g.context) : null);
     }));
@@ -2946,7 +2960,7 @@
             h('span.leak-rank.num', String(i + 1)),
             h('div.grow', h('div.leak-area', r.area), h('div.leak-title', r.title)),
             h('div.leak-freq', { title: 'Из матчей, которые можно было проверить' }, h('div.leak-freq-bar', h('span', { style: { width: `${Math.round(r.share * 100)}%` } })), h('span.num', `${r.count} из ${r.eligible}`)),
-            r.wrWith !== null && r.wrWithout !== null ? h(`span.pill.${r.wrWith < r.wrWithout - 0.05 ? 'bad' : ''}`, { title: 'Доля побед в играх с этой ошибкой и без неё' }, `${F.pct(r.wrWith)} / ${F.pct(r.wrWithout)}`) : null),
+            r.wrWith !== null && r.wrWithout !== null ? h(`span.pill.${wrBad(r) ? 'bad' : ''}`, { title: 'Доля побед в играх с этой ошибкой и без неё (без учёта числа смертей; поправку см. в раскрытом разделе)' }, `${F.pct(r.wrWith)} / ${F.pct(r.wrWithout)}`) : null),
           open ? h('div.leak-row-body', r.unknown ? h('div.hint', `Пропущено матчей из-за нехватки данных: ${r.unknown} из ${n}.`) : null, leakCost(r), wrCompare(r),
             h('div.leak-fix', h('div.leak-fix-title', 'Как исправить'), h('ol', (r.fix || []).map((x) => h('li', x)))),
             h('div.leak-side-title', 'Примеры'), leakExamples(r)) : null);

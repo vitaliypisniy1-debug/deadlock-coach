@@ -5,6 +5,10 @@
 // иначе игра без проверки выглядела бы образцовой (см. checked в leaks.js).
 
 const NEAR = 2500; // единиц карты: ближе — союзник успевает помочь (≈8 с бега при 320/с)
+// Союзник, погибший рядом за последние RECENT секунд до смерти игрока, — признак драки, а не одиночного захода:
+// игрок остался последним на месте боя. Такая смерть «в одиночку» не считается (проверено на реальных матчах:
+// 14% кандидатов — именно такие).
+const RECENT = 10;
 const SINCE = 600; // после 10:00 начинается командная игра; до этого на линии стоят поодиночке
 
 const dist = (x, y, pt) => Math.hypot(x - pt[0], y - pt[1]);
@@ -55,6 +59,10 @@ function soloDeathRows(m, me) {
       }
       if (allyDist === null || dd < allyDist) allyDist = dd;
     }
+    if (!near) {
+      near = allies.some((q) => (q.deaths || []).some((e) => e[0] <= t && t - e[0] <= RECENT
+        && Number.isFinite(e[1]) && Number.isFinite(e[2]) && Math.hypot(x - e[1], y - e[2]) <= NEAR));
+    }
     if (near) continue;
     let nearFoes = 0;
     for (const q of foes) {
@@ -65,6 +73,11 @@ function soloDeathRows(m, me) {
     out.push({ t, x, y, killerSlot: killerSlot ?? null, allyDist: allyDist === null ? null : Math.round(allyDist), foes: nearFoes });
   }
   return out;
+}
+
+// Сколько смертей игрока после SINCE вообще проверялось (знаменатель для «N из M»).
+function lateDeathCount(me) {
+  return (me.deaths || []).filter((d) => typeof d[0] === 'number' && d[0] >= SINCE && Number.isFinite(d[1]) && Number.isFinite(d[2])).length;
 }
 
 // Сколько смертей в одиночку (метрика тренера); null — данных нет.
@@ -84,4 +97,4 @@ function soloDeathsVerifiable(m, me) {
   return late.every((d) => Number.isFinite(d[1]) && Number.isFinite(d[2]) && d[0] <= cover + step);
 }
 
-module.exports = { NEAR, SINCE, soloDeathRows, soloDeaths, soloDeathsVerifiable };
+module.exports = { NEAR, SINCE, RECENT, lateDeathCount, soloDeathRows, soloDeaths, soloDeathsVerifiable };

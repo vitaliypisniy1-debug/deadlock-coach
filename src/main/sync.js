@@ -1729,7 +1729,7 @@ class Sync {
         const killer = m.players.find((p) => p.slot === row.killerSlot);
         focusEvidence = { key: 'solo_deaths', matchId: m.match_id, t: row.t, x: row.x, y: row.y, title: 'Смерть в одиночку',
           text: killer ? `Смерть вдали от команды — убил ${heroName(killer.hero_id)}` : 'Смерть вдали от команды',
-          context: 'В момент смерти ни один живой союзник не был ближе 2 500 единиц карты (≈8 с бега).' };
+          context: 'В момент смерти ни один живой союзник не был ближе 2 500 единиц карты (≈8 с бега по прямой), и никто из союзников не погиб рядом за 10 с до этого. Это расчёт по маршрутам: был ли заход осознанным, из данных не видно.' };
       } else {
         const foe = me && m.players.find((p) => p.slot === me.deaths?.find((d) => d[0] === evidence.t)?.[3]);
         if (!foe || foe.team === me.team || me.lane == null || foe.lane !== me.lane || !(evidence.t >= 0 && evidence.t <= 600)) {

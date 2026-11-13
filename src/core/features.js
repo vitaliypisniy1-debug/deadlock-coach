@@ -98,8 +98,13 @@ function playerFeatures(p, match, assets = null) {
   // Тайминги карты (только в матчах, скачанных с версии 0.11: в старых этих полей нет)
   const has = (f) => st.length > 0 && st[0][f] !== undefined;
   const atS = (f, t) => (has(f) && t <= endS + 5 ? valueAt(st, f, t) : null);
-  const pu = Array.isArray(p.pu) ? p.pu : null;
+  // API часто отдаёт пустой список бафов для всего матча (старые матчи): в игре, где не взял баф
+  // НИ ОДИН из десяти-двенадцати игроков, это отсутствие данных, а не «ноль бафов».
+  const puKnown = match.players.some((x) => Array.isArray(x.pu) && x.pu.length > 0);
+  const pu = Array.isArray(p.pu) && puKnown ? p.pu : null;
   const puBy = (t) => (pu && endS >= t ? pu.filter(([pt]) => pt <= t).length : null);
+  // то же для потерянных при смерти душ: у всех игроков ноль — данных нет
+  const lostKnown = match.players.some((x) => ((x.stats || []).at(-1)?.g_lost || 0) > 0);
 
   // Противники по линии (если API отдал назначенную линию)
   const laneFoes = p.lane !== null && p.lane !== undefined ? enemies.filter((x) => x.lane === p.lane) : [];
@@ -143,7 +148,7 @@ function playerFeatures(p, match, assets = null) {
     boss10: at(st, 'g_boss', 10),
     bossEnd: last ? last.g_boss : null,
     treasureEnd: last ? last.g_treasure : null,
-    lostEnd: last ? last.g_lost : null,
+    lostEnd: last && lostKnown ? last.g_lost : null,
     soulsPerCreep10: lh10 && lh10 >= 10 ? lane10 / lh10 : null,
     pdmg10: at(st, 'pdmg', 10),
     pdmgT10: at(st, 'pdmgT', 10),
@@ -190,8 +195,8 @@ function playerFeatures(p, match, assets = null) {
     pu10: puBy(600),
     pu20: puBy(1200),
     tre20: atS('g_treasure', 1200),
-    lost20: atS('g_lost', 1200),
-    lostPerDeath: p.d >= 2 && last && has('g_lost') ? last.g_lost / p.d : null,
+    lost20: lostKnown ? atS('g_lost', 1200) : null,
+    lostPerDeath: p.d >= 2 && last && has('g_lost') && lostKnown ? last.g_lost / p.d : null,
     spikeFights: spikeN ? spikeFought / spikeN : null,
     spikeWindows: spikeN,
     spikeDmg,

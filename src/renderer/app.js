@@ -3098,7 +3098,8 @@
     if (!n) return void v.replaceChildren(head, ...notes, h('div.empty', h('strong', 'Пока нечего разбирать'), 'Нужны матчи с подробными данными. Сыграй пару игр или нажми «Проверить новые игры».'));
 
     // ---------- главное сейчас ----------
-    const top = rows[0];
+    // «Главное сейчас» — только вывод с подтверждённой ценой; наблюдения идут ниже в общем списке
+    const top = rows.find((r) => r.status !== 'observation') || null;
     const goal = d.profile.goal;
     const nextGoal = goal ? h('section.panel.kraft', h('h2', 'Цель на следующий матч'), h('b', goal.title),
       h('p', goal.action), h('div.hint', goal.check),
@@ -3118,10 +3119,10 @@
         leakCost(top),
         wrCompare(top),
         h('div.leak-fix', h('div.leak-fix-title', 'Как исправить'), h('ol', (top.fix || []).map((x) => h('li', x))))),
-      h('div.leak-focus-side', h('div.leak-side-title', 'Где это было'), leakExamples(top))) : h('div.empty', h('strong', 'Повторяющихся ошибок не нашёл'), 'В последних играх нет ошибки, которая повторялась бы. Продолжай — и смотри разбор каждой игры в «Моих матчах».');
+      h('div.leak-focus-side', h('div.leak-side-title', 'Где это было'), leakExamples(top))) : h('div.empty', h('strong', 'Повторяющихся подтверждённых ошибок не нашёл'), 'В последних играх нет ошибки с подтверждённой ценой, которая повторялась бы. Продолжай — и смотри разбор каждой игры в «Моих матчах».');
 
     // ---------- все ошибки ----------
-    const list = rows.length > 1 ? h('section.panel', h('h2', 'Все замечания'),
+    const list = rows.length > (top ? 1 : 0) ? h('section.panel', h('h2', 'Все замечания'),
       h('div.hint', { style: { marginBottom: '12px' } }, 'По важности: как часто случается и насколько дорого обходится. Нажми, чтобы раскрыть.'),
       h('div.leak-list', rows.map((r, i) => {
         const open = G.open === r.key;
@@ -3129,9 +3130,10 @@
           h('button.leak-row-head', { onclick: () => { G.open = open ? null : r.key; renderGrowth(); }, 'aria-expanded': open ? 'true' : 'false' },
             h('span.leak-rank.num', String(i + 1)),
             h('div.grow', h('div.leak-area', r.area), h('div.leak-title', r.title)),
+            r.status === 'observation' ? h('span.pill.low', { title: 'Цена не подтверждена: связь с победой не найдена или слабая. Это наблюдение, а не причина поражений.' }, 'наблюдение') : null,
             h('div.leak-freq', { title: 'Из матчей, которые можно было проверить' }, h('div.leak-freq-bar', h('span', { style: { width: `${Math.round(r.share * 100)}%` } })), h('span.num', `${r.count} из ${r.eligible}`)),
-            r.wrWith !== null && r.wrWithout !== null ? h(`span.pill.${wrBad(r) ? 'bad' : ''}`, { title: 'Доля побед в играх с этой ошибкой и без неё (без учёта числа смертей; поправку см. в раскрытом разделе)' }, `${F.pct(r.wrWith)} / ${F.pct(r.wrWithout)}`) : null),
-          open ? h('div.leak-row-body', r.unknown ? h('div.hint', `Пропущено матчей из-за нехватки данных: ${r.unknown} из ${n}.`) : null, leakCost(r), wrCompare(r),
+            r.status !== 'observation' && r.wrWith !== null && r.wrWithout !== null ? h(`span.pill.${wrBad(r) ? 'bad' : ''}`, { title: 'Доля побед в играх с этой ошибкой и без неё (без учёта числа смертей; поправку см. в раскрытом разделе)' }, `${F.pct(r.wrWith)} / ${F.pct(r.wrWithout)}`) : null),
+          open ? h('div.leak-row-body', r.unknown ? h('div.hint', `Пропущено матчей из-за нехватки данных: ${r.unknown} из ${n}.`) : null, leakCost(r), r.status === 'observation' ? null : wrCompare(r),
             h('div.leak-fix', h('div.leak-fix-title', 'Как исправить'), h('ol', (r.fix || []).map((x) => h('li', x)))),
             h('div.leak-side-title', 'Примеры'), leakExamples(r)) : null);
       }))) : null;

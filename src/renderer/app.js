@@ -61,7 +61,7 @@
   const itemName = (id) => (S.assets.items[id] ? S.assets.items[id].name : `Предмет ${id}`);
   function heroIcon(id, cls = '') {
     const hero = S.assets.heroes[id];
-    if (hero && hero.img) return h(`img.hero-ico${cls}`, { src: hero.img, alt: '', loading: 'lazy' });
+    if (hero && (hero.card || hero.img)) return h(`div.hero-ico.art${cls}`, { style: heroArtStyle(hero), role: 'img', 'aria-label': heroName(id) });
     return h(`div.hero-ico.ph${cls}`, heroName(id).slice(0, 2));
   }
   // Арты героя из справочника игры (card — вертикальная карточка, wide — фон) и цвет героя для подсветки.
@@ -1689,7 +1689,7 @@
         out.push(group);
       }
       const cls = m.won === true ? '.win' : m.won === false ? '.loss' : '';
-      group.append(h(`button.match${cls}${selected === m.match_id ? '.active' : ''}`, { onclick: () => onOpen(m.match_id), title: `Матч ${m.match_id}${modeName(m.match_mode) ? ' · ' + modeName(m.match_mode) : ''}` },
+      group.append(h(`button.match${cls}${selected === m.match_id ? '.active' : ''}`, { style: heroArtStyle(S.assets.heroes[m.hero_id]), onclick: () => onOpen(m.match_id), title: `Матч ${m.match_id}${modeName(m.match_mode) ? ' · ' + modeName(m.match_mode) : ''}` },
         heroIcon(m.hero_id),
         h('div.match-body',
           h('div.match-title', h('span.match-hero', heroName(m.hero_id))),

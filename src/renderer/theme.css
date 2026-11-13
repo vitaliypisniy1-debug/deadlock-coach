@@ -799,3 +799,49 @@ body::before {
 .ach-record .ico { width: 22px; height: 22px; color: #ffdc5e; }
 .ach-record b { color: #fff; }
 .ach-record span.muted { font-size: 13px; }
+
+/* ==========================================================================
+   Герои везде с артом: портрет вместо маленькой иконки
+   ========================================================================== */
+.hero-ico.art {
+  --hc: 255, 122, 69; border: 0; flex: none;
+  background:
+    var(--art, none) 50% 3% / 178% auto no-repeat,
+    var(--art-shards) center / cover no-repeat,
+    radial-gradient(110% 95% at 50% 0%, rgba(var(--hc), 0.7), rgba(var(--hc), 0.16) 62%, transparent),
+    var(--panel-2);
+  box-shadow: 0 0 0 1px rgba(var(--hc), 0.5), 0 6px 14px -4px rgba(0, 0, 0, 0.6);
+}
+.hero-ico.art.lg, .hero-ico.art.xl {
+  background:
+    var(--art, none) 50% 2% / 150% auto no-repeat,
+    var(--art-shards) center / cover no-repeat,
+    radial-gradient(110% 95% at 50% 0%, rgba(var(--hc), 0.75), rgba(var(--hc), 0.18) 62%, transparent),
+    var(--panel-2);
+}
+.hero-ico.art.sm { background-size: 190% auto, cover, auto, auto; }
+.hero-cell .hero-ico { width: 52px; height: 52px; border-radius: 14px; }
+.hero-cell { gap: 14px; }
+.table td { padding-top: 11px; padding-bottom: 11px; }
+.map-row .hero-ico, .chip .hero-ico, .tc-game .hero-ico { border-radius: 10px; }
+
+/* строки матчей: фон из арта героя */
+.match, .match.win, .match.loss { background-position: 0 0, right center, 0 0; background-repeat: no-repeat; }
+.match {
+  --hc: 255, 122, 69; min-height: 72px; padding-left: 18px;
+  background-image: linear-gradient(90deg, rgba(8, 18, 22, 0.97) 42%, rgba(8, 18, 22, 0.62) 100%), var(--wide, none);
+  background-size: 100% 100%, cover; background-color: var(--panel);
+}
+.match.win { background-image: linear-gradient(90deg, rgba(95, 227, 161, 0.16), rgba(8, 18, 22, 0.97) 36%, rgba(8, 18, 22, 0.62) 100%), var(--wide, none); background-size: 100% 100%, cover; }
+.match.loss { background-image: linear-gradient(90deg, rgba(255, 123, 123, 0.14), rgba(8, 18, 22, 0.97) 36%, rgba(8, 18, 22, 0.62) 100%), var(--wide, none); background-size: 100% 100%, cover; }
+.match .hero-ico { width: 52px; height: 52px; border-radius: 14px; }
+.match:hover { background-color: var(--panel-2); }
+.match-hero { font-size: 17px; }
+.hero-ico.art { background-position: 50% 0, center, 0 0, 0 0; background-size: 138% auto, cover, auto, auto; }
+.hero-ico.art.lg, .hero-ico.art.xl { background-size: 128% auto, cover, auto, auto; }
+.hero-ico.art.sm { background-size: 150% auto, cover, auto, auto; }
+.match { grid-template-columns: 52px minmax(0, 1fr) auto; }
+.match { grid-template-columns: 46px minmax(0, 1fr) auto; gap: 10px; }
+.match .hero-ico { width: 46px; height: 46px; }
+.match-sub { font-size: 11.5px; }
+.match-sub .res { margin-right: 4px; letter-spacing: 0.03em; }

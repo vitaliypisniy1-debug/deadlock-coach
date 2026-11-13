@@ -1072,6 +1072,7 @@
   function animateView(id) {
     const el = $(`view-${id}`);
     if (!el) return;
+    if (window.FX) { window.FX.enter(el); return; }
     el.classList.remove('enter');
     void el.offsetWidth;
     el.classList.add('enter');
@@ -1888,11 +1889,41 @@
         heroIcon(x.heroId), h('div', h('strong', heroName(x.heroId)), h('div.dash-hero-track', h('span', { style: { width: `${x.games / d.heroes[0].games * 100}%` } }))),
         h('span.muted.small', `${x.games} ${plural(x.games, 'матч', 'матча', 'матчей')} · ${x.wins}–${x.losses}${x.unknown ? ' · без результата: ' + x.unknown : ''}`),
         h('span.num', x.wins + x.losses >= 3 ? F.pct(x.wr) : '—'))));
-    v.replaceChildren(banner, h('div.dash-grid',
+    // --- ключевые цифры: что важнее всего видно сразу ---
+    const wrPct = d.week.wr === null ? null : Math.round(d.week.wr * 100);
+    const tone = delta === null ? '' : delta >= 1 ? 'good' : delta <= -1 ? 'bad' : '';
+    const ring = (pct) => {
+      const r = 34, c = 2 * Math.PI * r;
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 80 80'); svg.setAttribute('class', 'hl-ring'); svg.setAttribute('aria-hidden', 'true');
+      svg.innerHTML = `<circle cx="40" cy="40" r="${r}" class="hl-ring-bg"/><circle cx="40" cy="40" r="${r}" class="hl-ring-fg" stroke-dasharray="${(c * (pct ?? 0) / 100).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 40 40)"/>`;
+      return svg;
+    };
+    const lastRank = d.rank.length ? d.rank.at(-1) : null;
+    const hl = h('div.hl-row',
+      h(`div.hl-tile.feature${tone ? '.' + tone : ''}`,
+        h('div.hl-main',
+          h('div.hl-label', Icon('trending-up'), 'Винрейт за 7 дней'),
+          h('div.hl-value.num', wrPct === null ? '—' : h('span', { 'data-count': String(wrPct), 'data-suffix': '%' }, wrPct + '%')),
+          delta === null ? h('div.hl-sub', 'Мало матчей с результатом для сравнения')
+            : h('div.hl-sub', h(`span.hl-chip${tone ? '.' + tone : ''}`, `${delta > 0 ? '+' : ''}${delta.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} п. п.`), ' к прошлым 30 дням (' + F.pct(d.baseline.wr) + ')')),
+        ring(wrPct)),
+      h('div.hl-tile',
+        h('div.hl-label', Icon('swords'), 'Матчей за неделю'),
+        h('div.hl-value.num', h('span', { 'data-count': String(d.week.games) }, String(d.week.games))),
+        h('div.hl-sub', `${d.week.wins} побед · ${d.week.losses} поражений`)),
+      h('div.hl-tile',
+        h('div.hl-label', Icon('clock'), 'Время в игре'),
+        h('div.hl-value.num', h('span', { 'data-count': String(+d.hours.toFixed(1)), 'data-decimals': '1' }, d.hours.toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 })), h('span.hl-unit', ' ч')),
+        h('div.hl-sub', `${d.heroes.length} ${plural(d.heroes.length, 'герой', 'героя', 'героев')} за неделю`)),
+      h('div.hl-tile',
+        h('div.hl-label', Icon('crown'), 'Ранг'),
+        lastRank ? h('div.hl-rank', rankImg(Math.floor(lastRank.badge / 10), lastRank.badge % 10), h('div.hl-value.sm', badgeLabel(lastRank.badge))) : h('div.hl-value.sm', '—'),
+        h('div.hl-sub', lastRank ? `${d.rank.length} отметок · ${d.season ? 'сезон' : '30 дней'}` : 'Нет отметок')));
+    v.replaceChildren(banner, hl, h('div.dash-grid',
       card('Игры за неделю', h('span.muted.small', `${d.week.games} ${plural(d.week.games, 'матч', 'матча', 'матчей')}`), bars, legend),
       card('Мои герои за неделю', h('button.btn.small', { onclick: () => setView('myheroes') }, 'Все герои', Icon('arrow')),
         d.heroes.length ? heroRows : h('div.muted.dash-empty', 'За неделю пока нет матчей.')),
-      card('Форма за 7 дней', null, h('div.dash-rates', rate(d.week, 'Последние 7 дней'), rate(d.baseline, 'Предыдущие 30 дней')), h('div.hint', deltaText)),
       card('Изменения рейтинга', null, dashboardRank(d.rank, d.season))),
       h('div.dash-footer', h('span.muted.small', model.error ? `История недоступна · ${model.error}`
         : model.loading ? 'Проверяю свежие матчи…' : d.source === 'saved' ? 'Показаны сохранённые матчи' : 'По доступной истории Deadlock API'),

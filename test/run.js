@@ -2355,6 +2355,77 @@ test('rank: fresh ranked matches have a zero team badge, the own badge from hist
   assert.strictEqual(noRow.rank, null, 'ни значка команды, ни собственного — ранга нет, а не «ранг 0»');
 });
 
+test('roles: automatic working role from match data, hero summary with confidence', () => {
+  const Rl = require('../src/core/roles');
+  const L = require('../src/core/leaks');
+  const cuts = require('../src/core/data/errorNorms.json').roleCuts;
+  assert.ok(cuts && cuts.dmgShare.p67 > 0 && cuts.takenShare.p67 > 0, 'границы признаков роли есть в нормах');
+  assert.strictEqual(Rl.roleOf({ dmgShare: 0.2 }, null).role, null, 'без границ роль не определяется');
+  assert.strictEqual(Rl.roleOf(null, cuts).role, null);
+  const feat = (o) => ({ dmgShare: 0.16, takenShare: 0.15, healShare: 0.1, nwShare: 0.17, firstEngage: 0.3, vitality: 0.3, ...o });
+  assert.strictEqual(Rl.roleOf(feat({ takenShare: 0.3, firstEngage: 0.6 }), cuts).role, 'initiator');
+  assert.strictEqual(Rl.roleOf(feat({ takenShare: 0.3, firstEngage: null, vitality: 0.5 }), cuts).role, 'initiator', 'живучесть вместо маршрутов');
+  assert.strictEqual(Rl.roleOf(feat({ dmgShare: 0.25 }), cuts).role, 'carry');
+  const sup = Rl.roleOf(feat({ dmgShare: 0.1, healShare: 0.3 }), cuts);
+  assert.strictEqual(sup.role, 'support');
+  assert.ok(sup.why.length >= 2 && sup.why.every((w) => /%/.test(w)), 'названы признаки');
+  assert.strictEqual(Rl.roleOf(feat({}), cuts).role, 'flex');
+  // «первым в бой»: по маршрутам и дракам
+  const step = 5;
+  const mk = (fn) => Array.from({ length: 300 }, (_, i) => fn(i * step));
+  const players = [];
+  for (let i = 0; i < 12; i++) players.push({ slot: i, team: i < 6 ? 0 : 1, deaths: [], k: 0, a: 0, stats: [{ t: 1800, nw: 20000, pdmg: 1000 * (i % 6 + 1), pdmgT: 1000, heal: 0, g_lane: 6000, g_neutral: 3000, g_player: 2000, g_boss: 500, g_brk: 1000 }] });
+  // драка 1000–1010: трое союзников; слот 0 вступает в контакт с героями в 995, слоты 1 и 2 — в 1005
+  const paths = {};
+  for (const p of players) paths[p.slot] = mk((t) => [0, 0, 1, (p.slot === 0 && t >= 995 && t <= 1010) || ((p.slot === 1 || p.slot === 2) && t >= 1005 && t <= 1010) ? 1 : 0, 100]);
+  players[3].deaths = [[1000, 0, 0, 7, 0, 0]]; players[4].deaths = [[1004, 0, 0, 7, 0, 0]]; players[7].deaths = [[1008, 0, 0, 0, 0, 0]];
+  const m = { players, paths: { step, players: paths }, duration_s: 1800 };
+  const eng = Rl.engageStats(m, L.findFights);
+  assert.deepStrictEqual([eng.get(0).fights, eng.get(0).firsts, eng.get(1).firsts], [1, 1, 0], 'первым вступил слот 0');
+  const rf = Rl.roleFeatures(m, players[0], null, L.findFights);
+  assert.ok(Math.abs(rf.dmgShare - 1000 / 21000) < 1e-9 && Math.abs(rf.laneSouls - 0.3) < 1e-9 && Math.abs(rf.bossSouls - 0.025) < 1e-9, 'доли урона и душ по источникам');
+  assert.strictEqual(rf.firstEngage, null, 'меньше трёх драк — «первым» не считаем');
+  // роли на героях: мало данных — роль не называем; согласованность задаёт доверие
+  const g = (hero, role) => ({ hero, role, feat: feat({}) });
+  const list = [...Array(3).fill(0).map(() => g(1, 'carry')), ...Array(12).fill(0).map((_, i) => g(2, i < 10 ? 'carry' : 'flex')), ...Array(8).fill(0).map((_, i) => g(3, ['carry', 'flex', 'initiator', 'support'][i % 4]))];
+  const hr = Object.fromEntries(Rl.heroRoles(list).map((x) => [x.hero, x]));
+  assert.strictEqual(hr[1].role, null);
+  assert.strictEqual(hr[1].confidence, 'мало данных');
+  assert.strictEqual(hr[2].role, 'carry');
+  assert.strictEqual(hr[2].confidence, 'высокое');
+  assert.ok(/^низкое/.test(hr[3].confidence), 'роль меняется — доверие низкое');
+});
+
+test('roles: errors text says the role was chosen automatically and why; role norms are used', () => {
+  const L = require('../src/core/leaks');
+  const { playerFeatures: pf } = require('../src/core/features');
+  const step = 5;
+  const mkPath = (fn) => Array.from({ length: 400 }, (_, i) => fn(i * step));
+  const players = [];
+  for (let i = 0; i < 12; i++) {
+    const team = i < 6 ? 0 : 1;
+    players.push({ account_id: 1 + i, hero_id: 20 + i, team, slot: i, lane: 1, won: team === 1, k: 5, d: 0, a: 5, nw: 20000, items: [], deaths: [], deaths_t: [], pu: [],
+      stats: [{ t: 600, nw: 5000, d: 0, g_lost: 0, pdmg: 3000, pdmgT: 3000, heal: 100, k: 0, a: 0 }, { t: 1800, nw: 18000, d: 0, g_lost: 0, pdmg: i === 0 ? 60000 : 20000, pdmgT: 20000, heal: 1000, g_lane: 6000, k: 5, a: 5 }] });
+  }
+  const me = players[0];
+  me.d = 4;
+  me.deaths = [[1100, 0, 0, 7, 100, 0], [1300, 0, 0, 7, 100, 0], [1500, 0, 0, 7, 100, 0], [1700, 0, 0, 7, 100, 0]];
+  me.deaths_t = [1100, 1300, 1500, 1700];
+  const far = {};
+  for (const p of players) far[p.slot] = mkPath(() => [p === me ? 0 : 6000, 0, 1, 0, 100]);
+  const m = { match_id: 9300, start_time: 1, duration_s: 1800, players, paths: { step, players: far }, badge: [0, 0], dmg: { t: [180, 600, 1800], d: {} } };
+  const role = L.gameRole(m, me, pf(me, m, null));
+  assert.strictEqual(role.role, 'carry', `большая доля урона — керри: ${JSON.stringify(role.why)}`);
+  const sd = L.gameLeaks({ m, me, f: pf(me, m, null), ref: null, tier: 6, heroName: (x) => `H${x}`, itemName: (x) => `I${x}` }).find((l) => l.key === 'solo_deaths');
+  assert.ok(sd, 'четыре смерти в одиночку — выше нормы роли');
+  assert.strictEqual(sd.role, 'carry');
+  assert.ok(/определена автоматически: керри/.test(sd.context) && /% урона команды/.test(sd.context), 'в тексте — роль, что она автоматическая, и признаки');
+  assert.ok(/в роли «керри/.test(sd.text), `норма роли в сравнении: ${sd.text}`);
+  const n = L.normFor(20, 6, 'carry');
+  assert.ok(n.scope === 'role-rank' && n.role === 'carry');
+  assert.strictEqual(L.normFor(20, 6, null).scope === 'role-rank', false);
+});
+
 test('versus: candidates and side by side', () => {
   const recs = benchM.map((m) => ({ match: m, player: m.players[0] }));
   const myM = extractMatch(fakeMatch({ id: 4242, seed: 77, start: 1, accounts: [777, ...ACC.slice(1)], skill: [0.8] }), { paths: true });

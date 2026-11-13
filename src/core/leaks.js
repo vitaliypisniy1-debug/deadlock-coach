@@ -19,6 +19,7 @@
 const { valueAt } = require('./timeline');
 const { N, T, plural } = require('./tipkit');
 const { soloDeathRows, soloDeathsVerifiable, lateDeathCount } = require('./deaths');
+const { ROLE_LABELS, roleFeatures, roleOf } = require('./roles');
 
 // Души всегда целые: медианы и расчётные остатки бывают дробными («379 души» вместо «380 душ»).
 const souls = (n) => `${N(Math.round(n))} ${plural(Math.round(n), 'душа', 'души', 'душ')}`;
@@ -80,21 +81,31 @@ try {
 // ранг 0 или пусто — неизвестен (в свежих рейтинговых матчах значок матча = 0), а не «самый низкий»
 const bandOfTier = (t) => (!(t > 0) ? 'any' : t <= 5 ? 0 : t <= 7 ? 1 : 2);
 // Ячейка с нужной выборкой: герой+ранг → герой → все герои+ранг → все. Возвращает { cell, scope } или null.
-function normFor(heroId, tier) {
+function normFor(heroId, tier, role = null) {
   if (!NORMS) return null;
   const b = bandOfTier(tier);
-  const tries = [[`${heroId}|${b}`, 'hero-rank'], [`${heroId}|any`, 'hero'], [`all|${b}`, 'rank'], ['all|any', 'all']];
+  // сначала нормы роли, в которой игрок сыграл матч (определена автоматически, см. roles.js), потом героя и ранга
+  const tries = [...(role ? [[`role:${role}|${b}`, 'role-rank'], [`role:${role}|any`, 'role']] : []), [`${heroId}|${b}`, 'hero-rank'], [`${heroId}|any`, 'hero'], [`all|${b}`, 'rank'], ['all|any', 'all']];
   for (const [k, scope] of tries) {
     const cell = NORMS.cells[k];
-    if (cell && cell.n >= (NORMS.minN || 60)) return { cell, scope, band: b };
+    if (cell && cell.n >= (NORMS.minN || 60)) return { cell, scope, band: b, role: scope.startsWith('role') ? role : null };
   }
   return null;
+}
+// Рабочая роль игрока в матче (автоматически, roles.js); без границ из errorNorms.json роль не определяется.
+function gameRole(m, me, f) {
+  try {
+    const feat = roleFeatures(m, me, f, findFights);
+    return { ...roleOf(feat, NORMS && NORMS.roleCuts), feat };
+  } catch {
+    return { role: null, why: [], feat: null };
+  }
 }
 // Что нормально для такого героя и ранга — для текста: «обычно 1, в 3 играх из 4 — не больше 2».
 function normPhrase(heroName, norm, metric, fmt = (v) => String(Math.round(v))) {
   const r = norm && norm.cell[metric];
   if (!r || r.p50 === null) return '';
-  const who = norm.scope === 'hero-rank' ? `у игроков на ${heroName} твоего ранга` : norm.scope === 'hero' ? `у игроков на ${heroName}` : norm.scope === 'rank' ? 'у игроков твоего ранга' : 'у игроков в рейтинге';
+  const who = norm.scope === 'role-rank' ? `у игроков в роли «${ROLE_LABELS[norm.role] || norm.role}» твоего ранга` : norm.scope === 'role' ? `у игроков в роли «${ROLE_LABELS[norm.role] || norm.role}»` : norm.scope === 'hero-rank' ? `у игроков на ${heroName} твоего ранга` : norm.scope === 'hero' ? `у игроков на ${heroName}` : norm.scope === 'rank' ? 'у игроков твоего ранга' : 'у игроков в рейтинге';
   return r.p50 === r.p75 ? `${who} обычно не больше ${fmt(r.p75)}` : `${who} обычно ${fmt(r.p50)}, в 3 играх из 4 — не больше ${fmt(r.p75)}`;
 }
 // Выводы с подтверждённой ценой (цена измерена на больших данных) и наблюдения (цена не подтверждена).
@@ -271,6 +282,8 @@ function gameLeaks(c) {
   const enemies = m.players.filter((p) => p.team !== me.team);
   const allies = m.players.filter((p) => p.team === me.team && p !== me);
   const checked = (key) => c.checked?.add(key);
+  // рабочая роль в этой игре — автоматически по данным матча (доля урона, полученный урон, первым в бой, сборка)
+  const roleInfo = gameRole(m, me, f);
 
   // ---------- 1. Линия: размены в пользу врага ----------
   const foes = me.lane !== null && me.lane !== undefined ? enemies.filter((p) => p.lane === me.lane) : [];
@@ -351,7 +364,7 @@ function gameLeaks(c) {
         score: 55 + lostOnes.length * 10 + allyDeathsTotal * 2,
         title: jungle >= missed.length / 2 ? 'Бил лес, пока команда дралась' : 'Фармил, пока команда дралась',
         groupTitle: 'Фармил, пока команда проигрывала драки',
-        text: `После 10:00 найдено ${missed.length} ${plural(missed.length, 'эпизод', 'эпизода', 'эпизодов')}, где ты фармил, а команда потеряла больше героев. Всего в этих эпизодах погибло ${allyDeathsTotal} ${plural(allyDeathsTotal, 'союзник', 'союзника', 'союзников')}.${(() => { const ph = normPhrase(heroName(me.hero_id), normFor(me.hero_id, c.tier), 'farm'); return ph ? ` Для сравнения: ${ph} таких эпизодов за игру.` : ''; })()}`,
+        text: `После 10:00 найдено ${missed.length} ${plural(missed.length, 'эпизод', 'эпизода', 'эпизодов')}, где ты фармил, а команда потеряла больше героев. Всего в этих эпизодах погибло ${allyDeathsTotal} ${plural(allyDeathsTotal, 'союзник', 'союзника', 'союзников')}.${(() => { const ph = normPhrase(heroName(me.hero_id), normFor(me.hero_id, c.tier, roleInfo.role), 'farm'); return ph ? ` Для сравнения: ${ph} таких эпизодов за игру.` : ''; })()}`,
         context: 'Расстояние по карте даёт приблизительную оценку. Из этих данных нельзя понять, успевал ли ты подойти и что команда получала на другой стороне карты.',
         fix: ['На карте проверь, когда можно было заметить драку и был ли безопасный путь к команде.'],
         moments: missed.map((x) => ({ t: x.t, x: x.x, y: x.y, text: `потери ${x.allyDeaths}:${x.enemyDeaths} · ближе всего к драке — около ${x.sec} с по прямой${x.jungle ? ' · ты в лесу' : ''}` })),
@@ -437,7 +450,7 @@ function gameLeaks(c) {
   const solo = soloDeathRows(m, me);
   if (solo !== null && soloDeathsVerifiable(m, me)) checked('solo_deaths');
   // порог — выше нормы героя и ранга (3-й квартиль), но не меньше двух смертей: у героя с большим числом нормальных заходов — выше
-  const soloNorm = normFor(me.hero_id, c.tier);
+  const soloNorm = normFor(me.hero_id, c.tier, roleInfo.role);
   const soloLimit = soloNorm && Number.isFinite(soloNorm.cell.solo.p75) ? Math.max(1, soloNorm.cell.solo.p75) : 1;
   if (solo && solo.length >= 2 && solo.length > soloLimit) {
     const lostBy = new Map(observedLosses.map((x) => [x.t, x.lost]));
@@ -644,7 +657,10 @@ function gameLeaks(c) {
     if (l.level === 'good') return l;
     const finding = FINDING_KEYS.has(l.key);
     const miss = MISSING[l.key];
-    return { ...l, status: finding ? 'finding' : 'observation', level: finding ? l.level : 'info', context: [l.context, miss].filter(Boolean).join(' ') || undefined };
+    const roleNote = roleInfo.role && (l.key === 'solo_deaths' || l.key === 'farm_while_fight')
+      ? `Роль в этой игре определена автоматически: ${ROLE_LABELS[roleInfo.role]} (${roleInfo.why.join('; ')}); от неё зависит норма для сравнения.`
+      : '';
+    return { ...l, role: roleInfo.role, status: finding ? 'finding' : 'observation', level: finding ? l.level : 'info', context: [l.context, roleNote, miss].filter(Boolean).join(' ') || undefined, basis: [l.context, roleNote].filter(Boolean).join(' ') || null, missing: miss || null };
   }).sort((a, b) => b.score - a.score);
 }
 
@@ -923,7 +939,7 @@ function leakProfile(games) {
       let e = by.get(l.key);
       if (!e) by.set(l.key, (e = { key: l.key, status: 'observation', area: l.area, title: l.groupTitle || l.title, fix: l.groupFix || l.fix, games: [], souls: 0, deaths: 0, allyDeaths: 0, statues: 0, score: 0 }));
       if (l.status !== 'observation') e.status = 'finding';
-      e.games.push({ match_id: g.match_id, start_time: g.start_time, won: g.won, hero: g.hero, title: l.title, text: l.text, context: l.context || null, extra: l.extra || null, moments: (l.moments || []).slice(0, 4), score: l.score });
+      e.games.push({ match_id: g.match_id, start_time: g.start_time, won: g.won, hero: g.hero, title: l.title, text: l.text, context: l.context || null, basis: l.basis || null, missing: l.missing || null, extra: l.extra || null, moments: (l.moments || []).slice(0, 4), score: l.score });
       e.souls += (l.cost && l.cost.souls) || 0;
       e.deaths += (l.cost && l.cost.deaths) || 0;
       e.allyDeaths += (l.cost && l.cost.allyDeaths) || 0;
@@ -995,4 +1011,4 @@ function winLink(key, value) {
   return { wr: cur[1], best: list[list.length - 1] };
 }
 
-module.exports = { souls, lostTracked, farmEpisodes, normFor, normPhrase, gameLeaks, gameHighlights, leakProfile, counterItems, findFights, lossPerDeath, majorSoulLosses, unspentAt, winLink, benchFor, RANK_BENCH, WIN_LINKS, FIGHT_FAR, FIGHT_REACH, SPEED, SOUL_LOSS_THRESHOLD };
+module.exports = { souls, lostTracked, farmEpisodes, gameRole, normFor, normPhrase, gameLeaks, gameHighlights, leakProfile, counterItems, findFights, lossPerDeath, majorSoulLosses, unspentAt, winLink, benchFor, RANK_BENCH, WIN_LINKS, FIGHT_FAR, FIGHT_REACH, SPEED, SOUL_LOSS_THRESHOLD };

@@ -13,7 +13,8 @@ const { playersFromMatches, mergeCandidates, rankOf } = require('../core/discove
 const { parseSteamInput, vanityOf, resolveVanity } = require('./steamIds');
 const { buildOverview, dashboardStats, rankFromBadges } = require('../core/overview');
 const { gameBadge, tierOfBadge } = require('../core/rank');
-const { gameLeaks, gameHighlights, leakProfile, counterItems, winLink, RANK_BENCH, WIN_LINKS, lossPerDeath, SOUL_LOSS_THRESHOLD } = require('../core/leaks');
+const { heroRoles } = require('../core/roles');
+const { gameRole, gameLeaks, gameHighlights, leakProfile, counterItems, winLink, RANK_BENCH, WIN_LINKS, lossPerDeath, SOUL_LOSS_THRESHOLD } = require('../core/leaks');
 const { soloDeathRows } = require('../core/deaths');
 const { mapData } = require('../core/mapdata');
 const { heroReport } = require('../core/heroReport');
@@ -1614,7 +1615,8 @@ class Sync {
       const fresh = (m.v || 1) >= EXTRACT_V;
       const checked = new Set();
       const leaks = gameLeaks({ m, me, f, ref: topHero.get(me.hero_id) || null, tier, assets: this.assets, counters, laneVs, heroName, itemName, checked });
-      games.push({ match_id: m.match_id, start_time: m.start_time, duration_s: m.duration_s, hero: me.hero_id, won: me.won, k: me.k, d: me.d, a: me.a, fresh, leaks, checked: [...checked], f });
+      const role = gameRole(m, me, f);
+      games.push({ match_id: m.match_id, start_time: m.start_time, duration_s: m.duration_s, hero: me.hero_id, won: me.won, k: me.k, d: me.d, a: me.a, fresh, leaks, checked: [...checked], f, role: role.role, roleFeat: role.feat });
     }
     const profile = leakProfile(games.filter((g) => g.fresh));
     // Привычки до 10:00: твои медианы, твой ранг, высокий ранг и как это связано с победой
@@ -1639,7 +1641,9 @@ class Sync {
     this.store.write(`leaks-top-${id}.json`, topLeak ? { title: topLeak.title, fix: (topLeak.fix || [])[0] || null, count: topLeak.count, games: profile.games, at: Date.now() } : null);
     return {
       rank,
-      games: games.map(({ f, ...g }) => ({ ...g, leaks: g.leaks.map((l) => ({ key: l.key, area: l.area, level: l.level, status: l.status, title: l.title, text: l.text, context: l.context, fix: l.fix, moments: l.moments, score: l.score })) })),
+      // рабочая роль на каждом герое — определена автоматически по данным матчей (признаки и доверие внутри)
+      roles: heroRoles(games.filter((g) => g.role).map((g) => ({ hero: g.hero, role: g.role, feat: g.roleFeat }))),
+      games: games.map(({ f, roleFeat, ...g }) => ({ ...g, leaks: g.leaks.map((l) => ({ key: l.key, area: l.area, level: l.level, status: l.status, title: l.title, text: l.text, context: l.context, basis: l.basis, missing: l.missing, fix: l.fix, moments: l.moments, score: l.score })) })),
       fresh: games.filter((g) => g.fresh).length,
       total: games.length,
       profile,

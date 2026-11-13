@@ -3122,21 +3122,42 @@
       h('div.leak-focus-side', h('div.leak-side-title', 'Где это было'), leakExamples(top))) : h('div.empty', h('strong', 'Повторяющихся подтверждённых ошибок не нашёл'), 'В последних играх нет ошибки с подтверждённой ценой, которая повторялась бы. Продолжай — и смотри разбор каждой игры в «Моих матчах».');
 
     // ---------- все ошибки ----------
-    const list = rows.length > (top ? 1 : 0) ? h('section.panel', h('h2', 'Все замечания'),
+    // выводы с подтверждённой ценой — в «Все замечания», наблюдения — в отдельном блоке ниже
+    const findings = rows.filter((r) => r.status !== 'observation');
+    const observations = rows.filter((r) => r.status === 'observation');
+    const list = findings.length > 1 ? h('section.panel', h('h2', 'Все замечания'),
       h('div.hint', { style: { marginBottom: '12px' } }, 'По важности: как часто случается и насколько дорого обходится. Нажми, чтобы раскрыть.'),
-      h('div.leak-list', rows.map((r, i) => {
+      h('div.leak-list', findings.map((r, i) => {
         const open = G.open === r.key;
         return h(`div.leak-row${open ? '.open' : ''}`,
           h('button.leak-row-head', { onclick: () => { G.open = open ? null : r.key; renderGrowth(); }, 'aria-expanded': open ? 'true' : 'false' },
             h('span.leak-rank.num', String(i + 1)),
             h('div.grow', h('div.leak-area', r.area), h('div.leak-title', r.title)),
-            r.status === 'observation' ? h('span.pill.low', { title: 'Цена не подтверждена: связь с победой не найдена или слабая. Это наблюдение, а не причина поражений.' }, 'наблюдение') : null,
             h('div.leak-freq', { title: 'Из матчей, которые можно было проверить' }, h('div.leak-freq-bar', h('span', { style: { width: `${Math.round(r.share * 100)}%` } })), h('span.num', `${r.count} из ${r.eligible}`)),
-            r.status !== 'observation' && r.wrWith !== null && r.wrWithout !== null ? h(`span.pill.${wrBad(r) ? 'bad' : ''}`, { title: 'Доля побед в играх с этой ошибкой и без неё (без учёта числа смертей; поправку см. в раскрытом разделе)' }, `${F.pct(r.wrWith)} / ${F.pct(r.wrWithout)}`) : null),
-          open ? h('div.leak-row-body', r.unknown ? h('div.hint', `Пропущено матчей из-за нехватки данных: ${r.unknown} из ${n}.`) : null, leakCost(r), r.status === 'observation' ? null : wrCompare(r),
+            r.wrWith !== null && r.wrWithout !== null ? h(`span.pill.${wrBad(r) ? 'bad' : ''}`, { title: 'Доля побед в играх с этой ошибкой и без неё (без учёта числа смертей; поправку см. в раскрытом разделе)' }, `${F.pct(r.wrWith)} / ${F.pct(r.wrWithout)}`) : null),
+          open ? h('div.leak-row-body', r.unknown ? h('div.hint', `Пропущено матчей из-за нехватки данных: ${r.unknown} из ${n}.`) : null, leakCost(r), wrCompare(r),
             h('div.leak-fix', h('div.leak-fix-title', 'Как исправить'), h('ol', (r.fix || []).map((x) => h('li', x)))),
             h('div.leak-side-title', 'Примеры'), leakExamples(r)) : null);
       }))) : null;
+
+    // ---------- наблюдения: связи по данным, цена не подтверждена ----------
+    const obItem = (r) => {
+      const ex = r.examples[0] || {};
+      const chips = r.examples.flatMap((g) => (g.moments || []).filter((mo) => Number.isFinite(mo.t) && mo.t >= 0).slice(0, 2).map((mo) => h('button.btn.small', {
+        title: `${heroName(g.hero)} · ${g.won ? 'победа' : 'поражение'} · ${mo.text || ''}`.trim(),
+        onclick: () => openGrowthEpisode({ ...mo, matchId: g.match_id, title: g.title, context: g.context }),
+      }, F.time(mo.t)))).slice(0, 8);
+      return h('details.ob-item',
+        h('summary', h('span', h('b', r.title), h('small', r.area)), h('span.ob-count', `${r.count} из ${r.eligible} матчей`), h('span.pill.low', 'наблюдение')),
+        h('div.ob-body',
+          h('div.ob-label', 'Основание'), h('p', [ex.text, ex.basis].filter(Boolean).join(' ') || 'Замечание найдено по данным матча.'),
+          ex.missing ? [h('div.ob-label', 'Чего не хватает для уверенности'), h('p', ex.missing)] : null,
+          chips.length ? h('div.ob-chips', chips) : null));
+    };
+    const obBlock = h('section.ob-block',
+      h('div.ob-head', h('h2', 'Наблюдения'), h('span.pill.low', 'пока не выводы')),
+      h('p.ob-note', 'Это связи по данным, а не доказанные причины: по большой выборке рейтинговых матчей цена этих замечаний не подтверждена.'),
+      observations.length ? h('div.ob-list', observations.map(obItem)) : h('div.empty', 'Наблюдений нет'));
 
     // ---------- привычки первых минут ----------
     const rankLabel = d.rank ? rankName(d.rank.tier) : 'твой ранг';
@@ -3158,7 +3179,7 @@
             h('span.num.habit-link', { title: x.link ? `С твоим показателем — ${link.split(' → ')[0]}, с лучшим — ${link.split(' → ')[1] || '—'}` : null }, link));
         })));
 
-    v.replaceChildren(head, ...notes, nextGoal, focus, list, habits);
+    v.replaceChildren(head, ...notes, nextGoal, focus, list, obBlock, habits);
   }
 
   // ================= НАСТРОЙКИ =================

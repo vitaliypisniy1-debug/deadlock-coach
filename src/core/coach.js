@@ -455,7 +455,7 @@ function checkGame(game, goals) {
 const WHY_MIN_GAMES = 10; // меньше проверенных игр — доли и победы не показываем
 function whyOf(goal, data, cat, fmt) {
   const lines = [];
-  if (goal.evidence) lines.push({ kind: 'episode', text: `${goal.evidence.title || 'Эпизод'}${goal.evidence.text ? ` — ${goal.evidence.text}` : ''}` });
+  if (goal.evidence) lines.push({ kind: 'episode', text: goal.evidence.text || goal.evidence.title || 'Эпизод из твоей игры' });
   const ls = data.leakStats && data.leakStats[LEAK_OF[goal.key]];
   if (ls && ls.eligible >= WHY_MIN_GAMES) {
     lines.push({ kind: 'stat', text: `${ls.title ? `«${ls.title}» — ` : 'Замечание — '}в ${ls.count} из ${ls.eligible} проверенных игр.` });
@@ -628,7 +628,7 @@ function updateCoach(state, data, { forceNew = false, focusEvidence = null, repl
   const goals = goalsAll.map((goal) => {
     const rows = loaded.slice(-20).map((g) => {
       const c = checkGame(g, [goal])[0];
-      return { match_id: g.match_id, t: g.start_time, hero: g.hero, value: c.value, target: c.target, pass: c.pass, afterStart: g.start_time >= goalStart(goal) };
+      return { match_id: g.match_id, t: g.start_time, hero: g.hero, value: c.value, text: c.text, target: c.target, pass: c.pass, afterStart: g.start_time >= goalStart(goal) };
     }).filter((r) => r.value !== null && r.value !== undefined);
     const since = rows.filter((r) => r.afterStart && r.pass !== null);
     const prior = rows.filter((r) => !r.afterStart && r.pass !== null);

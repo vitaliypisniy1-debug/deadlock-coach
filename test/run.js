@@ -676,7 +676,7 @@ test('coach: plan from weaknesses, checks, closing goals', () => {
   const lobby = refAll(weak.flatMap((g) => g.match.players.slice(1).map((p) => playerFeatures(p, g.match))));
   const r1 = updateCoach(null, { games: weak, topHero, lobby, extra: {}, now: t0 + 12 * 3000 + 100 });
   assert.ok(r1.view.plan, 'план создан');
-  assert.ok(r1.view.goals.length >= 3 && r1.view.goals.length <= 4, `целей ${r1.view.goals.length}`);
+  assert.ok(r1.view.goals.length >= 2 && r1.view.goals.length <= 3, `целей ${r1.view.goals.length}`);
   const fams = r1.view.goals.map((g) => (CATALOG.find((c) => c.key === g.key) || {}).family);
   assert.strictEqual(new Set(fams).size, fams.length, 'нет двух целей про одно и то же');
   const perArea = {};
@@ -687,8 +687,8 @@ test('coach: plan from weaknesses, checks, closing goals', () => {
   const strong = coachGames(1.5, 8, t0 + 12 * 3000 + 600, 800);
   const r2 = updateCoach(r1.state, { games: weak.concat(strong), topHero, lobby, extra: {}, now: t0 + 20 * 3000 + 1000 });
   assert.ok(r2.view.cards.length >= 5 && !r2.view.cards[0].beforePlan, 'карточки после плана');
-  assert.ok(r2.view.goals.some((g) => g.status === 'done'), 'хотя бы одна цель выполнена');
-  assert.ok(r2.view.events.some((e) => e.kind === 'done'), 'сообщение о выполнении');
+  assert.ok(r2.view.goals.some((g) => g.status === 'done') || r2.view.events.some((e) => e.kind === 'step'), 'цель выполнена или пройдена ступень');
+  assert.ok(r2.view.events.some((e) => e.kind === 'done' || e.kind === 'step'), 'сообщение о выполнении');
   const c = checkGame(strong[0], r1.view.goals);
   assert.ok(c.every((x) => x.pass === null || typeof x.pass === 'boolean'));
   // мало игр — плана нет
@@ -696,11 +696,11 @@ test('coach: plan from weaknesses, checks, closing goals', () => {
   assert.strictEqual(r0.view.plan, null);
   assert.ok(r0.view.need > 0);
   console.log('    цели:', r1.view.goals.map((g) => g.title).join(' | '));
-  // старый план из 2 целей добирается до 3–4
+  // старый план из 1 цели добирается до 2–3
   const oldState = JSON.parse(JSON.stringify(r1.state));
-  oldState.plan.goals = oldState.plan.goals.slice(0, 2).map(({ family, kind, ...g }) => g);
+  oldState.plan.goals = oldState.plan.goals.slice(0, 1).map(({ family, kind, ...g }) => g);
   const r3 = updateCoach(oldState, { games: weak, topHero, lobby, extra: {}, now: t0 + 12 * 3000 + 200 });
-  assert.ok(r3.view.goals.filter((g) => g.status === 'active').length >= 3, 'план добран');
+  assert.ok(r3.view.goals.filter((g) => g.status === 'active').length >= 2, 'план добран');
   // выбор: по одному на раздел, потом второй в раздел, одна семья — одна цель
   const pk = pickGoals([
     { key: 'd10', family: 'deaths', area: 'Выживание', gap: 1 },
@@ -709,11 +709,159 @@ test('coach: plan from weaknesses, checks, closing goals', () => {
     { key: 'spikeFights', family: 'spikeUse', area: 'Паверспайки', gap: 0.7 },
     { key: 'firstHugeT', family: 'spike2', area: 'Паверспайки', gap: 0.6 },
     { key: 'lh10', family: 'laneFarm', area: 'Фарм', gap: 0.5 },
-  ]);
+  ], 4);
   assert.deepStrictEqual(pk.map((g) => g.key), ['d10', 'firstBigT', 'lh10', 'spikeFights']);
   // признаки паверспайков считаются
   assert.ok(weak.some((g) => g.f.spikeFights !== undefined) && 'spikeDmg' in weak[0].f);
 });
+test('coach: goal honesty — easy goals skipped, too-hard goals get steps, no calendar expiry', () => {
+  const { candidates, calibrate } = require('../src/core/coach');
+  const now = 1_900_000_000;
+  const mk = (i, f) => ({ match_id: 300 + i, start_time: now - (30 - i) * 3000, hero: 72, f });
+  // обычно 1–2 смерти до 10:00; планка «0» выполнялась в 1 игре из 12 — нужна ступень «не больше 1»
+  const hard = Array.from({ length: 12 }, (_, i) => mk(i, { d10: i === 0 ? 0 : 1 + (i % 2) }));
+  const cand = candidates({ games: hard, topHero: new Map(), lobby: {}, extra: {} }).find((c) => c.key === 'd10');
+  assert.ok(cand, 'цель про смерти до 10:00 предложена');
+  assert.ok(cand.ladder && cand.ladder.steps.length === 2, 'есть ступени');
+  assert.deepStrictEqual(cand.ladder.steps.map((x) => x.target), [1, 0], 'сначала легче, потом нужная планка');
+  assert.strictEqual(cand.target, 1);
+  assert.strictEqual(cand.ladder.i, 0);
+  assert.ok(cand.calib.rate <= 0.15 && cand.calib.n === 12, 'доля выполнения до цели записана');
+  // цель уже выполняется почти всегда — тренировать нечего
+  const easy = Array.from({ length: 10 }, (_, i) => mk(i, { kp: 0.6 }));
+  assert.strictEqual(calibrate({ key: 'kp', cmp: 'ge', target: 0.55, byHero: null, title: 'x', short: 'x' }, CATALOG.find((c) => c.key === 'kp'), easy), null, 'выполняется в 100% игр — не берём');
+  // мало проверенных игр — цель остаётся, но про выборку сказано
+  const few = calibrate({ key: 'kp', cmp: 'ge', target: 0.55, byHero: null, title: 'x', short: 'x' }, CATALOG.find((c) => c.key === 'kp'), easy.slice(0, 3));
+  assert.ok(few && few.calib.n === 3 && !few.ladder);
+  // ступень пройдена → планка выше, счёт заново; потом цель выполнена
+  const state = { plan: { createdAt: now - 40 * 86400, reason: 'first', goals: [{ key: 'd10', family: 'deaths', area: 'Выживание', cmp: 'le', habit: false, kind: 'fix', title: 'Не больше 1 смерти до 10:00', short: 'смерти до 10:00', tip: 't', target: 1, byHero: null, baseline: 2, ref: null, gap: 1, status: 'active', startedAt: now - 20000, ladder: { i: 0, steps: [{ target: 1, byHero: null }, { target: 0, byHero: null }], finalTitle: 'Не умирать до 10:00' } }] }, archive: [], log: [] };
+  const played = (from, n, d10) => Array.from({ length: n }, (_, i) => ({ match_id: 700 + from + i, start_time: now - 15000 + (from + i) * 1000, hero: 72, f: { d10 } }));
+  const base = { topHero: new Map(), lobby: {}, extra: {} };
+  const r1 = updateCoach(state, { ...base, now, games: hard.concat(played(0, 5, 1)) });
+  const g1 = r1.view.goals.find((g) => g.key === 'd10');
+  assert.strictEqual(g1.status, 'active', 'цель не закрыта на первой ступени');
+  assert.strictEqual(g1.target, 0, 'планка выросла');
+  assert.deepStrictEqual([g1.ladderInfo.step, g1.ladderInfo.of], [2, 2]);
+  assert.strictEqual(g1.games, 0, 'счёт игр начат заново');
+  assert.ok(r1.view.events.some((e) => e.kind === 'step'), 'сообщение о пройденной ступени');
+  assert.ok(r1.state.plan.createdAt === state.plan.createdAt, 'план не пересоздан по календарю (прошло 40 дней)');
+  const snap = JSON.stringify(r1.state);
+  const r2 = updateCoach(JSON.parse(snap), { ...base, now: now + 100, games: hard.concat(played(0, 5, 1), played(5, 5, 0)).map((g, i) => (i >= 17 ? { ...g, start_time: now + 10 + i } : g)) });
+  assert.strictEqual(r2.view.goals.find((g) => g.key === 'd10').status, 'done', 'на последней ступени цель закрыта');
+  assert.ok(r2.view.finished.some((f) => f.key === 'd10'), 'в списке выполненных');
+  // смена цели: старая уходит, новая той же темы 14 дней не возвращается
+  const r3 = updateCoach(JSON.parse(snap), { ...base, now: now + 50, games: hard.concat(played(0, 5, 1)) }, { replaceKey: 'd10' });
+  const old = r3.view.goals.find((g) => g.key === 'd10');
+  assert.ok(old.status === 'replaced' && old.userReplaced);
+  assert.ok(!r3.view.goals.some((g) => g.key === 'd10' && g.status === 'active'));
+});
+
+test('coach: survivability goal from episode — pass only for checked games', () => {
+  const now = 1_900_000_000;
+  const evidence = { key: 'survivability_purchase', matchId: 5, t: 1500, title: 'Серия смертей без живучести', text: 'С 25:00 ты погиб 3 раза' };
+  const games = [{ match_id: 5, start_time: now - 600, hero: 72, f: { survivability_purchase: 0 } }];
+  const r = updateCoach(null, { now, games, topHero: new Map(), lobby: {}, extra: {} }, { focusEvidence: evidence });
+  const g = r.view.goals[0];
+  assert.strictEqual(g.key, 'survivability_purchase');
+  assert.strictEqual(g.cmp, 'ge');
+  assert.strictEqual(g.target, 1);
+  assert.strictEqual(g.evidence.t, 1500);
+  assert.strictEqual(g.baseline, 0, 'до цели замечание было');
+  const next = [...games, { match_id: 6, start_time: now + 60, hero: 72, f: { survivability_purchase: 1 } }, { match_id: 7, start_time: now + 120, hero: 72, f: { survivability_purchase: null } }, { match_id: 8, start_time: now + 180, hero: 72, f: { survivability_purchase: 0 } }];
+  const after = updateCoach(r.state, { now: now + 240, games: next, topHero: new Map(), lobby: {}, extra: {} });
+  const goal = after.view.goals.find((x) => x.key === 'survivability_purchase');
+  assert.strictEqual(goal.games, 2, 'игра без возможности проверки не считается');
+  assert.strictEqual(goal.passed, 1);
+  assert.ok(goal.how.includes("3 смерти и больше"));
+  assert.ok(goal.rows.every((x) => !/undefined|NaN/.test(x.text)));
+});
+
+test('coach: why this goal — only measured facts, wins link only with enough games', () => {
+  const now = 1_900_000_000;
+  const games = Array.from({ length: 8 }, (_, i) => ({ match_id: 900 + i, start_time: now - (9 - i) * 1000, hero: 72, f: { d10: 2 } }));
+  const state = { plan: { createdAt: now - 5000, reason: 'first', goals: [{ key: 'd10', family: 'deaths', area: 'Выживание', cmp: 'le', habit: false, kind: 'fix', title: 'Не больше 1 смерти до 10:00', short: 'смерти до 10:00', tip: 't', target: 1, byHero: null, baseline: 2, ref: 1, gap: 1, status: 'active', startedAt: now - 5000 }] }, archive: [], log: [] };
+  const base = { topHero: new Map(), lobby: {}, extra: {}, now, games };
+  const rich = updateCoach(state, { ...base, leakStats: { lane_trades: { count: 12, eligible: 29, wrWith: 0.33, wrWithout: 0.53 } } }).view.goals[0].why;
+  assert.ok(rich.lines.some((l) => l.kind === 'stat' && /12 из 29/.test(l.text)));
+  assert.ok(!rich.lines.some((l) => l.kind === 'compare' && /обычно 2.*— 2/.test(l.text)));
+  assert.ok(rich.lines.some((l) => l.kind === 'link' && /33%.*53%/.test(l.text)));
+  assert.ok(rich.lines.some((l) => l.kind === 'compare'), 'сравнение с топами');
+  assert.ok(/связь, а не доказанная причина/i.test(rich.note));
+  const poor = updateCoach(state, { ...base, leakStats: { lane_trades: { count: 3, eligible: 8, wrWith: 0.2, wrWithout: 0.6 } } }).view.goals[0].why;
+  assert.ok(!poor.lines.some((l) => l.kind === 'stat' || /Побед в этих играх/.test(l.text)), 'мало игр — личные доли и победы не показываем');
+  for (const l of rich.lines.concat(poor.lines)) assert.ok(!/undefined|NaN/.test(l.text), l.text);
+});
+test('progress: trend only with enough games and a real shift; comparison with tops on your heroes', () => {
+  const { progressView, mannWhitneyZ, levelVsTop } = require('../src/core/progress');
+  const lo = [10, 12, 11, 13, 12, 10, 11, 12];
+  assert.ok(mannWhitneyZ(lo, lo.map((v) => v + 8)) > 3, 'явный сдвиг вверх');
+  assert.ok(Math.abs(mannWhitneyZ(lo, lo.slice().reverse())) < 0.5, 'одни и те же значения — без сдвига');
+  assert.strictEqual(levelVsTop(20, 20, 'ge'), 'top');
+  assert.strictEqual(levelVsTop(18, 20, 'ge'), 'near');
+  assert.strictEqual(levelVsTop(10, 20, 'ge'), 'below');
+  assert.strictEqual(levelVsTop(1, 3, 'le'), 'top', 'смертей меньше, чем у топов');
+  assert.strictEqual(levelVsTop(null, 3, 'le'), null);
+  const mk = (i, lh10, d) => ({ match_id: i, start_time: 1_900_000_000 + i * 3000, hero: 72, f: { lh10, d, nw10: 4000 } });
+  const games = Array.from({ length: 30 }, (_, i) => mk(i, i < 15 ? 12 + (i % 3) : 22 + (i % 3), i < 15 ? 4 + (i % 2) : 9 + (i % 2)));
+  const topHero = new Map([[72, { lh10: { n: 20, med: 24 }, d: { n: 20, med: 5 } }], [73, { lh10: { n: 20, med: 24 } }]]);
+  const p = progressView({ games, topHero });
+  const lh = p.indicators.find((x) => x.key === 'lh10');
+  const dd = p.indicators.find((x) => x.key === 'd');
+  assert.strictEqual(lh.trend, 'better');
+  assert.strictEqual(dd.trend, 'worse', 'смертей стало больше — хуже');
+  assert.strictEqual(lh.vsTop, 'near');
+  assert.strictEqual(lh.topText, '24');
+  assert.ok(p.enough && p.better >= 1 && p.worse >= 1);
+  assert.ok(!p.indicators.find((x) => x.key === 'nw10' && x.trend !== 'same'), 'постоянный показатель — без заметных изменений');
+  const few = progressView({ games: games.slice(-12), topHero });
+  assert.ok(few.indicators.every((x) => x.trend === 'few'), 'мало игр — вывода о динамике нет');
+  assert.ok(!few.enough);
+  const noTop = progressView({ games, topHero: new Map() });
+  assert.ok(noTop.indicators.every((x) => x.vsTop === null && x.top === null), 'нет данных топов — сравнения нет');
+  for (const x of p.indicators) assert.ok(!/undefined|NaN/.test(`${x.recentText} ${x.prevText} ${x.topText}`), x.key);
+});
+
+test('achievements: measured only, gaps do not break runs, unlocked ones stay, new ones flagged', () => {
+  const { achievementsView, personalRecords } = require('../src/core/achievements');
+  const t0 = 1_900_000_000;
+  const g = (i, soloDeaths, extra = {}) => ({ match_id: 1000 + i, start_time: t0 + i * 3000, hero: 72, f: soloDeaths === undefined ? {} : { soloDeaths, d10: 1 }, afterLoss: false, gapMin: null, ...extra });
+  // 0,0,(нет данных),0,0,0 → серия 5 (игра без данных пропускается), затем 1 обрывает
+  const games = [g(0, 0), g(1, 0), g(2, undefined), g(3, 0), g(4, 0), g(5, 0), g(6, 1), g(7, 0)];
+  const r = achievementsView({ games, finished: [], now: t0 + 99999 });
+  const solo = r.items.find((x) => x.key === 'solo_free');
+  assert.strictEqual(solo.value, 5);
+  assert.strictEqual(solo.tier, 2, 'серебро: 5 игр подряд');
+  assert.strictEqual(solo.unlocked[1].matchId, 1005, 'ступень открыта на игре, где серия достигла порога');
+  assert.strictEqual(solo.current, 1);
+  assert.strictEqual(solo.next, 8);
+  // цели тренера
+  const fin = [{ title: 'a', doneAt: t0 + 10 }, { title: 'b', doneAt: t0 + 20 }, { title: 'c', doneAt: t0 + 30 }];
+  const goals = achievementsView({ games: [], finished: fin, now: t0 + 99999 }).items.find((x) => x.key === 'goals_done');
+  assert.strictEqual(goals.tier, 2);
+  assert.strictEqual(goals.unlocked[1].t, t0 + 30, 'серебро (3 цели) — дата закрытия третьей цели');
+  // открытое не пропадает, если данных стало меньше; «новое» — пока не просмотрено
+  const first = achievementsView({ games, finished: [], now: t0 + 99999 });
+  assert.ok(first.anyNew);
+  const again = achievementsView({ games: games.slice(0, 3), finished: [], prevUnlocked: first.unlocked, seen: first.unlocked, now: t0 + 99999 });
+  const s2 = again.items.find((x) => x.key === 'solo_free');
+  assert.strictEqual(s2.tier, 2, 'серебро сохранено');
+  assert.ok(!again.anyNew);
+  const unseen = achievementsView({ games, finished: [], prevUnlocked: first.unlocked, seen: {}, now: t0 + 99999 });
+  assert.ok(unseen.anyNew);
+  // победы и заходы ничего не открывают
+  const wins = achievementsView({ games: Array.from({ length: 20 }, (_, i) => ({ match_id: i, start_time: t0 + i, hero: 1, won: true, f: { d10: 3, soloDeaths: 3 } })), finished: [] });
+  assert.ok(wins.items.every((x) => x.tier === 0), 'победы сами по себе ничего не открывают');
+  // паузы после поражения: только игры с известной паузой
+  const rest = achievementsView({ games: Array.from({ length: 6 }, (_, i) => ({ match_id: i, start_time: t0 + i * 5000, hero: 1, f: { d10: 3 }, afterLoss: true, gapMin: i % 2 ? 12 : 3 })), finished: [] }).items.find((x) => x.key === 'rest_after_loss');
+  assert.strictEqual(rest.value, 3);
+  // рекорды: ≥5 прежних игр на герое и +10% к прежнему максимуму
+  const recGames = Array.from({ length: 7 }, (_, i) => ({ match_id: i, start_time: t0 + i, hero: 5, f: { lh10: i === 6 ? 40 : 20 + (i % 2) } }));
+  const rec = personalRecords(recGames);
+  assert.strictEqual(rec.length, 1);
+  assert.deepStrictEqual([rec[0].key, rec[0].value, rec[0].before, rec[0].matchId], ['lh10', 40, 21, 6]);
+  assert.strictEqual(personalRecords(recGames.slice(0, 5)).length, 0, 'меньше 5 прежних игр — рекорда нет');
+});
+
 test('matchups: my record, tops vs heroes, counters, prepare', () => {
   const games = coachGames(0.9, 10, 1_900_000_000).map((g) => ({ match: g.match, me: g.me }));
   const mine = myMatchups(games);

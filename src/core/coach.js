@@ -7,7 +7,7 @@
 
 const { median, mean } = require('./stats');
 const { N, D1, P, T, plural } = require('./tipkit');
-const { majorSoulLosses, SOUL_LOSS_THRESHOLD } = require('./leaks');
+const { majorSoulLosses, SOUL_LOSS_THRESHOLD, winLink } = require('./leaks');
 
 const DAY = 86400;
 const WEEK = 7 * DAY;
@@ -24,7 +24,7 @@ const T_DOWN = (step) => (me, ref) => (me === null || ref === null || me <= ref 
 
 const CATALOG = [
   {
-    key: 'd10', family: 'deaths', fmt: (v) => D1(v), area: 'Выживание', cmp: 'le', heroSpecific: false,
+    key: 'd10', family: 'deaths', fmt: (v) => D1(v), area: 'Выживание', cmp: 'le', heroSpecific: false, focusTarget: 1,
     metric: (g) => g.f && g.f.d10,
     title: (t) => (t === 0 ? 'Не умирать до 10:00' : `Не больше ${t} ${plural(t, 'смерти', 'смертей', 'смертей')} до 10:00`),
     short: 'смерти до 10:00',
@@ -130,7 +130,7 @@ const CATALOG = [
     stretch: T_UP(50),
   },
   {
-    key: 'lost_souls', family: 'soulRisk', fmt: N, area: 'Выживание', cmp: 'le', heroSpecific: false,
+    key: 'lost_souls', family: 'soulRisk', fmt: N, area: 'Выживание', cmp: 'le', heroSpecific: false, focusTarget: 0,
     metric: (g) => g.match && g.me ? majorSoulLosses(g.me, g.match.duration_s) : null,
     title: () => `Ни одной смерти с потерей ${N(SOUL_LOSS_THRESHOLD)} душ или больше`,
     short: 'смерти с крупной потерей душ',
@@ -140,12 +140,22 @@ const CATALOG = [
   {
     // field — где лежит значение в признаках: ключ цели не совпадает с именем поля,
     // потому что цель должна находить эпизоды «Ошибок» по тому же ключу (solo_deaths).
-    key: 'solo_deaths', family: 'soloDeaths', field: 'soloDeaths', fmt: N, area: 'Выживание', cmp: 'le', heroSpecific: false,
+    key: 'solo_deaths', family: 'soloDeaths', field: 'soloDeaths', fmt: N, area: 'Выживание', cmp: 'le', heroSpecific: false, focusTarget: 1,
     metric: (g) => g.f && g.f.soloDeaths,
     title: (t) => `Смертей в одиночку после 10:00 — не больше ${t}`,
     short: 'смерти в одиночку',
     tip: 'Не заходи на чужую половину и к объектам без напарника: фарми рядом с командой или на своей половине. Соперники пропали с миникарты — отходи к своим, даже если лагерь не добит.',
     make: (me) => (me === null || me <= 1.5 ? null : { target: Math.max(1, Math.round(me) - 1), gap: Math.min(0.6, (me - 1.5) / 3) }),
+  },
+  {
+    // Цель из эпизода «Ошибок»: после серии из 3+ смертей — предмет живучести. Метрика: 1 — замечания нет
+    // (серии не было или живучесть куплена), 0 — замечание есть, нет значения — игру проверить нельзя.
+    key: 'survivability_purchase', family: 'survivability', field: 'survivability_purchase', fmt: (v) => (v >= 1 ? 'без замечаний' : 'есть замечание'), area: 'Предметы', cmp: 'ge', heroSpecific: false, focusTarget: 1,
+    metric: (g) => g.f && g.f.survivability_purchase,
+    title: () => 'После серии из трёх смертей — купить предмет живучести',
+    short: 'живучесть после серии смертей',
+    tip: 'После двух смертей подряд проверь остаток душ и купи предмет живучести (здоровье, сопротивление, барьер) до следующей драки, а не после неё.',
+    make: () => null,
   },
   {
     key: 'kp', family: 'kp', fmt: P, area: 'Драки', cmp: 'ge', heroSpecific: false,
@@ -201,8 +211,48 @@ const CATALOG = [
   },
 ];
 
-const GOALS_MAX = 4; // сколько целей одновременно
-const GOALS_MIN = 3; // меньше — добираем целями «до уровня топов»
+const GOALS_MAX = 3; // одновременно: 1 главная + до 2 запасных
+const GOALS_MIN = 2; // меньше — добираем целями «до уровня топов»
+const EASY_RATE = 0.7; // цель уже выполняется почти всегда — тренировать нечего
+const HARD_RATE = 0.15; // цель почти никогда не выполнялась — ставим ступени
+const CAL_MIN = 5; // меньше проверенных игр — честность цели не оцениваем
+const STUCK_GAMES = 10; // столько игр без заметного сдвига — предложим сменить цель
+
+// Что делать — одной фразой (карточка цели). Нет записи — показываем совет из каталога.
+const ACT = {
+  d10: 'На линии не начинай размен первым и отходи к башне, когда соперник пропал с карты.',
+  d: 'Перед каждой дракой смотри на карту и отступай при половине здоровья.',
+  nw10: 'Добивай крипов и сразу забирай сферы душ.',
+  lh10: 'Бей крипа, когда у него мало здоровья, и стой ближе к волне.',
+  soulsMid: 'Между драками чередуй волну и лес, не стой без дела.',
+  firstBigT: 'Заранее выбери главный предмет и копи на него без мелких покупок.',
+  firstHugeT: 'Копи на предмет за 6000 между драками, не распыляйся.',
+  spikeFights: 'После дорогой покупки ищи безопасную драку.',
+  spikeDmg: 'Первые минуты после большого предмета бей по героям, а не по крипам.',
+  pu10: 'Ломай контейнеры с бафами, пока волна у врага.',
+  neu9: 'Бери ближний лесной лагерь сразу, как он появился.',
+  brk9: 'Между волнами заходи за коробками там, где безопасно.',
+  lost_souls: 'Перед рискованным пушем проверь мешок душ — потрать или отойди.',
+  survivability_purchase: 'После двух смертей подряд купи предмет живучести до следующей драки.',
+  solo_deaths: 'Не ходи один на чужую половину и к объектам — держись рядом с командой.',
+  kp: 'Смотри на карту и иди на ближайшую драку.',
+  dmgMin: 'Когда враг рядом — стреляй по нему, а не по крипам.',
+  dn10: 'Стреляй по сфере душ, когда враг добивает твоего крипа.',
+  bdmgMin: 'После выигранной драки идите всей командой на объект.',
+  session: 'После третьей игры подряд сделай перерыв.',
+  tilt: 'После поражения подожди хотя бы 10 минут.',
+};
+// Как проверяем (если общий текст не подходит).
+const HOW = {
+  solo_deaths: 'После каждой игры считаем смерти после 10:00, когда ближайший живой союзник был дальше ~8 секунд бега.',
+  lost_souls: 'После каждой игры смотрим, сколько душ потеряно при каждой смерти.',
+  d10: 'После каждой игры считаем твои смерти до 10:00.',
+  survivability_purchase: 'Считаем игры, где после 10:00 было 3 смерти и больше: смотрим, была ли серия смертей подряд и куплен ли предмет живучести от 1 250 душ после её начала. Остальные игры и игры без данных не считаются.',
+};
+// Какое правило «Ошибок» стоит за целью (для основания «в N из M игр»).
+const LEAK_OF = { d10: 'lane_trades', solo_deaths: 'solo_deaths', lost_souls: 'lost_souls', survivability_purchase: 'survivability_purchase' };
+// Ключ связи с победой у игроков твоего уровня (WIN_LINKS).
+const WINLINK_OF = { d10: 'd9', pu10: 'pu10', neu9: 'neu9', brk9: 'brk9' };
 
 const passOf = (cmp, value, target) => (value === null || value === undefined || !Number.isFinite(value) ? null : cmp === 'ge' ? value >= target : value <= target);
 
@@ -245,6 +295,72 @@ function heroTargets(cat, games, topHero) {
   return out;
 }
 
+// ---- честность цели ----
+// Доля твоих последних игр, где цель с такой планкой уже выполнялась.
+function passRate(goal, games) {
+  const res = games.map((g) => checkGame(g, [goal])[0]).filter((r) => r.pass !== null);
+  return { n: res.length, rate: res.length ? res.filter((r) => r.pass).length / res.length : null };
+}
+
+const grainOf = (cat) => cat.step || (cat.fmt === P ? 0.05 : 1);
+
+// Ступень полегче: на полпути между твоим обычным уровнем и нужной планкой.
+function relaxStep(cat, cmp, step, games) {
+  const grain = grainOf(cat);
+  const med = (hero) => {
+    const vals = games.filter((g) => hero === null || g.hero === hero).map((g) => cat.metric(g)).filter((v) => v !== null && v !== undefined && Number.isFinite(v));
+    return vals.length >= 2 ? median(vals) : null;
+  };
+  const easier = (a, b) => (cmp === 'ge' ? a < b : a > b);
+  const mid = (target, me) => {
+    if (me === null) return null;
+    const raw = cmp === 'ge' ? me + (target - me) / 2 : me - (me - target) / 2;
+    const v = cmp === 'ge' ? Math.floor(raw / grain + 1e-9) * grain : Math.ceil(raw / grain - 1e-9) * grain;
+    return Math.round(v * 1000) / 1000;
+  };
+  const target = mid(step.target, med(null));
+  if (target === null || !easier(target, step.target)) return null;
+  let byHero = null;
+  if (step.byHero) {
+    byHero = {};
+    for (const [h, t] of Object.entries(step.byHero)) {
+      const v = mid(t, med(Number(h)));
+      byHero[h] = v !== null && easier(v, t) ? v : t;
+    }
+  }
+  return { target, byHero };
+}
+
+// Проверка цели на реальность по твоим последним играм:
+//  — уже выполнялась в 70%+ игр → тренировать нечего (null);
+//  — выполнялась в 15% и реже → делаем ступени: сначала полегче, потом нужная планка;
+//  — мало проверенных игр → оставляем как есть, но говорим об этом (calib.n).
+function calibrate(cand, cat, games) {
+  if (cand.habit) return cand;
+  const recent = games.slice(-20);
+  const base = passRate(cand, recent);
+  cand.calib = { n: base.n, rate: base.rate };
+  if (base.n < CAL_MIN) return cand;
+  if (base.rate >= EASY_RATE) return null;
+  if (base.rate > HARD_RATE) return cand;
+  const steps = [{ target: cand.target, byHero: cand.byHero }];
+  for (let i = 0; i < 2; i++) {
+    const relaxed = relaxStep(cat, cand.cmp, steps[0], recent);
+    if (!relaxed) break;
+    const r = passRate({ ...cand, ...relaxed }, recent);
+    if (r.rate !== null && r.rate >= EASY_RATE) break;
+    steps.unshift(relaxed);
+    if (r.rate === null || r.rate > HARD_RATE) break;
+  }
+  if (steps.length < 2) return cand;
+  const final = steps[steps.length - 1];
+  cand.ladder = { i: 0, steps, finalTitle: cat.title(final.target) };
+  cand.target = steps[0].target;
+  cand.byHero = steps[0].byHero;
+  cand.title = cat.title(steps[0].target);
+  return cand;
+}
+
 // Кандидаты в цели, по убыванию важности. stretch — только «дотянуться до топов».
 function candidates({ games, topHero, lobby, extra, exclude = new Set(), stretch = false }) {
   const out = [];
@@ -260,7 +376,7 @@ function candidates({ games, topHero, lobby, extra, exclude = new Set(), stretch
     if (!g) continue;
     let byHero = heroTargets(cat, games, topHero);
     if (kind === 'stretch' && byHero) byHero = stretchHeroTargets(cat, games, topHero);
-    out.push({
+    const cand = calibrate({
       key: cat.key,
       family: cat.family,
       area: cat.area,
@@ -275,7 +391,8 @@ function candidates({ games, topHero, lobby, extra, exclude = new Set(), stretch
       baseline: me,
       ref,
       gap: g.gap,
-    });
+    }, cat, games);
+    if (cand) out.push(cand);
   }
   return out.sort((a, b) => b.gap - a.gap);
 }
@@ -344,12 +461,37 @@ function checkGame(game, goals) {
   });
 }
 
+// «Почему именно эта цель»: только то, что реально измерено. Каждая строка помечена видом:
+// 'episode' — эпизод из игры, 'stat' — доля игр с ошибкой и победы, 'compare' — сравнение с топами,
+// 'link' — связь с победой у игроков твоего уровня (не доказанная причина).
+const WHY_MIN_GAMES = 10; // меньше проверенных игр — доли и победы не показываем
+function whyOf(goal, data, cat, fmt) {
+  const lines = [];
+  if (goal.evidence) lines.push({ kind: 'episode', text: goal.evidence.text || goal.evidence.title || 'Эпизод из твоей игры' });
+  const ls = data.leakStats && data.leakStats[LEAK_OF[goal.key]];
+  if (ls && ls.eligible >= WHY_MIN_GAMES) {
+    lines.push({ kind: 'stat', text: `${ls.title ? `«${ls.title}» — ` : 'Замечание — '}в ${ls.count} из ${ls.eligible} проверенных игр.` });
+    const without = ls.eligible - ls.count;
+    if (ls.count >= 5 && without >= 5 && ls.wrWith !== null && ls.wrWith !== undefined && ls.wrWithout !== null && ls.wrWithout !== undefined) {
+      lines.push({ kind: 'link', text: `Побед в этих играх ${P(ls.wrWith)}, в играх без этого замечания — ${P(ls.wrWithout)}.` });
+    }
+  }
+  if (goal.ref !== null && goal.ref !== undefined && goal.baseline !== null && goal.baseline !== undefined && cat && !cat.habit && fmt(goal.baseline) !== fmt(goal.ref)) {
+    lines.push({ kind: 'compare', text: `У тебя обычно ${fmt(goal.baseline)}, у топов на твоих героях — ${fmt(goal.ref)}.` });
+  }
+  const wl = WINLINK_OF[goal.key] && goal.baseline !== null && goal.baseline !== undefined ? winLink(WINLINK_OF[goal.key], goal.baseline) : null;
+  if (wl && !lines.some((l) => l.kind === 'link')) {
+    lines.push({ kind: 'link', text: `У игроков рангов 4–6 при таком значении побед около ${P(wl.wr)}, у лучших по этому показателю — около ${P(wl.best[1])}.` });
+  }
+  return { lines, note: lines.some((l) => l.kind === 'link' || l.kind === 'stat') ? 'Это связь, а не доказанная причина поражений.' : null };
+}
+
 /**
  * state — сохранённое состояние тренера ({ plan, archive, done }).
  * data  — { games (по возрастанию времени), topHero, lobby, extra, now, mainMistake(game) }.
  * Возвращает { state, view }.
  */
-function updateCoach(state, data, { forceNew = false, focusEvidence = null } = {}) {
+function updateCoach(state, data, { forceNew = false, focusEvidence = null, replaceKey = null } = {}) {
   const now = data.now || Math.floor(Date.now() / 1000);
   const games = [...new Map(data.games.map((g) => [g.match_id, g])).values()];
   const loaded = games.filter((g) => g.f);
@@ -361,7 +503,7 @@ function updateCoach(state, data, { forceNew = false, focusEvidence = null } = {
 
   const makePlan = (reason) => {
     const recent = loaded.slice(-25);
-    const recentlyDone = new Set((st.archive || []).filter((g) => g.status === 'done' && now - (g.doneAt || 0) < 14 * DAY).map((g) => g.key));
+    const recentlyDone = new Set((st.archive || []).filter((g) => (g.status === 'done' && now - (g.doneAt || 0) < 14 * DAY) || (g.userReplaced && now - (g.endedAt || 0) < 14 * DAY)).map((g) => g.key));
     const goals = chooseGoals(data, recent, recentlyDone);
     st.plan = { createdAt: now, reason, goals: goals.map((g) => ({ ...g, status: 'active', startedAt: now })) };
     const text = goals.length ? goals.map((g) => g.title).join(' · ') : 'Явных проблем не нашлось — продолжай в том же духе, а я слежу за каждой игрой.';
@@ -371,9 +513,20 @@ function updateCoach(state, data, { forceNew = false, focusEvidence = null } = {
     else logEvent({ t: now, kind: 'plan', title: 'Новый план на неделю', text });
   };
 
-  if (!st.plan || forceNew || now - st.plan.createdAt > WEEK) {
-    if (st.plan) st.archive = (st.archive || []).concat(st.plan.goals.map((g) => ({ ...g, status: g.status === 'done' ? 'done' : 'expired', endedAt: now }))).slice(-60);
-    if (loaded.length >= 5) makePlan(forceNew ? 'manual' : st.plan ? 'week' : 'first');
+  // План не истекает по календарю: цель живёт, пока не выполнена или пока ты её не сменил.
+  if (!st.plan || forceNew) {
+    if (st.plan) st.archive = (st.archive || []).concat(st.plan.goals.map((g) => ({ ...g, status: g.status === 'done' ? 'done' : 'replaced', endedAt: now }))).slice(-60);
+    if (loaded.length >= 5) makePlan(forceNew ? 'manual' : 'first');
+  }
+  // Сменить одну цель: старая уходит в архив, на её место берётся другая.
+  if (replaceKey && st.plan) {
+    const old = st.plan.goals.find((g) => g.key === replaceKey && g.status === 'active');
+    if (old) {
+      old.status = 'replaced';
+      old.userReplaced = true;
+      old.endedAt = now;
+      logEvent({ t: now, kind: 'plan', title: 'Цель заменена', text: old.title });
+    }
   }
   let plan = st.plan;
   if (!plan) {
@@ -391,15 +544,14 @@ function updateCoach(state, data, { forceNew = false, focusEvidence = null } = {
 
   if (focusEvidence && (plan.focusEvidence?.matchId !== focusEvidence.matchId || plan.focusEvidence?.t !== focusEvidence.t
     || plan.focusEvidence?.key !== focusEvidence.key)) {
-    const soulGoal = focusEvidence.key === 'lost_souls';
-    const soloGoal = focusEvidence.key === 'solo_deaths';
-    const key = soulGoal ? 'lost_souls' : soloGoal ? 'solo_deaths' : 'd10';
-    const target = soulGoal ? 0 : 1;
+    // Цель из эпизода: ключ эпизода «Ошибок» совпадает с ключом каталога; эпизод на линии (без ключа) — смерти до 10:00.
+    const catalog = CATALOG.find((g) => g.key === focusEvidence.key && g.focusTarget !== undefined) || CATALOG.find((g) => g.key === 'd10');
+    const key = catalog.key;
+    const target = catalog.focusTarget;
     const current = plan.goals.find((g) => g.key === key && g.status === 'active');
-    const catalog = CATALOG.find((g) => g.key === key);
     const prior = loaded.filter((g) => g.start_time < now).slice(-20).map(catalog.metric).filter(Number.isFinite);
     const focus = { ...current, key, family: catalog.family, area: catalog.area, short: catalog.short, cmp: catalog.cmp,
-      title: catalog.title(target), target, byHero: null, tip: soulGoal || soloGoal ? catalog.tip : 'После неудачного размена отойди и восстанови здоровье.',
+      title: catalog.title(target), target, byHero: null, tip: key === 'd10' ? 'После неудачного размена отойди и восстанови здоровье.' : catalog.tip,
       baseline: prior.length ? median(prior) : null, status: 'active', startedAt: now, evidence: focusEvidence };
     plan.goals = [focus, ...plan.goals.filter((g) => g.key !== key)];
     plan.focusEvidence = focusEvidence;
@@ -420,6 +572,20 @@ function updateCoach(state, data, { forceNew = false, focusEvidence = null } = {
       const res = after.filter((g) => g.start_time >= goalStart(goal)).map((g) => checkGame(g, [goal])[0]).filter((r) => r.pass !== null);
       const last = res.slice(-5);
       if (last.length >= 5 && last.filter((r) => r.pass).length >= 4) {
+        const ladder = goal.ladder;
+        if (ladder && ladder.i < ladder.steps.length - 1) {
+          // Ступень пройдена: планка становится выше, счёт игр начинается заново.
+          const cat = CATALOG.find((c) => c.key === goal.key);
+          const prevTitle = goal.title;
+          ladder.i += 1;
+          goal.target = ladder.steps[ladder.i].target;
+          goal.byHero = ladder.steps[ladder.i].byHero;
+          goal.title = cat ? cat.title(goal.target) : goal.title;
+          goal.startedAt = now;
+          logEvent({ t: now, kind: 'step', title: 'Ступень пройдена', text: `«${prevTitle}» — ${last.filter((r) => r.pass).length} из 5 последних игр. Дальше: «${goal.title}».` });
+          changed = true;
+          continue;
+        }
         goal.status = 'done';
         goal.doneAt = now;
         logEvent({ t: now, kind: 'done', title: 'Цель выполнена', text: `«${goal.title}» — ${last.filter((r) => r.pass).length} из 5 последних игр. Беру следующую.` });
@@ -473,27 +639,63 @@ function updateCoach(state, data, { forceNew = false, focusEvidence = null } = {
   const goals = goalsAll.map((goal) => {
     const rows = loaded.slice(-20).map((g) => {
       const c = checkGame(g, [goal])[0];
-      return { match_id: g.match_id, t: g.start_time, hero: g.hero, value: c.value, target: c.target, pass: c.pass, afterStart: g.start_time >= goalStart(goal) };
+      return { match_id: g.match_id, t: g.start_time, hero: g.hero, value: c.value, text: c.text, target: c.target, pass: c.pass, afterStart: g.start_time >= goalStart(goal) };
     }).filter((r) => r.value !== null && r.value !== undefined);
     const since = rows.filter((r) => r.afterStart && r.pass !== null);
     const prior = rows.filter((r) => !r.afterStart && r.pass !== null);
+    const fmt = fmtOf(goal.key);
+    const passedN = since.filter((r) => r.pass).length;
+    let streak = 0;
+    for (let i = since.length - 1; i >= 0 && since[i].pass; i--) streak += 1;
+    let best = 0;
+    let run = 0;
+    for (const r of since) {
+      run = r.pass ? run + 1 : 0;
+      best = Math.max(best, run);
+    }
+    const last5 = since.slice(-5);
+    const medOf = (list) => {
+      const vals = list.map((r) => r.value).filter((v) => Number.isFinite(v));
+      return vals.length >= 3 ? median(vals) : null;
+    };
+    const valBefore = prior.length >= 3 ? medOf(prior) : null;
+    const valNow = medOf(last5);
+    const cat = CATALOG.find((c) => c.key === goal.key);
     return {
       ...goal,
       byHero: goal.byHero,
       rows,
       games: since.length,
-      passed: since.filter((r) => r.pass).length,
-      rate: since.length ? since.filter((r) => r.pass).length / since.length : null,
+      passed: passedN,
+      rate: since.length ? passedN / since.length : null,
       priorRate: prior.length ? prior.filter((r) => r.pass).length / prior.length : null,
-      streak: (() => {
-        let s = 0;
-        for (let i = since.length - 1; i >= 0 && since[i].pass; i--) s += 1;
-        return s;
-      })(),
-      targetText: fmtOf(goal.key)(goal.target),
-      baselineText: goal.baseline === null || goal.baseline === undefined ? '—' : fmtOf(goal.key)(goal.baseline),
+      priorGames: prior.length,
+      streak,
+      bestStreak: best,
+      // До закрытия: нужно 4 из 5 последних игр после старта (или после старта ступени).
+      close: { passed: last5.filter((r) => r.pass).length, of: last5.length, needGames: Math.max(0, 5 - last5.length) },
+      stuck: goal.status === 'active' && since.length >= STUCK_GAMES && passedN / since.length < 0.2 && streak === 0,
+      act: ACT[goal.key] || goal.tip || null,
+      how: HOW[goal.key] || `После каждой игры смотрим «${goal.short}» по данным матча. Игра без данных не считается.`,
+      why: whyOf(goal, data, cat, fmt),
+      ladderInfo: goal.ladder ? { step: goal.ladder.i + 1, of: goal.ladder.steps.length, finalTitle: goal.ladder.finalTitle } : null,
+      beforeText: valBefore === null ? null : fmt(valBefore),
+      nowText: valNow === null || last5.length < 3 ? null : fmt(valNow),
+      targetText: fmt(goal.target),
+      baselineText: goal.baseline === null || goal.baseline === undefined ? '—' : fmt(goal.baseline),
     };
   });
+
+  // Выполненные цели без повторов: цель из плана и из архива; одинаковые (ключ + название) склеены.
+  const finished = [];
+  const seenDone = new Set();
+  const doneRaw = goals.filter((g) => g.status === 'done').concat((st.archive || []).filter((g) => g.status === 'done').slice().reverse());
+  for (const g of doneRaw) {
+    const id = `${g.key}|${g.title}`;
+    if (seenDone.has(id)) continue;
+    seenDone.add(id);
+    finished.push({ key: g.key, title: g.title, area: g.area, doneAt: g.doneAt || g.endedAt || null, beforeText: g.beforeText || null, nowText: g.nowText || null, games: g.games || null, passed: g.passed || null });
+  }
 
   // Сообщения тренера по играм
   for (const c of cards.slice(0, 10)) {
@@ -514,10 +716,11 @@ function updateCoach(state, data, { forceNew = false, focusEvidence = null } = {
   return {
     state: st,
     view: {
-      plan: { createdAt: plan.createdAt, endsAt: plan.createdAt + WEEK, reason: plan.reason },
+      plan: { createdAt: plan.createdAt, reason: plan.reason },
       goals,
       active: activeGoals.length,
-      done: goalsAll.filter((g) => g.status === 'done').length + (st.archive || []).filter((g) => g.status === 'done').length,
+      done: finished.length,
+      finished,
       cards,
       events: (st.log || []).concat(events).sort((a, b) => b.t - a.t).slice(0, 30),
       score,
@@ -527,4 +730,4 @@ function updateCoach(state, data, { forceNew = false, focusEvidence = null } = {
   };
 }
 
-module.exports = { updateCoach, checkGame, candidates, pickGoals, chooseGoals, CATALOG, GOALS_MAX, GOALS_MIN };
+module.exports = { updateCoach, checkGame, candidates, pickGoals, chooseGoals, calibrate, fmtOf, CATALOG, GOALS_MAX, GOALS_MIN };

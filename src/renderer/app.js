@@ -24,7 +24,7 @@
     playerLoading: false,
     top: null,
     busy: false,
-    coach: { data: null, loading: false, error: null, for: null },
+    coach: { data: null, loading: false, error: null, for: null, progress: null, progressFor: null, progressLoading: false },
     growth: { data: null, loading: false, error: null, for: null, open: null },
     prep: newPrep(),
     codex: { enemy: null, data: {}, pending: new Set(), poolOnly: false },
@@ -64,10 +64,17 @@
     if (hero && hero.img) return h(`img.hero-ico${cls}`, { src: hero.img, alt: '', loading: 'lazy' });
     return h(`div.hero-ico.ph${cls}`, heroName(id).slice(0, 2));
   }
+  // Арты героя из справочника игры (card — вертикальная карточка, wide — фон) и цвет героя для подсветки.
+  const cssUrl = (u) => (u ? `url("${String(u).replace(/["\\]/g, '')}")` : 'none');
+  const heroArtStyle = (hh) => {
+    if (!hh) return null;
+    const c = Array.isArray(hh.color) && hh.color.length === 3 ? hh.color.join(',') : '255,122,69';
+    return `--art: ${cssUrl(hh.card || hh.img)}; --wide: ${cssUrl(hh.wide || hh.card || hh.img)}; --hc: ${c}`;
+  };
   const heroCardStyle = (id) => {
     const hh = S.assets.heroes[id];
     const src = hh && (hh.card || hh.img);
-    return src ? `--hero-bg: url("${String(src).replace(/"/g, '')}")` : null;
+    return src ? `--hero-bg: url("${String(src).replace(/"/g, '')}"); ${heroArtStyle(hh)}` : null;
   };
   const heroImgSrc = (id) => (S.assets.heroes[id] && S.assets.heroes[id].img) || null;
   function mapPanel(map, focusSlot, title = 'Карта матча', focusName = 'Ты') {
@@ -356,7 +363,7 @@
     const sub = m
       ? `${regionName} · топ-${S.settings.topN} · последние ${m.days} дн. · ${m.totalMatches} ${plural(m.totalMatches, 'матч', 'матча', 'матчей')} · обновлено ${F.ago(S.status ? S.status.lastSync : m.generatedAt)}`
       : `${regionName} · топ-${S.settings.topN} · последние ${S.settings.days} дн.`;
-    const head = h('div.page-head',
+    const head = h(S.metaTab === 'players' ? 'div.page-head.scene-players' : 'div.page-head',
       h('div', h('div.crumbs', `Мета · топ-${S.settings.topN} текущего сезона`), h('h1', S.metaTab === 'players' ? 'Про-игроки' : 'Мета героев'), h('div.sub', sub)),
       h('div.row', S.busy ? h('span.muted.row', h('span.spin'), 'Собираю данные…') : null,
         h('button.btn.primary', { onclick: refreshTop, disabled: S.busy }, Icon('refresh'), 'Обновить данные')));
@@ -1072,6 +1079,7 @@
   function animateView(id) {
     const el = $(`view-${id}`);
     if (!el) return;
+    if (window.FX) { window.FX.enter(el); return; }
     el.classList.remove('enter');
     void el.offsetWidth;
     el.classList.add('enter');
@@ -1080,15 +1088,17 @@
   }
 
   // ================= ТРЕНЕР =================
-  async function loadCoach(forceNew = false, evidence = null) {
+  async function loadCoach(forceNew = false, evidence = null, replaceKey = null) {
     if (!S.auth) return;
     S.coach.loading = true;
     S.coach.error = null;
     if (S.view === 'coach') renderCoach();
     try {
-      S.coach.data = await dc.coach({ forceNew, evidence });
+      S.coach.data = await dc.coach({ forceNew, evidence, replaceKey });
       S.coach.for = S.auth.accountId;
-      if (forceNew) toast('Новый план готов');
+      if (forceNew) toast('Цели пересобраны');
+      if (replaceKey) toast('Цель заменена');
+      loadProgress();
     } catch (e) {
       S.coach.error = e.message;
       // Ошибка валидации эпизода («Отслеживать в тренере») не должна молчать:
@@ -1101,28 +1111,153 @@
     }
   }
 
-  const goalStatus = { active: 'в работе', done: 'выполнена', expired: 'неделя закончилась' };
-
-  function goalCard(g) {
-    const heroTargets = g.byHero ? Object.entries(g.byHero).filter(([hid]) => S.assets.heroes[hid]) : [];
-    const rate = g.rate;
-    return h(`div.goal.${g.status}`,
-      h('div.goal-head',
-        h('span.goal-area', g.area, g.kind === 'stretch' ? h('span.goal-kind', { title: 'Явной проблемы тут нет, но ты чуть ниже топов на своих героях — цель дотянуться до их уровня.' }, ' · до уровня топов') : null),
-        h('span.goal-state', g.status === 'done' ? Icon('trophy') : null, goalStatus[g.status] || g.status)),
-      h('div.goal-title', g.title),
-      heroTargets.length ? h('div.goal-heroes', h('span.muted.small', 'Пороги по героям'),
-        heroTargets.slice(0, 4).map(([hid, t]) => h('span.chip', heroIcon(Number(hid), '.sm'), String(g.key === 'firstBigT' || g.key === 'firstHugeT' ? F.time(t) : g.key === 'kp' || g.key === 'spikeFights' ? F.pct(t) : F.num(t))))) : null,
-      h('div.goal-stats',
-        h('div', h('b.num', g.games ? `${g.passed}/${g.games}` : '—'), h('span', 'игр с выполнением')),
-        h('div', h('b.num', g.streak ? `${g.streak}` : '0'), h('span', 'подряд')),
-        h('div', h('b.num', g.baselineText), h('span', 'было обычно'))),
-      g.games ? Charts.goalChart(g.rows, g.cmp) : h('div.muted.small', g.rows.length ? 'Жду подробности матчей для проверки цели.' : 'Пока нет игр для проверки цели.'),
-      g.games ? h('div.goal-bar', h('span', { style: { width: `${Math.round((rate || 0) * 100)}%` } })) : null,
-      g.tip ? h('div.tip', Icon('bulb'), h('span', g.tip)) : null);
+  // Динамика показателей и достижения (данные dc.progress, только сохранённые матчи).
+  async function loadProgress() {
+    if (!S.auth || S.coach.progressLoading) return;
+    S.coach.progressLoading = true;
+    try {
+      S.coach.progress = await dc.progress({});
+      S.coach.progressFor = S.auth.accountId;
+      // «новое» показываем при этом показе, а при следующем визите метки уже сняты
+      if (S.coach.progress.anyNew) setTimeout(() => dc.progress({ markSeen: true }).catch(() => {}), 4000);
+    } catch (e) {
+      S.coach.progress = null;
+      S.coach.progressFor = S.auth.accountId; // не повторять запрос по кругу
+    } finally {
+      S.coach.progressLoading = false;
+      if (S.view === 'coach') renderCoach();
+    }
   }
 
+  // Разметка по контракту docs/COACH_UI.md (ветка design/redesign): классы tc-*, tp-*, ach-*, стили ведёт сессия дизайна.
   const coachTarget = (check) => `${check.cmp === 'ge' ? '≥' : '≤'} ${check.targetText}`;
+  const fmtGoal = (g, v) => (g.key === 'firstBigT' || g.key === 'firstHugeT' ? F.time(v) : g.key === 'kp' || g.key === 'spikeFights' ? F.pct(v) : F.num(v));
+  const passClass = (pass) => (pass === true ? '.pass' : pass === false ? '.fail' : '.none');
+
+  const changeGoal = (g) => {
+    if (S.coach.loading) return;
+    if (window.confirm(`Заменить цель «${g.title}» другой? Её прогресс останется в истории.`)) loadCoach(false, null, g.key);
+  };
+
+  // Плитка игры в ленте цели: герой, значение, ✓ / ✕ / «нет данных»; клик открывает матч.
+  function tcGame(r) {
+    const mark = r.pass === true ? '✓ выполнено' : r.pass === false ? '✕ не выполнено' : 'нет данных';
+    return h(`button.tc-game${passClass(r.pass)}${r.afterStart ? '' : '.before'}`,
+      { onclick: () => { setView('matches'); openMatch(r.match_id); }, title: `${heroName(r.hero)}${r.afterStart ? '' : ' · игра до начала цели'}` },
+      heroIcon(r.hero), h('span.tc-val', r.text), h('span.tc-mark', mark));
+  }
+
+  function tcFacts(g) {
+    const facts = [];
+    facts.push(g.close.of < 5
+      ? h('span', 'Нужно ещё ', h('b', String(g.close.needGames)), ` ${plural(g.close.needGames, 'игра', 'игры', 'игр')} для проверки: цель закроется, когда выполнена в 4 из 5 последних игр`)
+      : h('span', h('b', `${g.close.passed} из 5`), ' последних игр выполнено — цель закроется при 4 из 5'));
+    if (g.streak >= 2) facts.push(h('span', h('b', String(g.streak)), ` ${plural(g.streak, 'игра', 'игры', 'игр')} подряд${g.bestStreak > g.streak ? ` · лучшая серия ${g.bestStreak}` : ''}`));
+    if (g.beforeText && g.nowText) facts.push(h('span', 'Обычно было ', h('b', g.beforeText), ' → сейчас ', h('b', g.nowText), ' (середина последних игр)'));
+    if ((g.priorGames || 0) >= 5 && g.priorRate !== null && g.priorRate !== undefined) facts.push(h('span', 'До старта цель выполнялась в ', h('b', F.pct(g.priorRate)), ` игр (${g.priorGames} проверено)`));
+    else facts.push(h('span.pill.low', 'до старта: мало данных'));
+    return h('div.tc-facts', facts);
+  }
+
+  function mainGoalCard(g) {
+    const why = g.why || { lines: [] };
+    const after = g.rows.filter((r) => r.afterStart);
+    const shown = (after.length >= 3 ? after : g.rows).slice(-10);
+    const label = after.length >= 3 ? 'Игры после старта цели' : after.length ? 'Игры после старта цели и последние до него' : 'Так было до старта цели — игры ещё не сыграны';
+    const heroItems = g.byHero ? Object.entries(g.byHero).filter(([hid]) => S.assets.heroes[hid]).slice(0, 4) : [];
+    return h('section.tc-main',
+      h('div.tc-head',
+        h('span.tc-area', g.area),
+        g.ladderInfo ? h('span.tc-step', `ступень ${g.ladderInfo.step} из ${g.ladderInfo.of}`) : null,
+        g.kind === 'stretch' ? h('span.tc-step', 'до уровня топов') : null,
+        h('span.tc-spacer'),
+        h('button.btn.small', { onclick: () => changeGoal(g), disabled: S.coach.loading || null }, 'Сменить цель')),
+      h('h2.tc-title', g.title),
+      g.ladderInfo ? h('p.tc-ladder', `Сначала легче, потом «${g.ladderInfo.finalTitle}».`) : null,
+      heroItems.length ? h('div.tc-heroes', heroItems.map(([hid, t]) => h('span.pill', heroIcon(Number(hid), '.sm'), ` ${fmtGoal(g, t)}`))) : null,
+      h('div.tc-label', label),
+      shown.length ? h('div.tc-ribbon', shown.map(tcGame)) : h('div.muted', 'Сыграй матч — здесь появится проверка.'),
+      h('div.tc-progress',
+        g.games ? h('div.tc-bar', h('span', { style: { width: `${Math.round((g.rate || 0) * 100)}%` } })) : null,
+        h('div', g.games ? 'игр выполнено после старта' : 'Игр после старта пока нет'),
+        g.games ? h('div.tc-count', String(g.passed), h('small', `из ${g.games}`)) : null),
+      tcFacts(g),
+      g.stuck ? h('div.tc-stuck', `Уже ${g.games} игр, а цель выполнена только в ${g.passed}. Можно попробовать другой подход к этой цели или сменить её.`) : null,
+      h('div.tc-why',
+        h('h3', 'Почему эта цель'),
+        why.lines.length ? h('ul', why.lines.map((l) => h(`li.${l.kind}`, l.text))) : h('div.muted', 'Пока мало данных, чтобы объяснить цифрами — ориентируемся на твои последние игры.'),
+        why.note ? h('div.tc-why-note', why.note) : null,
+        g.evidence ? h('div.tc-actions', h('button.btn.small', { onclick: () => openGrowthEpisode(g.evidence) }, `Показать на карте · ${F.time(g.evidence.t)}`)) : null),
+      h('div.tc-cols',
+        h('div.tc-col', h('h3', 'Что делать'), h('p', g.act || g.tip || '')),
+        h('div.tc-col', h('h3', 'Как проверим'), h('p', g.how))));
+  }
+
+  function spareGoalCard(g) {
+    const dots = g.rows.filter((r) => r.afterStart).slice(-10);
+    return h('div.tc-spare',
+      h('span.tc-area', g.area),
+      h('h3.tc-spare-title', g.title),
+      g.ladderInfo ? h('span.tc-step', `ступень ${g.ladderInfo.step} из ${g.ladderInfo.of}`) : null,
+      dots.length ? h('div.tc-dots', dots.map((r) => h(`i${r.pass === true ? '.pass' : r.pass === false ? '.fail' : ''}`, { title: `${heroName(r.hero)} · ${r.text}` }, r.pass === true ? '✓' : r.pass === false ? '✕' : '·'))) : null,
+      h('p.muted', g.games ? `${g.passed} из ${g.games} игр выполнено` : 'Игр после старта пока нет',
+        g.ref !== null && g.ref !== undefined && g.baselineText !== '—' ? ` · обычно ${g.baselineText}, у топов ${fmtGoal(g, g.ref)}` : ''),
+      g.stuck ? h('div.tc-stuck', `Уже ${g.games} игр без сдвига — можно сменить цель.`) : null,
+      g.act ? h('p', g.act) : null,
+      h('div', h('button.btn.small', { onclick: () => changeGoal(g), disabled: S.coach.loading || null }, 'Сменить')));
+  }
+
+  function doneItem(f) {
+    const parts = [f.beforeText && f.nowText ? `Было ${f.beforeText} → стало ${f.nowText}` : null, f.games ? `выполнено в ${f.passed} из ${f.games} игр` : null].filter(Boolean).join(' · ');
+    return h('div.tc-done-item', Icon('circle-check'), h('div', h('b', f.title), parts ? h('span', parts) : null), h('span.muted', f.doneAt ? dashboardDate(f.doneAt) : ''));
+  }
+
+  const trendIcon = { better: 'trending-up', worse: 'trending-down', same: 'minus' };
+  const vsTopPill = { top: ['good', 'на уровне топов'], near: ['warn', 'немного ниже'], below: ['bad', 'заметно ниже'] };
+
+  function progressBlock(pr) {
+    const p = pr.progress;
+    const rows = p.indicators.map((i) => ({ label: i.label, area: i.area, recentText: i.recentText, prevText: i.prevText, trend: i.trend, topText: i.topText, vsTop: i.vsTop }));
+    if (p.errors && p.errors.recent !== null && p.errors.recent !== undefined) {
+      const fmtE = (x) => (x === null || x === undefined ? null : String(Math.round(x * 10) / 10).replace('.', ','));
+      rows.push({ label: 'замечаний «Ошибок» на игру', area: 'Ошибки', recentText: fmtE(p.errors.recent), prevText: fmtE(p.errors.prev), trend: p.errors.trend, topText: null, vsTop: null });
+    }
+    return h('section.tp-block',
+      h('div.tp-head', h('h2', 'Динамика показателей'),
+        p.enough ? h('div.tp-summary',
+          h('span.pill.good', `Заметно выросло: ${p.better}`), h('span.pill.bad', `Снизилось: ${p.worse}`), h('span.pill.warn', `Ниже топов: ${p.belowTop}`)) : null),
+      h('p.tp-note', p.note),
+      p.enough ? h('div.tp-table', rows.map((r) => h(`div.tp-row.${r.trend}`,
+        h('div.tp-label', h('b', r.label), h('small', r.area)),
+        h('div.tp-now', r.recentText),
+        h('div.tp-prev', r.prevText === null || r.prevText === undefined ? '—' : r.prevText),
+        r.trend === 'few' ? h('span.pill.low', 'мало игр') : h('span.tp-trend', Icon(trendIcon[r.trend] || 'minus')),
+        r.topText ? h('div.tp-top', r.topText, vsTopPill[r.vsTop] ? h(`span.pill.${vsTopPill[r.vsTop][0]}`, vsTopPill[r.vsTop][1]) : null) : null)))
+        : h('div.empty', `Нужно ещё ${Math.max(1, p.window + p.minEach - p.games)} ${plural(Math.max(1, p.window + p.minEach - p.games), 'игра', 'игры', 'игр')} для сравнения`));
+  }
+
+  function achievementsBlock(pr) {
+    const cards = pr.achievements.map((a) => {
+      const isNew = a.unlocked.some((u) => u.isNew);
+      const pct = a.next ? Math.min(100, Math.round((a.value / a.next) * 100)) : 100;
+      return h(`article.ach-card.t${a.tier}${isNew ? '.new' : ''}`,
+        h('div.ach-medal', Icon('medal')),
+        h('div',
+          h('h3.ach-title', a.title),
+          h('p.ach-cond', a.cond),
+          h('div.ach-bar', h('span', { style: { width: `${pct}%` } })),
+          h('div.ach-meta', h('span', a.next ? `${a.value} из ${a.next}` : `${a.value} · все ступени взяты`), h('span', a.tierName || 'ещё не взято')),
+          a.unlocked.length ? h('div.ach-unlocks', a.unlocked.map((u) => h('button.ach-chip', {
+            onclick: u.matchId ? () => { setView('matches'); openMatch(u.matchId); } : null,
+            title: u.matchId ? 'Открыть матч, на котором получено' : '',
+          }, `${u.tierName} · ${dashboardDate(u.t)}`))) : null));
+    });
+    return h('section.ach-block',
+      h('div.ach-head', h('h2', 'Достижения'), pr.anyNew ? h('span.pill.hot', 'новое') : null),
+      h('div.ach-grid', cards),
+      pr.records && pr.records.length ? h('div.ach-records', pr.records.map((r) => h('div.ach-record', Icon('trophy'),
+        h('div', 'Новый рекорд на ', h('b', heroName(r.hero)), `: ${F.num(r.value)} ${r.label} (было ${F.num(r.before)})`), h('span.muted', dashboardDate(r.t))))) : null);
+  }
 
   function gameCard(c) {
     return h(`button.gcard${c.won ? '.win' : c.won === false ? '.loss' : ''}`, { onclick: () => { setView('matches'); openMatch(c.match_id); }, title: 'Открыть разбор матча' },
@@ -1131,9 +1266,7 @@
           h('div.gcard-sub', `${c.start_time ? F.ago(c.start_time + (c.duration_s || 0)) : ''} · ${F.time(c.duration_s)} · ${c.k}/${c.d}/${c.a}`)),
         c.counted ? h(`div.gcard-score${c.passed === c.counted ? '.full' : c.passed === 0 ? '.zero' : ''}`, h('b.num', `${c.passed}/${c.counted}`), h('span', 'цели')) : null),
       c.checks.length ? h('div.gcard-checks', c.checks.map((x) => h(`span.check-chip${x.pass === true ? '.ok' : x.pass === false ? '.no' : ''}`,
-        x.pass === true ? '✓' : x.pass === false ? '✕' : '·', ` ${x.short}: `, h('b', x.pass === null ? 'жду данные' : x.text), ` · цель ${coachTarget(x)}`))) : null,
-      c.mistake ? h('div.gcard-mistake', h('b', c.mistake.title), c.mistake.tip ? h('div', c.mistake.tip) : null) : null,
-      c.good ? h('div.gcard-good', '+ ', c.good.title) : null);
+        x.pass === true ? '✓' : x.pass === false ? '✕' : '·', ` ${x.short}: `, h('b', x.pass === null ? 'жду данные' : x.text), ` · цель ${coachTarget(x)}`))) : null);
   }
 
   function renderCoach() {
@@ -1141,10 +1274,9 @@
     if (!v) return;
     const d = S.coach.data;
     const head = h('div.page-head',
-      h('div', h('div.crumbs', 'Моя игра / Тренер'), h('h1', 'Тренер'), h('div.sub', 'Цели на неделю из твоих главных проблем, проверка каждой игры и прогресс.')),
+      h('div', h('div.crumbs', 'Моя игра / Тренер'), h('h1', 'Тренер'), h('div.sub', 'Одна главная цель — пока не получится. Что делать, почему и как идут дела.')),
       h('div.row',
-        h('button.btn', { onclick: () => loadCoach(false), disabled: S.coach.loading || null }, Icon('refresh'), 'Проверить новые игры'),
-        d && d.plan ? h('button.btn.primary', { onclick: () => loadCoach(true), disabled: S.coach.loading || null, title: 'Пересчитать цели по последним играм' }, 'Новый план') : null));
+        h('button.btn', { onclick: () => loadCoach(false), disabled: S.coach.loading || null }, Icon('refresh'), 'Проверить новые игры')));
     if (!S.auth) {
       v.replaceChildren(head, h('div.empty', h('strong', 'Войди через Steam'), 'Тренер строит план по твоим матчам.', h('div', { style: { marginTop: '14px' } }, h('button.btn.steam', { onclick: login }, 'Войти через Steam'))));
       return;
@@ -1153,50 +1285,24 @@
     if (S.coach.error && !d) return void v.replaceChildren(head, h('div.empty', h('strong', 'Не получилось'), S.coach.error, h('div', { style: { marginTop: '12px' } }, h('button.btn', { onclick: () => loadCoach(false) }, 'Попробовать ещё раз'))));
     if (!d) return void v.replaceChildren(head);
     if (!d.plan) {
-      v.replaceChildren(head, h('div.empty', h('strong', 'Мало игр для плана'), `Нужно ещё ${d.need || 5} ${plural(d.need || 5, 'игра', 'игры', 'игр')} с подробными данными. Сыграй пару матчей — и тренер составит план.`));
+      v.replaceChildren(head, h('div.empty', h('strong', 'Мало игр для плана'), `Нужно ещё ${d.need || 5} ${plural(d.need || 5, 'игра', 'игры', 'игр')} с подробными данными. Сыграй пару матчей — и тренер составит цель.`));
       return;
     }
     const active = d.goals.filter((g) => g.status === 'active');
-    const done = d.goals.filter((g) => g.status === 'done');
-    const ends = new Date(d.plan.endsAt * 1000).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
-    const score = d.score;
-    const hero = h('div.coach-hero',
-      h('div.coach-ring', Charts.ring(score || 0, { size: 132, stroke: 10, color: score === null ? 'var(--line-2)' : score >= 0.7 ? 'var(--good)' : score >= 0.4 ? 'var(--warn)' : 'var(--bad)' }),
-        h('div.ring-label', h('b', score === null ? '—' : F.pct(score)), h('span', 'целей выполнено'))),
-      h('div.coach-hero-text',
-        h('div.coach-kicker', `План до ${ends}`),
-        h('div.coach-headline', active.length ? `${active.length} ${plural(active.length, 'цель', 'цели', 'целей')} в работе` : 'Все цели закрыты'),
-        h('div.muted', d.gamesSince ? `После начала плана сыграно ${d.gamesSince} ${plural(d.gamesSince, 'игра', 'игры', 'игр')}. Цель закрывается, когда выполнена в 4 из 5 игр подряд.` : 'Сыграй матч — после него здесь появится проверка целей.'),
-        !d.topsReady ? h('div.note', { style: { marginTop: '10px' } }, Icon('info'), h('div', 'Данных топов пока нет — цели посчитаны против игроков твоего уровня. Обнови мету в «Мете героев», чтобы цели были по топам.')) : null),
-      h('div.coach-hero-stats',
-        h('div', h('b.num', String(d.done || 0)), h('span', 'целей закрыто')),
-        h('div', h('b.num', String(d.loaded || 0)), h('span', 'игр разобрано'))));
     const focus = active[0];
-    const otherGoals = active.slice(1).concat(done);
-    const recentChecks = focus ? d.cards.filter((c) => !c.beforePlan && c.start_time >= focus.startedAt - (focus.evidence ? 0 : 60)).slice(0, 5).map((c) => {
-      const check = c.checks.find((entry) => entry.key === focus.key);
-      return h('button.coach-check-row', { onclick: () => { setView('matches'); openMatch(c.match_id); } },
-        heroIcon(c.hero, '.sm'), h('span', heroName(c.hero)), h('span.muted.small', dashboardDate(c.start_time)),
-        h(`strong.${check?.pass === true ? 'diff-pos' : check?.pass === false ? 'diff-neg' : 'muted'}`,
-          check?.pass === true ? `Выполнено · ${check.text} (цель ${coachTarget(check)})` : check?.pass === false ? `Не выполнено · ${check.text} (цель ${coachTarget(check)})` : 'Жду данные'));
-    }) : [];
-    const goals = h('section.panel.coach-focus',
-      h('h2', 'Главная цель'),
-      focus ? goalCard(focus) : h('div.muted', 'Активных целей сейчас нет.'),
-      focus?.evidence ? h('div.row', h('button.btn.small', { onclick: () => openGrowthEpisode(focus.evidence) }, `Основание цели · ${F.time(focus.evidence.t)}`),
-        focus.priorRate !== null && focus.priorRate !== undefined ? h('span.muted.small', `До начала цели: ${F.pct(focus.priorRate)} проверенных игр`) : null) : null,
-      recentChecks.length ? h('div.coach-check-list', recentChecks) : null,
-      otherGoals.length ? h('details.coach-other', h('summary', `Другие цели · ${otherGoals.length}`), h('div.goals', otherGoals.map(goalCard))) : null);
-    const cards = h('section.panel', h('h2', d.cards.length && d.cards[0].beforePlan ? 'Последние игры (до плана)' : 'Проверка после каждой игры'),
-      d.cards.length ? h('div.gcards', d.cards.map(gameCard)) : h('div.muted', 'Игр после начала плана пока нет.'));
-    const feedIcon = { plan: 'bulb', done: 'trophy', game: 'zap', streak: 'flame' };
-    const feed = h('section.panel', h('h2', 'Сообщения тренера'),
-      d.events.length ? h('div.feed', d.events.map((e) => h(`div.feed-item.${e.kind}`,
-        h('div.feed-ico', Icon(feedIcon[e.kind] || 'info')),
-        h('div', h('div.feed-title', e.title, h('span.dim', ` · ${F.ago(e.t)}`)), h('div.feed-text', e.text))))) : h('div.muted', 'Пока тихо.'));
-    const archive = d.archive && d.archive.length ? h('section.panel', h('h2', 'Прошлые цели'),
-      h('div.archive', d.archive.map((g) => h(`div.arch.${g.status}`, h('span', g.status === 'done' ? '✓' : '·'), g.title)))) : null;
-    v.replaceChildren(head, hero, goals, h('div.coach-cols', cards, h('div.coach-side', feed, archive)));
+    const spares = active.slice(1);
+    const parts = [head];
+    if (!d.topsReady) parts.push(h('div.note', Icon('info'), h('div', 'Данных топов пока нет — цели посчитаны против игроков твоего уровня. Обнови мету в «Мете героев», чтобы цели были по топам.')));
+    parts.push(focus ? mainGoalCard(focus) : h('div.empty', h('strong', 'Все цели выполнены'), 'Сыграй ещё несколько матчей — тренер предложит следующую цель.',
+      h('div', { style: { marginTop: '12px' } }, h('button.btn.primary', { onclick: () => loadCoach(true), disabled: S.coach.loading || null }, 'Подобрать новые цели'))));
+    if (spares.length) parts.push(h('div.tc-spares', spares.map(spareGoalCard)));
+    if (d.finished && d.finished.length) parts.push(h('div.tc-done', d.finished.slice(0, 8).map(doneItem)));
+    if (S.coach.progress && S.coach.progressFor === S.auth.accountId) parts.push(progressBlock(S.coach.progress), achievementsBlock(S.coach.progress));
+    else if (!S.coach.progressLoading && S.coach.progressFor !== S.auth.accountId) setTimeout(loadProgress, 0);
+    parts.push(h('details.tc-details', h('summary', 'Подробности по играм'),
+      d.cards.length ? h('div.gcards', { style: { marginTop: '10px' } }, d.cards.slice(0, 10).map(gameCard)) : h('div.muted', 'Игр пока нет.'),
+      h('div.row', { style: { marginTop: '12px' } }, h('button.btn.small', { onclick: () => { if (window.confirm('Пересобрать все цели по последним играм? Текущий прогресс уйдёт в историю.')) loadCoach(true); }, disabled: S.coach.loading || null, title: 'Пересчитать цели по последним играм' }, 'Пересобрать все цели'))));
+    v.replaceChildren(...parts);
   }
 
   // ================= ПЕРЕД ИГРОЙ =================
@@ -1257,8 +1363,9 @@
     const order = new Map(mine.map((x, i) => [x.hero_id, i]));
     const list = allHeroes().slice().sort((a, b) => (order.has(a.id) ? order.get(a.id) : 999) - (order.has(b.id) ? order.get(b.id) : 999) || a.name.localeCompare(b.name));
     const sel = new Set(multi ? selected : [selected]);
-    return h('div.hgrid', list.map((x) => h(`button.hpick${sel.has(x.id) ? '.on' : ''}${lane === x.id ? '.lane' : ''}`, { disabled: disabled.has(x.id) || null, onclick: () => onPick(x.id), title: x.name },
-      x.img ? h('img', { src: x.img, alt: '' }) : h('span.ph', x.name.slice(0, 2)),
+    return h('div.hgrid', list.map((x) => h(`button.hpick${sel.has(x.id) ? '.on' : ''}${lane === x.id ? '.lane' : ''}`, { disabled: disabled.has(x.id) || null, onclick: () => onPick(x.id), title: x.name, style: heroArtStyle(x) },
+      (x.card || x.img) ? null : h('span.ph', x.name.slice(0, 2)),
+      x.type ? h('b.cls.' + x.type) : null,
       h('span', x.name),
       lane === x.id ? h('i', 'линия') : null)));
   }
@@ -1792,6 +1899,7 @@
     const header = h('div.dash-rank-head', rankImg(Math.floor(last.badge / 10), last.badge % 10),
       h('div', h('strong', badgeLabel(last.badge)), h('div.muted.small', `Последняя отметка · ${dashboardDate(last.time)}`)));
     if (points.length === 1) return h('div', header, h('div.hint', 'Для графика нужны хотя бы две отметки.'));
+    if (window.Charts && window.Charts.rankChart) return h('div', header, window.Charts.rankChart(points, { label: badgeLabel, onOpen: openDashboardMatch }), h('div.hint', `${points.length} отметок · ${season ? 'текущий сезон' : 'последние 30 дней'}`));
     const levels = [...new Set(points.map((p) => p.badge))].sort((a, b) => a - b);
     const from = points[0].time;
     const end = last.time;
@@ -1884,15 +1992,45 @@
     const deltaText = delta === null ? 'Для сравнения нужно больше матчей с результатом.'
       : `${delta > 0 ? '+' : ''}${delta.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} п. п. к обычному винрейту`;
     const heroRows = h('div.dash-heroes', d.heroes.slice(0, 5).map((x) =>
-      h('button.dash-hero-row', { onclick: () => { setView('myheroes'); openHeroSummary(x.heroId); } },
+      h('button.dash-hero-row', { style: heroArtStyle(S.assets.heroes[x.heroId]), onclick: () => { setView('myheroes'); openHeroSummary(x.heroId); } },
         heroIcon(x.heroId), h('div', h('strong', heroName(x.heroId)), h('div.dash-hero-track', h('span', { style: { width: `${x.games / d.heroes[0].games * 100}%` } }))),
         h('span.muted.small', `${x.games} ${plural(x.games, 'матч', 'матча', 'матчей')} · ${x.wins}–${x.losses}${x.unknown ? ' · без результата: ' + x.unknown : ''}`),
         h('span.num', x.wins + x.losses >= 3 ? F.pct(x.wr) : '—'))));
-    v.replaceChildren(banner, h('div.dash-grid',
+    // --- ключевые цифры: что важнее всего видно сразу ---
+    const wrPct = d.week.wr === null ? null : Math.round(d.week.wr * 100);
+    const tone = delta === null ? '' : delta >= 1 ? 'good' : delta <= -1 ? 'bad' : '';
+    const ring = (pct) => {
+      const r = 34, c = 2 * Math.PI * r;
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 80 80'); svg.setAttribute('class', 'hl-ring'); svg.setAttribute('aria-hidden', 'true');
+      svg.innerHTML = `<circle cx="40" cy="40" r="${r}" class="hl-ring-bg"/><circle cx="40" cy="40" r="${r}" class="hl-ring-fg" stroke-dasharray="${(c * (pct ?? 0) / 100).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 40 40)"/>`;
+      return svg;
+    };
+    const lastRank = d.rank.length ? d.rank.at(-1) : null;
+    const hl = h('div.hl-row',
+      h(`div.hl-tile.feature${tone ? '.' + tone : ''}`,
+        h('div.hl-main',
+          h('div.hl-label', Icon('trending-up'), 'Винрейт за 7 дней'),
+          h('div.hl-value.num', wrPct === null ? '—' : h('span', { 'data-count': String(wrPct), 'data-suffix': '%' }, wrPct + '%')),
+          delta === null ? h('div.hl-sub', 'Мало матчей с результатом для сравнения')
+            : h('div.hl-sub', h(`span.hl-chip${tone ? '.' + tone : ''}`, `${delta > 0 ? '+' : ''}${delta.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} п. п.`), ' к прошлым 30 дням (' + F.pct(d.baseline.wr) + ')')),
+        ring(wrPct)),
+      h('div.hl-tile',
+        h('div.hl-label', Icon('swords'), 'Матчей за неделю'),
+        h('div.hl-value.num', h('span', { 'data-count': String(d.week.games) }, String(d.week.games))),
+        h('div.hl-sub', `${d.week.wins} побед · ${d.week.losses} поражений`)),
+      h('div.hl-tile',
+        h('div.hl-label', Icon('clock'), 'Время в игре'),
+        h('div.hl-value.num', h('span', { 'data-count': String(+d.hours.toFixed(1)), 'data-decimals': '1' }, d.hours.toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 })), h('span.hl-unit', ' ч')),
+        h('div.hl-sub', `${d.heroes.length} ${plural(d.heroes.length, 'герой', 'героя', 'героев')} за неделю`)),
+      h('div.hl-tile',
+        h('div.hl-label', Icon('crown'), 'Ранг'),
+        lastRank ? h('div.hl-rank', rankImg(Math.floor(lastRank.badge / 10), lastRank.badge % 10), h('div.hl-value.sm', badgeLabel(lastRank.badge))) : h('div.hl-value.sm', '—'),
+        h('div.hl-sub', lastRank ? `${d.rank.length} отметок · ${d.season ? 'сезон' : '30 дней'}` : 'Нет отметок')));
+    v.replaceChildren(banner, hl, h('div.dash-grid',
       card('Игры за неделю', h('span.muted.small', `${d.week.games} ${plural(d.week.games, 'матч', 'матча', 'матчей')}`), bars, legend),
       card('Мои герои за неделю', h('button.btn.small', { onclick: () => setView('myheroes') }, 'Все герои', Icon('arrow')),
         d.heroes.length ? heroRows : h('div.muted.dash-empty', 'За неделю пока нет матчей.')),
-      card('Форма за 7 дней', null, h('div.dash-rates', rate(d.week, 'Последние 7 дней'), rate(d.baseline, 'Предыдущие 30 дней')), h('div.hint', deltaText)),
       card('Изменения рейтинга', null, dashboardRank(d.rank, d.season))),
       h('div.dash-footer', h('span.muted.small', model.error ? `История недоступна · ${model.error}`
         : model.loading ? 'Проверяю свежие матчи…' : d.source === 'saved' ? 'Показаны сохранённые матчи' : 'По доступной истории Deadlock API'),
@@ -2238,7 +2376,7 @@
   function renderCamp() {
     const v = $('view-camp');
     const hero = S.my.mode === 'hero';
-    const head = h('div.page-head', h('div', h('div.crumbs', hero ? 'Моя игра / Мои герои' : 'Моя игра / Мои матчи'), h('h1', hero ? 'Мои герои' : 'Мои матчи'),
+    const head = h(hero ? 'div.page-head.scene-heroes' : 'div.page-head', h('div', h('div.crumbs', hero ? 'Моя игра / Мои герои' : 'Моя игра / Мои матчи'), h('h1', hero ? 'Мои герои' : 'Мои матчи'),
       h('div.sub', hero ? 'Сводка по каждому твоему герою против топов на нём: что получается, что повторяется из игры в игру, матчапы.' : 'Выбери игру — сравню её с топами на том же герое по минутам и покажу, где ты отстаёшь. Можно сравнить бок о бок с матчем про-игрока.')));
     if (!S.auth) {
       const input = h('input.input', { placeholder: 'Ссылка на профиль Steam: …/id/ник или …/profiles/7656…', style: { width: '100%' } });
@@ -2316,7 +2454,7 @@
   function heroModeArea() {
     if (S.my.heroesLoading && !S.my.heroes) return h('div.panel', h('div.row', h('span.spin'), 'Собираю твоих героев…'));
     if (!S.my.heroes || !S.my.heroes.length) return h('div.empty', h('strong', 'Пока нет игр'), 'Сыграй пару матчей — и здесь появится сводка по каждому твоему герою.');
-    const picker = h('div.hero-picker', S.my.heroes.map((x) => h(`button.hero-pick${S.my.hero === x.hero_id ? '.on' : ''}`, { onclick: () => openHeroSummary(x.hero_id), title: x.topGames ? `Игр топов на этом герое: ${x.topGames}` : 'Игр топов на этом герое пока нет' },
+    const picker = h('div.hero-picker', S.my.heroes.map((x) => h(`button.hero-pick${S.my.hero === x.hero_id ? '.on' : ''}`, { style: heroArtStyle(S.assets.heroes[x.hero_id]), onclick: () => openHeroSummary(x.hero_id), title: x.topGames ? `Игр топов на этом герое: ${x.topGames}` : 'Игр топов на этом герое пока нет' },
       heroIcon(x.hero_id),
       h('span.hero-pick-name', heroName(x.hero_id)),
       h('span.hero-pick-meta.num', `${x.games} · ${x.games ? Math.round((x.wins / x.games) * 100) : 0}%`))));
@@ -2916,12 +3054,12 @@
     // ---------- главное сейчас ----------
     const top = rows[0];
     const goal = d.profile.goal;
-    const nextGoal = goal ? h('section.panel', h('h2', 'Цель на следующий матч'), h('b', goal.title),
+    const nextGoal = goal ? h('section.panel.kraft', h('h2', 'Цель на следующий матч'), h('b', goal.title),
       h('p', goal.action), h('div.hint', goal.check),
       h('div.hint', `Основание — «${goal.reason}» в ${goal.count} из ${goal.eligible} матчей, которые можно было проверить.`),
       h('div.row',
         h('button.btn.small', { onclick: () => openGrowthEpisode(goal.episode) }, `Открыть эпизод · ${F.time(goal.episode.t)}`),
-        ['lane_trades', 'lost_souls', 'solo_deaths'].includes(goal.key) ? h('button.btn.small', { disabled: S.coach.loading || null, onclick: () => {
+        ['lane_trades', 'lost_souls', 'solo_deaths', 'survivability_purchase'].includes(goal.key) ? h('button.btn.small', { disabled: S.coach.loading || null, onclick: () => {
           loadCoach(false, { ...goal.episode, key: goal.key === 'lane_trades' ? undefined : goal.key });
           setView('coach');
         } }, 'Отслеживать в тренере') : null)) : null;

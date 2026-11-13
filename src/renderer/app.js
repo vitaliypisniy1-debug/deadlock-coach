@@ -1478,14 +1478,18 @@
     // ---------- что купить ----------
     const items = d.items || {};
     const hr = d.heroRule;
-    const mechRows = (items.mechanics || []).map((x) => h('div.codex-item',
+    // рекомендации из угроз героя: у каждой — причины, источник и ограничения
+    const mechRows = (items.recommended || []).map((x) => h('div.codex-item',
       h('div.row', { style: { alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
-        h('span.pill', 'механика патча'),
+        h('span.pill', x.kindLabel),
         h('b', x.name),
-        x.tier ? h('span.muted.small', `${x.slot === 'vitality' ? 'Живучесть' : x.slot === 'spirit' ? 'Дух' : x.slot === 'weapon' ? 'Оружие' : ''} T${x.tier}`) : null,
-        x.rule ? h('span.pill.dim', x.rule.threatLabel) : null),
-      h('div', { style: { margin: '4px 0' } }, x.why),
-      x.rule ? h('details', h('summary', 'Как работает предмет'), h('div.codex-detail', h('div', h('b', 'Эффект: '), x.rule.text), x.rule.goodVs ? h('div', h('b', 'Полезен: '), x.rule.goodVs) : null, x.rule.notEnough ? h('div', h('b', 'Не решит: '), x.rule.notEnough) : null)) : null));
+        h('span.muted.small', `${x.cost} душ · ${x.slot === 'vitality' ? 'Живучесть' : x.slot === 'spirit' ? 'Дух' : x.slot === 'weapon' ? 'Оружие' : ''} T${x.tier}`)),
+      h('div', { style: { margin: '4px 0' } }, `Почему: ${x.why.join('; ')}.`),
+      h('details', h('summary', 'Как работает предмет'), h('div.codex-detail', h('div', h('b', 'Эффект: '), x.text), h('div', h('b', 'Полезен: '), x.goodVs), h('div', h('b', 'Не решит: '), x.notEnough), h('div.dim.small', `Источник: ${x.src}`)))));
+    const prof = items.profile;
+    const profLine = prof && prof.top && prof.top.length
+      ? h('div.hint', `Что на нём обычно собирают (${prof.games} ${plural(prof.games, 'матч', 'матча', 'матчей')}${prof.since ? ` с ${new Date(prof.since * 1000).toLocaleDateString('ru-RU', { day: 'numeric', month: 'numeric' })}` : ''}${prof.small ? ', мало данных' : ''}):${prof.top.map((p) => `${p.name} ${Math.round(p.share * 100)}%`).join(', ')}. Это доля покупок, а не доля урона.`)
+      : h('div.hint', d.meta && d.meta.profileError ? `Профиль покупок героя не загрузился (${d.meta.profileError}) — советы построены только по способностям.` : 'Профиль покупок героя недоступен — советы построены только по способностям.');
     const buyRows = (items.purchases || []).map((x) => h('div.codex-item',
       h('div.row', { style: { alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
         h('span.mini-items', itemImg(x.id)),
@@ -1498,11 +1502,11 @@
     const itemPanel = h('section.panel',
       h('h2', `Что купить против ${heroName(enemy)}`),
       hr && hr.threats && hr.threats.length ? h('div', { style: { marginBottom: '14px' } },
-        h('h3', `Чем опасен ${heroName(enemy)} (из файлов игры, патч ${d.rules ? d.rules.patch : ''})`),
-        h('ul.codex-threats', hr.threats.map((t) => h('li', t))),
-        hr.heals && hr.heals.length ? h('div.note', Icon('info'), h('div', h('b', 'Лечится: '), hr.heals.join('; '), ' — снижение входящего лечения (Toxic Bullets, Healbane) бьёт именно по этому.')) : null)
-        : h('div.hint', `Механики ${heroName(enemy)} из файлов игры пока не разобраны — рекомендации ниже основаны только на покупках топов и статистике. Универсальных советов не показываю.`),
-      mechRows.length ? h('div', { style: { marginBottom: '12px' } }, h('h3', 'Проверенные механики'), mechRows) : null,
+        h('h3', `Чем опасен ${heroName(enemy)} (способности — deadlock.wiki и данные игры, патч ${d.rules ? d.rules.patch : ''})`),
+        h('ul.codex-threats', hr.threats.map((t) => h('li', t.text || t))),
+        profLine)
+        : h('div.hint', `Механики ${heroName(enemy)} не проверены — рекомендации ниже основаны только на покупках топов и статистике. Универсальных советов не показываю.`),
+      mechRows.length ? h('div', { style: { marginBottom: '12px' } }, h('h3', `Что купить по угрозам ${heroName(enemy)}`), mechRows) : null,
       buyRows.length ? h('div', h('h3', 'По покупкам топов'), h('div.hint', `Предметы, которые в матчах топового уровня против ${heroName(enemy)} берут минимум в 1.5 раза чаще, чем на тех же героях без него. Это наблюдение, а не доказательство: покупка может быть ответом на весь состав соперника, а дорогие предметы чаще встречаются в длинных играх.`), buyRows) : null,
       !mechRows.length && !buyRows.length ? h('div.muted', 'Надёжных контрпредметов пока нет: покупок против этого героя в матчах топов меньше порога (нужно ≥60 игр с обеих сторон), а механика из файлов игры не подтверждена.') : null);
     parts.push(itemPanel);

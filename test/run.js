@@ -1694,28 +1694,104 @@ test('counter codex: picks, items, rules, small samples, stale, hero switch, fal
   assert.ok(pu.rule && pu.rule.threatLabel === 'Режет лечение', 'правило предмета подхвачено по имени');
   assert.ok(!r50.items.purchases.some((x) => x.id === 1), 'популярный предмет — не контрпредмет');
 
-  // 5) механические ответы для сквозных героев (Apollo, Victor, Lash, Infernus)
+  // 5) контрпредметы из угроз: у героя из таблицы — рекомендации с основанием, у героя вне таблицы — молчим
   for (const id of [77, 66, 31, 1]) {
     const res = C.counterCodex(id, { pm, table: {}, assets: as });
-    assert.ok(res.heroRule && res.heroRule.threats.length, `правила героя ${id}`);
-    assert.ok(res.items.mechanics.length >= 2, `механические ответы для героя ${id}`);
-    for (const m of res.items.mechanics) assert.ok(m.why && m.rule && m.confidence === 'likely', 'у ответа есть объяснение и правило');
+    assert.ok(res.heroRule && res.heroRule.threats.length, `угрозы героя ${id}`);
+    assert.ok(res.items.verified && res.items.recommended.length >= 3, `рекомендации для героя ${id}`);
+    for (const m of res.items.recommended) assert.ok(m.why.length && m.src && m.text && m.notEnough, 'у рекомендации есть основание, источник, эффект и ограничение');
   }
-  // Infernus: оговорка про продление горения попаданиями
-  const inf = C.counterCodex(1, { pm, table: {}, assets: as });
-  const dr = inf.items.mechanics.find((m) => m.name === 'Debuff Reducer');
-  assert.ok(dr && /продлевает/.test(dr.why), 'оговорка: горение продлевается попаданиями оружием');
-  // герой без разобранных механик — без выдуманных объяснений
   const noRule = C.counterCodex(42, { pm, table: {}, assets: as });
-  assert.strictEqual(noRule.heroRule, null, 'нет правил — нет heroRule');
-  assert.strictEqual(noRule.items.mechanics.length, 0, 'нет выдуманных механических ответов');
+  assert.strictEqual(noRule.heroRule, null, 'нет героя в таблице — нет heroRule');
+  assert.strictEqual(noRule.items.recommended.length, 0, 'нет выдуманных рекомендаций для героя без проверенных механик');
+  assert.strictEqual(noRule.items.verified, false);
 
-  // 6) правила: версия патча, сборка и точные имена предметов текущего патча
-  assert.ok(RULES.patch === 'Halloween (2026-10-30)' && RULES.build === 6861 && /deadlock\.gs/.test(RULES.source));
+  // 6) правила: сборка и патч, у предметов — эффект, польза и ограничение
+  assert.ok(/Halloween/.test(RULES.patch) && /04/.test(RULES.patch) && RULES.build === 6861);
   for (const n of ['Toxic Bullets', 'Healbane', 'Debuff Reducer', 'Counterspell', 'Slowing Hex', 'Reactive Barrier', 'Spirit Resilience']) {
     assert.ok(RULES.items[n], `правило предмета ${n}`);
     assert.ok(RULES.items[n].text && RULES.items[n].goodVs && RULES.items[n].notEnough, `у ${n} — эффект, польза и ограничение`);
   }
+});
+
+test('counter data: rule numbers match game data, all 44 heroes have verified threats', () => {
+  const { RULES } = require('../src/core/counterRules');
+  const codex = require('../src/core/data/codexData.json');
+  const threats = require('../src/core/data/heroThreats.json');
+  assert.strictEqual(codex.build, RULES.build, 'правила и данные игры — одна сборка');
+  for (const [name, r] of Object.entries(RULES.items)) {
+    const shop = codex.items[name];
+    assert.ok(shop, `${name} есть в магазине build ${codex.build}`);
+    assert.ok(r.src, `у ${name} указан источник`);
+    for (const [k, v] of Object.entries(r.nums || {})) assert.strictEqual(shop.nums[k], v, `${name}: ${k} — число правила совпадает с данными игры (после патча обнови правило)`);
+  }
+  const ids = Object.keys(codex.heroes);
+  assert.strictEqual(ids.length, 44, '44 героя в данных игры');
+  const DMG = ['spirit', 'weapon', 'melee', 'none'];
+  for (const id of ids) {
+    const h = threats.heroes[id];
+    assert.ok(h, `герой ${codex.heroes[id].name} есть в таблице угроз`);
+    assert.strictEqual(h.abilities.length, 4, `${h.name}: четыре способности`);
+    assert.ok(Array.isArray(h.dmg) && h.dmg.length && Array.isArray(h.heal) && typeof h.air === 'boolean', `${h.name}: поля героя`);
+    for (const a of h.abilities) {
+      assert.ok(DMG.includes(a.damage) && Array.isArray(a.cc) && Array.isArray(a.compat) && typeof a.lasting === 'boolean' && a.note, `${h.name}/${a.name}: поля способности`);
+    }
+  }
+});
+
+test('counter advice: from hero threats and build profile, no weak recommendations', () => {
+  const C = require('../src/core/counters');
+  const codex = require('../src/core/data/codexData.json');
+  const rec = (id, profile = null) => C.counterItemsFor(id, { profile }).recommended.map((i) => i.name);
+
+  // Vindicta: сбить с полёта, снять долгие дебаффы, Spirit-урон ульты
+  const vin = rec(3);
+  for (const n of ['Knockdown', 'Phantom Strike', 'Dispel Magic', 'Spirit Resilience']) assert.ok(vin.includes(n), `Vindicta: ${n}`);
+  // Billy: ближний бой и контроль; Dispel Magic не нужен — снимать нечего (мгновенные эффекты)
+  const billy = rec(72);
+  assert.ok(billy.includes('Rebuttal') && billy.includes('Reactive Barrier'), 'Billy: Rebuttal и Reactive Barrier');
+  assert.ok(!billy.includes('Dispel Magic'), 'Billy: Dispel Magic — слабый выбор');
+  // Abrams: лечится — предметы против лечения; контроль — Reactive Barrier
+  const abrams = rec(6);
+  assert.ok(abrams.includes('Healbane') && abrams.includes('Toxic Bullets') && abrams.includes('Reactive Barrier'), 'Abrams: анти-лечение и Reactive Barrier');
+  // Apollo: Slowing Hex глушит его рывки и ульт
+  assert.ok(rec(77).includes('Slowing Hex'), 'Apollo: Slowing Hex');
+
+  // профиль покупок меняет вывод: без пулевой сборки нет Bullet Resilience, с ней — есть
+  const lash = (weapon) => rec(31, { games: 5000, small: false, top: [], slotShare: { weapon, spirit: 1 - weapon - 0.3, vitality: 0.3 }, melee: 0, lifesteal: 0 });
+  assert.ok(!lash(0.12).includes('Bullet Resilience'), 'Lash почти не берёт оружейные предметы');
+  assert.ok(rec(13, { games: 5000, small: false, top: [], slotShare: { weapon: 0.5, spirit: 0.2, vitality: 0.3 }, melee: 0, lifesteal: 0 }).includes('Bullet Resilience'), 'Haze: пули в сборке');
+  // лечение из профиля покупок: у Vindicta своего лечения нет, но вампиризм в сборке даёт анти-лечение
+  const noHeal = { games: 5000, small: false, top: [], slotShare: { weapon: 0.45, spirit: 0.24, vitality: 0.31 }, melee: 0, lifesteal: 0.1 };
+  assert.ok(!rec(3, noHeal).includes('Healbane'));
+  assert.ok(rec(3, { ...noHeal, lifesteal: 0.6 }).includes('Healbane'), 'вампиризм в сборке — предметы против лечения');
+
+  // все 44 героя: есть рекомендации, у каждой — основание, цена и источник, без NaN/undefined
+  for (const id of Object.keys(codex.heroes)) {
+    const r = C.counterItemsFor(id, {});
+    assert.ok(r.verified && r.recommended.length >= 2, `${codex.heroes[id].name}: рекомендации`);
+    for (const i of r.recommended) assert.ok(i.why.length && i.src && Number.isFinite(i.cost) && Number.isFinite(i.score) && i.tier >= 1 && i.tier <= 4, `${codex.heroes[id].name}/${i.name}`);
+    assert.ok(!/NaN|undefined/.test(JSON.stringify(r)), `${codex.heroes[id].name}: нет NaN/undefined`);
+  }
+});
+
+test('hero build profile: top purchases, slot shares, melee and lifesteal flags, small samples', () => {
+  const { buildHeroProfile } = require('../src/core/heroProfile');
+  const codex = require('../src/core/data/codexData.json');
+  const rows = [['Melee Charge', 900], ['Melee Lifesteal', 850], ['Lifestrike', 800], ['Crushing Fists', 600], ['Close Quarters', 950], ['Extra Spirit', 100]]
+    .map(([n, m]) => ({ item_id: codex.items[n].id, matches: m, bucket: 0 }));
+  const p = buildHeroProfile(rows, { codex, games: 1000 });
+  assert.strictEqual(p.games, 1000);
+  assert.strictEqual(p.small, false);
+  assert.strictEqual(p.top[0].name, 'Close Quarters');
+  assert.strictEqual(p.top[0].share, 0.95);
+  assert.ok(!p.top.some((x) => x.name === 'Extra Spirit'), 'редкая покупка не попадает в топ');
+  assert.ok(p.melee >= 0.5, 'сборка ближнего боя');
+  assert.ok(p.lifesteal >= 0.8, 'вампиризм в сборке');
+  const sum = Object.values(p.slotShare).reduce((s, v) => s + v, 0);
+  assert.ok(Math.abs(sum - 1) < 0.02, 'доли слотов складываются в 100%');
+  assert.strictEqual(buildHeroProfile(rows, { codex, games: 300 }).small, true, 'мало матчей — помечено');
+  assert.strictEqual(buildHeroProfile([], { codex, games: 1000 }), null, 'нет данных — нет профиля');
 });
 
 test('codex lookup: no network on hero switch, saved data on failure', () => withStoreDir(async (dir) => {
@@ -1729,8 +1805,17 @@ test('codex lookup: no network on hero switch, saved data on failure', () => wit
   store.write('assets.json', { v: 8, fetchedAt: Date.now(), heroes: { 5: { id: 5, name: 'H5' }, 6: { id: 6, name: 'H6' } },
     items: { 2: { id: 2, name: 'Toxic Bullets', cost: 1250, tier: 3, slot: 'weapon' } } });
   let calls = 0;
+  let profileCalls = 0;
+  let failProfile = false;
+  const codexItems = require('../src/core/data/codexData.json').items;
   const api = {
-    heroStatsAnalytics: async () => { calls++; return []; },
+    // профиль покупок героя: окно после патча (hero-stats) и покупки (item-stats)
+    heroStatsAnalytics: async ({ since } = {}) => (since === require('../src/core/counterRules').RULES.patchSince ? [{ hero_id: 5, matches: 5000 }, { hero_id: 6, matches: 5000 }] : (calls++, [])),
+    itemStatsAnalytics: async ({ heroId }) => {
+      profileCalls++;
+      if (failProfile) throw new Error('offline');
+      return [{ item_id: codexItems['Rebuttal'].id, matches: 4000, bucket: 0 }, { item_id: codexItems['Healbane'].id, matches: 100, bucket: 0 }];
+    },
     heroCounterAnalytics: async () => { calls++; return []; },
     heroSynergyAnalytics: async () => { calls++; return []; },
     matchHistory: async () => { calls++; throw new Error('offline'); },
@@ -1749,6 +1834,16 @@ test('codex lookup: no network on hero switch, saved data on failure', () => wit
   const again = await sync.codexLookup(null, 5);
   assert.strictEqual(again.enemy, 5);
   assert.strictEqual(calls, 0, 'ни одного запроса к сети при смене героя');
+  assert.strictEqual(profileCalls, 2, 'профиль покупок — по одному запросу на героя, при возврате к герою без сети');
+  assert.ok(a.items.profile && a.items.profile.games === 5000 && a.items.profile.since > 1000, 'профиль построен по окну после патча');
+  assert.strictEqual(a.items.profile.top[0].name, 'Rebuttal', 'в профиле — частая покупка');
+  // профиль сохранён в файле: новый Sync без сети берёт его из кэша
+  failProfile = true;
+  const sync3 = new Sync({ store, api });
+  const d3 = await sync3.codexLookup(null, 5);
+  assert.ok(d3.items.profile && !d3.meta.profileError, 'свежий кэш профиля — без запроса');
+  assert.strictEqual(profileCalls, 2, 'кэш профиля не вызвал сеть');
+  failProfile = false;
 
   // устаревшая мета + сбой сети: показываем сохранённые данные с датой и ошибкой
   store.write('pickmeta.json', { ...pm, at: Date.now() - 8 * 3600e3 });

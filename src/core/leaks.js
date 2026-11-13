@@ -18,11 +18,12 @@
 
 const { valueAt } = require('./timeline');
 const { N, T, plural } = require('./tipkit');
-const { soloDeathRows, soloDeathsVerifiable } = require('./deaths');
+const { soloDeathRows, soloDeathsVerifiable, lateDeathCount } = require('./deaths');
 
-const souls = (n) => `${N(n)} ${plural(n, 'душа', 'души', 'душ')}`;
+// Души всегда целые: медианы и расчётные остатки бывают дробными («379 души» вместо «380 душ»).
+const souls = (n) => `${N(Math.round(n))} ${plural(Math.round(n), 'душа', 'души', 'душ')}`;
 // винительный падеж: «потерял 1 551 душу»
-const soulsAcc = (n) => `${N(n)} ${plural(n, 'душу', 'души', 'душ')}`;
+const soulsAcc = (n) => `${N(Math.round(n))} ${plural(Math.round(n), 'душу', 'души', 'душ')}`;
 
 // Медианы по рангу (average_badge // 10). Рейтинг, игры от 25 минут, 2 дня, 640 тыс. игроко-игр.
 // d10 — смерти до 9–10 минуты (медиана 1 на всех рангах: высокие ранги умирают рано не реже),
@@ -63,6 +64,10 @@ const VITALITY_COST = 1250;
 // чтобы покупка успела случиться, — иначе серия не проверяется
 const REACT_SECS = 90;
 const SOUL_LOSS_THRESHOLD = 1000;
+// доля побед показывается, только если в каждой из сравниваемых групп не меньше стольких игр (на 3 играх «100%» — шум)
+const MIN_WR_GAMES = 5;
+// «богатая» смерть: расчётный остаток (нижняя оценка) от этой суммы
+const RICH = 3000;
 
 const clampTier = (t) => (t ? Math.max(1, Math.min(TOP_TIER, t)) : null);
 
@@ -134,8 +139,15 @@ function lossPerDeath(me) {
   return out;
 }
 
-function majorSoulLosses(me, endS, losses = lossPerDeath(me)) {
+// В части старых матчей API не отдаёт потери душ вообще: у всех игроков ноль, хотя смертей много.
+// Такой «ноль» — отсутствие данных, а не «ни одной потери»; иначе игра выглядела бы чистой.
+function lostTracked(m) {
+  return !!m && (m.players || []).some((p) => (p.stats?.at(-1)?.g_lost || 0) > 0);
+}
+
+function majorSoulLosses(me, endS, losses = lossPerDeath(me), m = null) {
   const last = me.stats?.at(-1);
+  if (m && !lostTracked(m)) return null;
   if (!last || !Number.isFinite(endS) || last.t < endS - 65
     || !me.stats.every((s, i) => Number.isFinite(s.g_lost) && s.g_lost >= (me.stats[i - 1]?.g_lost ?? 0))
     || !Number.isInteger(me.d) || last.d !== me.d || losses.length !== me.d) return null;
@@ -248,10 +260,13 @@ function gameLeaks(c) {
       }
       if (pts.some((q) => !q.p[2])) continue; // был мёртв — не в счёт
       fightChecks += 1;
-      const mask = pts.reduce((s, q) => s | (q.p[3] || 0), 0);
+      // смотрим только на время самой драки (шаг маршрута до первой смерти и после последней): что игрок делал
+      // за 15 секунд до неё, к этой драке не относится, а подход к месту драки означает, что он успевал
+      const during = pts.filter((q) => q.t >= fight.t0 - step && q.t <= fight.t1 + step);
+      const mask = during.reduce((s, q) => s | (q.p[3] || 0), 0);
       if (mask & 1) continue; // дрался с героями — значит, участвовал
-      const start = pts[0].p;
-      const far = dist([start[0], start[1]], [fight.x, fight.y]);
+      // ближайшая точка к драке за её время: если он подошёл ближе FIGHT_FAR — был рядом, а не «фармил вдали»
+      const far = Math.min(...during.map((q) => dist([q.p[0], q.p[1]], [fight.x, fight.y])));
       if (far < FIGHT_FAR || far > FIGHT_REACH) continue;
       const farming = mask & 6;
       if (!farming) continue;
@@ -272,7 +287,7 @@ function gameLeaks(c) {
         text: `После 10:00 найдено ${missed.length} ${plural(missed.length, 'эпизод', 'эпизода', 'эпизодов')}, где ты фармил, а команда потеряла больше героев. Всего в этих эпизодах погибло ${allyDeathsTotal} ${plural(allyDeathsTotal, 'союзник', 'союзника', 'союзников')}.`,
         context: 'Расстояние по карте даёт приблизительную оценку. Из этих данных нельзя понять, успевал ли ты подойти и что команда получала на другой стороне карты.',
         fix: ['На карте проверь, когда можно было заметить драку и был ли безопасный путь к команде.'],
-        moments: missed.map((x) => ({ t: x.t, x: x.x, y: x.y, text: `потери ${x.allyDeaths}:${x.enemyDeaths} · около ${x.sec} с по прямой${x.jungle ? ' · ты в лесу' : ''}` })),
+        moments: missed.map((x) => ({ t: x.t, x: x.x, y: x.y, text: `потери ${x.allyDeaths}:${x.enemyDeaths} · ближе всего к драке — около ${x.sec} с по прямой${x.jungle ? ' · ты в лесу' : ''}` })),
         cost: { allyDeaths: allyDeathsTotal, fightsLost: lostOnes.length },
       });
     }
@@ -308,11 +323,13 @@ function gameLeaks(c) {
     out.push({
       key: 'map_timings',
       area: 'Тайминги',
-      level: lostSouls >= 900 || statues >= 4 ? 'bad' : 'warn',
-      score: 40 + Math.min(40, lostSouls / 40) + statues * 4,
+      // Не «bad»: у игроков 4–6 рангов разница в доле побед между малым и большим значением этих показателей
+      // всего 3–5 п.п. (WIN_LINKS), а у смертей — до 13; в твоих матчах связи с поражениями тоже нет.
+      level: 'warn',
+      score: 25 + Math.min(25, lostSouls / 50) + statues * 2,
       title: 'Меньше ресурсов карты, чем в сравнении',
       text: timing.map((x) => fmt(x)).map((t, i) => (i === 0 ? t[0].toUpperCase() + t.slice(1) : t)).join('; ') + '.',
-      context: 'Сравнение показывает разницу в собранных ресурсах. Доступность лагеря или контейнера в конкретный момент проверяется по карте.',
+      context: 'Сравнение показывает разницу в собранных ресурсах, а не причину поражения: у игроков 4–6 рангов разница в доле побед между малым и большим значением этих показателей — 3–5 п.п., заметно меньше, чем у смертей. Доступность лагеря или контейнера в конкретный момент проверяется по карте.',
       fix: [
         'Посмотри свой маршрут между волнами и проверь, были ли рядом доступные ресурсы, которые можно забрать без риска пропустить волну.',
       ],
@@ -325,8 +342,9 @@ function gameLeaks(c) {
   // шесть игроков получают одинаковую сумму в одну минуту). Личной ошибкой «не взял» не считаем.
 
   // ---------- 4. Души, потерянные при смерти ----------
-  const observedLosses = lossPerDeath(me);
-  if (majorSoulLosses(me, endS, observedLosses) !== null) checked('lost_souls');
+  // если API не отдал потери душ ни одному игроку матча — это «нет данных», а не «потерь не было»
+  const observedLosses = lostTracked(m) ? lossPerDeath(me) : [];
+  if (majorSoulLosses(me, endS, observedLosses, m) !== null) checked('lost_souls');
   const losses = observedLosses.filter((x) => x.lost >= 600);
   const total = losses.reduce((s, x) => s + x.lost, 0);
   if (total >= 1200 || losses.length >= 2 || losses.some((x) => x.lost >= SOUL_LOSS_THRESHOLD)) {
@@ -338,7 +356,8 @@ function gameLeaks(c) {
       score: 35 + Math.min(40, total / 60),
       title: 'Умирал с несохранёнными душами',
       text: `${losses.length} ${plural(losses.length, 'смерть стоила', 'смерти стоили', 'смертей стоили')} тебе ${soulsAcc(total)}.` +
-        (ref ? ` У топов на этом герое медианная потеря за смерть — ${souls(ref)}.` : ''),
+        // сравниваем среднее со средним: сравнивать самые дорогие смерти со средней потерей топов было бы подбором
+        (ref && Number.isFinite(f.lostPerDeath) ? ` В среднем за игру ты терял ${souls(f.lostPerDeath)} за смерть, у топов на этом герое медиана — ${souls(ref)}.` : ''),
       fix: ['Перед рискованным пушем Walker или дракой проверь размер мешка. Если можно безопасно купить полезный предмет или сохранить души, сравни этот вариант с продолжением пуша.'],
       moments: losses.map((x) => ({ t: x.t, lost: x.lost, text: `умер и потерял ${soulsAcc(x.lost)}` })),
       cost: { souls: total },
@@ -359,19 +378,21 @@ function gameLeaks(c) {
       const kp = bySlot.get(r.killerSlot);
       if (kp) killCount.set(kp.hero_id, (killCount.get(kp.hero_id) || 0) + 1);
     }
+    const lateTotal = Math.max(solo.length, lateDeathCount(me));
     const killerNames = [...killCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3)
       .map(([hid, n]) => `${heroName(hid)}${n > 1 ? ` (${n})` : ''}`);
     out.push({
       key: 'solo_deaths',
       area: 'Выживание',
-      level: solo.length >= 3 || lostSum >= 1500 ? 'bad' : 'warn',
+      // «серьёзно» — только если одиночные смерти составляют заметную долю всех поздних смертей
+      level: solo.length >= 3 && solo.length / lateTotal >= 0.5 ? 'bad' : 'warn',
       score: 48 + solo.length * 10 + (lostSum >= 1500 ? 12 : 0),
       title: 'Гиб вдали от команды',
       groupTitle: 'Гибнешь в одиночку, когда команда далеко',
-      text: `После 10:00 ты погиб ${solo.length} ${plural(solo.length, 'раз', 'раза', 'раз')}, когда рядом не было ни одного живого союзника (ближе ~8 секунд бега).`
+      text: `После 10:00 ${solo.length} из ${lateTotal} твоих смертей случились, когда рядом не было ни одного живого союзника (ближе ~8 секунд бега) и никто из союзников не погиб рядом за 10 секунд до этого.`
         + (lostKnown && lostSum >= 400 ? ` Эти смерти стоили тебе ${soulsAcc(lostSum)}.` : '')
         + (killerNames.length ? ` Убивали: ${killerNames.join(', ')}.` : ''),
-      context: '«В одиночку» — расчёт по маршрутам героев: в момент смерти ни один живой союзник не был ближе 2 500 единиц карты (≈8 с бега). Расстояние по прямой — оценка; в эпизоде проверь, успевала ли помощь дойти и что было видно на миникарте.',
+      context: '«В одиночку» — расчёт по маршрутам героев: в момент смерти ни один живой союзник не был ближе 2 500 единиц карты (≈8 с бега по прямой), и никто из союзников не погиб рядом за 10 с до этого (тогда это командная драка, а не заход в одиночку). Порог 2 500 — условность, а не граница, найденная в данных. Из этих данных не видно, был ли заход осознанным (сплит-пуш, отвлечение) и успевала ли помощь дойти — проверь в эпизоде.',
       fix: [
         'Не заходи на чужую половину и к Walker без напарника: пока враги живы, фарми рядом с командой или на своей половине.',
         'Фарми вдали от команды — поглядывай на миникарту: соперники пропали — отходи к своим, даже если лагерь не добит.',
@@ -398,18 +419,19 @@ function gameLeaks(c) {
     .filter((d) => d[0] >= LANE_END)
     .map((d) => ({ t: d[0], x: d[1], y: d[2], free: unspentAt(me, d[0], c.assets) }));
   if (lateDeaths.length && lateDeaths.every((d) => Number.isFinite(d.free))) checked('died_rich');
-  const rich = lateDeaths.filter((d) => Number.isFinite(d.free) && d.free >= 3000);
+  const rich = lateDeaths.filter((d) => Number.isFinite(d.free) && d.free >= RICH);
   if (rich.length) {
     out.push({
       key: 'died_rich',
       area: 'Предметы',
-      level: rich.length >= 2 ? 'bad' : 'warn',
+      // связи с победой в реальных матчах нет (доля побед с замечанием и без — одинаковая), поэтому не «bad»
+      level: 'warn',
       score: 30 + rich.length * 10,
       title: 'Возможна покупка перед дракой',
-      text: `По сохранённым покупкам и накопленным душам расчётный остаток перед смертью доходил до ${souls(Math.max(...rich.map((d) => d.free)))}.`,
-      context: 'Это оценка по доступным покупкам. Фактический остаток и возможность добраться до магазина нужно проверить в эпизоде.',
+      text: rich.length > 1 ? `В ${rich.length} ${plural(rich.length, 'смерти', 'смертях', 'смертях')} после 10:00 по расчёту в кармане было не меньше ${souls(RICH)} (максимум — не меньше ${souls(Math.max(...rich.map((d) => d.free)))}).` : `По расчёту перед смертью в кармане было не меньше ${souls(rich[0].free)}.`,
+      context: 'Остаток считается как накопленные души минус цена купленных предметов, без учёта продаж, поэтому реальная сумма обычно больше названной. Мог ли ты дойти до магазина перед боем и стоило ли тратить, из данных не видно — это гипотеза, проверь в эпизоде. В реальных матчах эта привычка не отличает победы от поражений.',
       fix: ['Перед ближайшей дракой проверь, хватает ли на полезный предмет и можно ли безопасно купить его.'],
-      moments: rich.map((d) => ({ t: d.t, x: d.x, y: d.y, text: `расчётный остаток около ${souls(d.free)}` })),
+      moments: rich.map((d) => ({ t: d.t, x: d.x, y: d.y, text: `по расчёту в кармане не меньше ${souls(d.free)}` })),
       cost: { souls: 0 },
     });
   }
@@ -456,6 +478,10 @@ function gameLeaks(c) {
     })).sort((a, b) => b.lost - a.lost || b.deaths.length - a.deaths.length)[0];
     const s0 = worst.deaths[0].t;
     const hadVitality = vitalPurchases.filter(([, bt]) => bt <= s0).length;
+    const spanText = (ds) => {
+      const mins = Math.max(1, Math.round((ds[ds.length - 1].t - ds[0].t) / 60));
+      return `${mins} ${plural(mins, 'минуту', 'минуты', 'минут')}`;
+    };
     const spent = (me.items || [])
       .filter(([id, bt]) => bt >= s0 && bt <= endS && c.assets && c.assets.items && c.assets.items[id] && (c.assets.items[id].cost || 0) >= VITALITY_COST && !vit(id))
       .map(([id, bt]) => ({ id, t: bt }))
@@ -470,7 +496,7 @@ function gameLeaks(c) {
       score: 34 + worst.deaths.length * 6,
       title: 'После серии смертей — без живучести',
       groupTitle: 'Не докупаешь живучесть после серии смертей',
-      text: `С ${T(s0)} ты погиб ${worst.deaths.length} ${plural(worst.deaths.length, 'раз', 'раза', 'раз')} за короткий срок, и до конца игры не купил ни одного предмета живучести от ${N(VITALITY_COST)} душ (${hadVitality ? `к началу серии ${plural(hadVitality, 'такой предмет уже был', 'таких предметов уже было', 'таких предметов уже было')}` : 'таких предметов не было и до серии'}). ${spentText}.`
+      text: `С ${T(s0)} за ${spanText(worst.deaths)} ты погиб ${worst.deaths.length} ${plural(worst.deaths.length, 'раз', 'раза', 'раз')} и до конца игры не купил ни одного предмета живучести от ${N(VITALITY_COST)} душ (${hadVitality ? `к началу серии ${plural(hadVitality, 'такой предмет уже был', 'таких предметов уже было', 'таких предметов уже было')}` : 'таких предметов не было и до серии'}). ${spentText[0].toUpperCase()}${spentText.slice(1)}.`
         + (worst.lost >= 400 ? ` Смерти в серии стоили ${soulsAcc(worst.lost)}.` : ''),
       context: 'Серия смертей и список покупок — факты из данных. Помогла бы живучесть — гипотеза: в повторе проверь, от какого урона умирал (оружие или способности) и было ли окно дойти до магазина. Предмет живучести не предотвращает смерть сам по себе.',
       fix: [
@@ -483,8 +509,7 @@ function gameLeaks(c) {
       ],
       moments: worst.deaths.map((d) => {
         const kp = bySlot.get(d.killer);
-        const parts = [`смерть в ${T(d.t)}`];
-        if (kp) parts.push(`убил ${heroName(kp.hero_id)}`);
+        const parts = [kp ? `убил ${heroName(kp.hero_id)}` : 'смерть'];
         const lost = lostByT.get(d.t);
         if (Number.isFinite(lost) && lost >= 100) parts.push(`−${N(lost)} душ`);
         return { t: d.t, x: d.x, y: d.y, lost: Number.isFinite(lost) ? lost : undefined, text: parts.join(' · ') };
@@ -513,7 +538,7 @@ function gameLeaks(c) {
       if (k < 2 && share < 0.3) continue;
       const list = (c.counters[e.hero_id] || []).slice(0, 3);
       if (!list.length || list.some((x) => myItems.has(x.id))) continue;
-      misses.push({ hero: e.hero_id, kills: k, share, items: list });
+      misses.push({ hero: e.hero_id, slot: e.slot, kills: k, share, items: list });
     }
     if (misses.length) {
       const top = misses.sort((a, b) => b.kills - a.kills || b.share - a.share)[0];
@@ -534,8 +559,10 @@ function gameLeaks(c) {
           'Посмотри в примерах ниже, кто тебя убивал и что против него берут топы. Видишь этого героя у соперников — впиши предмет в сборку заранее.',
           'Ответ не обязательно брать первым: купи его, как только этот герой начал тебя убивать, — обычно к 15–20 минуте.',
         ],
+        context: 'Это статистика покупок игроков топового уровня против этого героя, а не доказанный ответ: из неё не видно, чем именно тебя убивали и успевал ли предмет изменить исход. Проверь в эпизодах, от какого урона ты умирал.',
         extra: { hero: top.hero, kills: top.kills, share: Math.round(top.share * 100) / 100, items: top.items },
-        moments: [],
+        // эпизоды: смерти от этого героя
+        moments: (me.deaths || []).filter((d) => d[3] === top.slot && Number.isFinite(d[0])).map((d) => ({ t: d[0], x: d[1], y: d[2], text: `умер от ${heroName(top.hero)}` })),
         cost: {},
         facts: misses,
       });
@@ -706,7 +733,7 @@ function gameHighlights(c) {
   }
   const st = me.stats || [];
   const lostTotal = st.length && st[st.length - 1].g_lost !== undefined ? st[st.length - 1].g_lost : null;
-  if (lostTotal !== null && me.d >= 4 && lostTotal <= me.d * 60) {
+  if (lostTotal !== null && lostTracked(m) && me.d >= 4 && lostTotal <= me.d * 60) {
     push({
       key: 'souls_safe', area: 'Выживание', score: 30,
       title: 'Умирал «пустым» — души были сохранены',
@@ -783,9 +810,30 @@ function counterItems(records, { minBuys = 12, minRate = 0.1, minLift = 1.5, per
   return out;
 }
 
-function wrFactor(a, b) {
-  if (a === null || b === null) return 1;
-  return Math.max(0.6, Math.min(1.6, 1 + (b - a) * 2));
+// Доля побед с замечанием и без него «в лоб» обманывает: чем больше смертей в матче, тем чаще и
+// поражение, и любое замечание про смерти. Поэтому сравниваем игры с похожим числом смертей
+// (три группы по числу смертей в матче) и усредняем разницу долей побед по группам (веса как у
+// Mantel–Haenszel). Возвращает { diff, n } — разница «с замечанием минус без» (0.1 = +10 п.п.),
+// n — число игр в сравнимых группах; null, если игр мало или число смертей неизвестно.
+function adjustedWrDiff(withL, without, all) {
+  const deaths = all.map((g) => g.d).filter(Number.isFinite).sort((a, b) => a - b);
+  if (deaths.length < 9) return null;
+  const q1 = deaths[Math.floor((deaths.length - 1) / 3)];
+  const q2 = deaths[Math.floor(((deaths.length - 1) * 2) / 3)];
+  const stratum = (g) => (g.d <= q1 ? 0 : g.d <= q2 ? 1 : 2);
+  let num = 0;
+  let den = 0;
+  let used = 0;
+  for (let k = 0; k < 3; k++) {
+    const a = withL.filter((g) => Number.isFinite(g.d) && stratum(g) === k && (g.won === true || g.won === false));
+    const b = without.filter((g) => Number.isFinite(g.d) && stratum(g) === k && (g.won === true || g.won === false));
+    if (a.length < 3 || b.length < 3) continue;
+    const w = (a.length * b.length) / (a.length + b.length);
+    num += w * (a.filter((g) => g.won).length / a.length - b.filter((g) => g.won).length / b.length);
+    den += w;
+    used += a.length + b.length;
+  }
+  return den > 0 && used >= 20 ? { diff: num / den, n: used } : null;
 }
 
 // Общая картина по играм: что повторяется, сколько стоит, как связано с победой.
@@ -810,24 +858,29 @@ function leakProfile(games) {
   const n = counted.length;
   const wr = (list) => {
     const d = list.filter((g) => g.won === true || g.won === false);
-    return d.length >= 3 ? d.filter((g) => g.won).length / d.length : null;
+    return d.length >= MIN_WR_GAMES ? d.filter((g) => g.won).length / d.length : null;
   };
   const rows = [...by.values()].map((e) => {
     const ids = new Set(e.games.map((g) => g.match_id));
     const withL = counted.filter((g) => ids.has(g.match_id));
     const without = counted.filter((g) => !ids.has(g.match_id) && (!g.checked || g.checked.includes(e.key)));
     const eligible = withL.length + without.length;
+    const wrAdj = adjustedWrDiff(withL, without, counted);
+    // влияние на победы берём с поправкой на число смертей; нет поправки — только «в лоб», если игр достаточно
+    const wrRaw = withL.length >= MIN_WR_GAMES && without.length >= MIN_WR_GAMES ? (wr(without) ?? 0) - (wr(withL) ?? 0) : null;
+    const lossLink = wrAdj ? -wrAdj.diff : wrRaw;
     return {
       ...e,
       count: e.games.length,
       eligible,
       unknown: n - eligible,
       share: eligible ? e.games.length / eligible : 0,
-      wrWith: withL.length >= 3 ? wr(withL) : null,
-      wrWithout: without.length >= 3 ? wr(without) : null,
+      wrWith: withL.length >= MIN_WR_GAMES ? wr(withL) : null,
+      wrWithout: without.length >= MIN_WR_GAMES ? wr(without) : null,
+      wrAdj,
       // важность: как часто × насколько серьёзно × бьёт ли по победам именно в твоих играх
       // (с ошибкой выигрываешь реже — важнее; не реже — менее важно; мало игр — без поправки)
-      impact: (e.games.length / Math.max(1, n)) * (e.score / e.games.length) * wrFactor(withL.length >= 3 ? wr(withL) : null, without.length >= 3 ? wr(without) : null),
+      impact: (e.games.length / Math.max(1, n)) * (e.score / e.games.length) * (lossLink === null ? 1 : Math.max(0.6, Math.min(1.6, 1 + lossLink * 2))),
       examples: e.games.slice().sort((a, b) => b.score - a.score).slice(0, 3),
     };
   });
@@ -863,4 +916,4 @@ function winLink(key, value) {
   return { wr: cur[1], best: list[list.length - 1] };
 }
 
-module.exports = { souls, gameLeaks, gameHighlights, leakProfile, counterItems, findFights, lossPerDeath, majorSoulLosses, unspentAt, winLink, benchFor, RANK_BENCH, WIN_LINKS, FIGHT_FAR, FIGHT_REACH, SPEED, SOUL_LOSS_THRESHOLD };
+module.exports = { souls, lostTracked, gameLeaks, gameHighlights, leakProfile, counterItems, findFights, lossPerDeath, majorSoulLosses, unspentAt, winLink, benchFor, RANK_BENCH, WIN_LINKS, FIGHT_FAR, FIGHT_REACH, SPEED, SOUL_LOSS_THRESHOLD };

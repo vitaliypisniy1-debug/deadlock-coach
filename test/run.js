@@ -1591,6 +1591,7 @@ test('survivability purchase: streak of deaths without a vitality item', () => {
   assert.ok(/H26/.test(lk.moments[0].text) && /H27/.test(lk.moments[1].text), 'имена убийц в моментах');
   assert.ok(/Резак/.test(lk.text) && /не в живучесть/.test(lk.text), 'показано, куда ушли души');
   assert.ok(/гипотеза/.test(lk.context), 'помечено как гипотеза, а не факт');
+  assert.ok(/за 4 минуты/.test(lk.text) && !/[.] [а-я]/.test(lk.text), 'серия описана по фактическому сроку, без строчной буквы после точки: ' + lk.text);
   assert.ok(r1.checked.has('survivability_purchase'), 'игра помечена проверяемой');
   assert.ok(!/undefined|NaN/.test(lk.title + lk.text + lk.moments.map((x) => x.text).join('')), 'нет undefined/NaN');
   // серия входит в цель тренера (нужно ≥2 игры с доказательством)
@@ -1920,6 +1921,166 @@ test('solo deaths: fires without allies nearby, hidden without routes', () => {
   assert.ok(Number.isFinite(prof.goal.episode.matchId));
   const soloRow = prof.rows.find((r) => r.key === 'solo_deaths');
   assert.deepStrictEqual([soloRow.count, soloRow.eligible], [2, 3], 'частота среди проверяемых игр');
+});
+
+test('errors audit: absent API data is "no data", not zero (buffs and lost souls)', () => {
+  const L = require('../src/core/leaks');
+  const { playerFeatures: pf } = require('../src/core/features');
+  const { majorSoulLosses } = require('../src/core/leaks');
+  const mk = ({ pus, lost }) => {
+    const players = [];
+    for (let i = 0; i < 12; i++) {
+      const team = i < 6 ? 0 : 1;
+      players.push({ account_id: 1 + i, hero_id: 20 + i, team, slot: i, lane: 1, won: team === 1, k: 0, d: i === 0 ? 3 : 1, a: 0, nw: 20000, items: [],
+        deaths: i === 0 ? [[700, 0, 0, 6, 0, 0], [1000, 0, 0, 6, 0, 0], [1300, 0, 0, 6, 0, 0]] : [], deaths_t: i === 0 ? [700, 1000, 1300] : [],
+        pu: pus[i] || [],
+        stats: [{ t: 540, nw: 6000, d: 0, g_lost: 0, g_brk: 600, g_neutral: 600, k: 0, a: 0 },
+          { t: 1800, nw: 24000, d: i === 0 ? 3 : 1, g_lost: i === 0 ? lost : 0, g_brk: 2600, g_neutral: 4000, k: 0, a: 0 }] });
+    }
+    return { match_id: 77, start_time: 1, duration_s: 1800, players, badge: [52, 52], dmg: { t: [180, 1800], d: {} } };
+  };
+  // бафов нет ни у кого — данных нет: null, а не «0 бафов»
+  const none = mk({ pus: {}, lost: 0 });
+  assert.strictEqual(pf(none.players[0], none, null).pu10, null);
+  assert.strictEqual(pf(none.players[0], none, null).pu20, null);
+  // у соседа бафы есть, у меня нет — это настоящий ноль
+  const some = mk({ pus: { 3: [[400, 'hp'], [500, 'spirit']] }, lost: 0 });
+  assert.strictEqual(pf(some.players[0], some, null).pu10, 0);
+  assert.strictEqual(pf(some.players[3], some, null).pu10, 2);
+  assert.strictEqual(pf(some.players[0], some, null).pu20, 0);
+  // игра без данных о бафах не помечается проверяемой для «таймингов»
+  const chk = new Set();
+  L.gameLeaks({ m: none, me: none.players[0], f: pf(none.players[0], none, null), ref: null, tier: 5, checked: chk, heroName: (x) => `H${x}`, itemName: (x) => `I${x}` });
+  assert.ok(!chk.has('map_timings'), 'нет данных о бафах — тайминги не проверены');
+
+  // потери душ: ноль у всех игроков при трёх смертях — данных нет
+  assert.strictEqual(L.lostTracked(none), false);
+  const f0 = pf(none.players[0], none, null);
+  assert.strictEqual(f0.lostEnd, null);
+  assert.strictEqual(f0.lostPerDeath, null);
+  assert.strictEqual(majorSoulLosses(none.players[0], 1800, undefined, none), null);
+  const c0 = new Set();
+  const l0 = L.gameLeaks({ m: none, me: none.players[0], f: f0, ref: null, tier: 5, checked: c0, heroName: (x) => `H${x}`, itemName: (x) => `I${x}` });
+  assert.ok(!c0.has('lost_souls') && !l0.some((l) => l.key === 'lost_souls'), 'нет данных о потерях — ни «чисто», ни ошибки');
+  assert.ok(!L.gameHighlights({ m: none, me: none.players[0], f: f0, ref: null, tier: 5 }).some((x) => x.key === 'souls_safe'), 'нет данных — не хвалим «умирал пустым»');
+  // данные есть — работает как раньше
+  const real = mk({ pus: {}, lost: 1500 });
+  assert.strictEqual(L.lostTracked(real), true);
+  assert.strictEqual(pf(real.players[0], real, null).lostEnd, 1500);
+  assert.strictEqual(majorSoulLosses(real.players[0], 1800, [{ t: 700, lost: 1100 }, { t: 1000, lost: 200 }, { t: 1300, lost: 200 }], real), 1);
+});
+
+test('errors audit: solo deaths ignore a fight, text says N of M, souls are whole numbers', () => {
+  const L = require('../src/core/leaks');
+  const D = require('../src/core/deaths');
+  const { playerFeatures: pf } = require('../src/core/features');
+  assert.strictEqual(L.souls(379.5), '380 душ');
+  assert.strictEqual(L.souls(1), '1 душа');
+  const step = 5;
+  const mkPath = (fn) => Array.from({ length: 400 }, (_, i) => fn(i * step));
+  const players = [];
+  for (let i = 0; i < 12; i++) {
+    const team = i < 6 ? 0 : 1;
+    players.push({ account_id: 1 + i, hero_id: 20 + i, team, slot: i, lane: 1, won: team === 1, k: 0, d: 0, a: 0, nw: 20000, items: [], deaths: [], deaths_t: [], pu: [],
+      stats: [{ t: 600, nw: 5000, d: 0, g_lost: 0, k: 0, a: 0 }, { t: 1800, nw: 18000, d: 3, g_lost: 1500, k: 0, a: 0 }] });
+  }
+  const me = players[0];
+  me.d = 3;
+  me.deaths = [[1100, 0, 0, 7, 100, 0], [1400, 0, 0, 7, 100, 0], [1700, 0, 0, 7, 100, 0]];
+  me.deaths_t = [1100, 1400, 1700];
+  const far = {};
+  for (const p of players) far[p.slot] = mkPath(() => [p === me ? 0 : 6000, 0, 1, 0, 100]);
+  const m = { match_id: 9100, start_time: 1, duration_s: 1800, players, paths: { step, players: far }, badge: [52, 52], dmg: { t: [180, 600, 1800], d: {} } };
+  const rows = D.soloDeathRows(m, me);
+  assert.strictEqual(rows.length, 3);
+  const lk = L.gameLeaks({ m, me, f: pf(me, m, null), ref: null, tier: 5, heroName: (x) => `H${x}`, itemName: (x) => `I${x}` }).find((l) => l.key === 'solo_deaths');
+  assert.ok(/3 из 3 твоих смертей/.test(lk.text), lk.text);
+  assert.strictEqual(lk.level, 'bad', 'все смерти в одиночку — серьёзно');
+  assert.ok(/условность/.test(lk.context), 'порог назван условностью, а не найденной границей');
+
+  // союзник погиб рядом за 4 секунды до моей смерти — это драка, а не одиночный заход
+  const ally = players[1];
+  ally.deaths = [[1096, 400, 0, 7, 0, 0]];
+  ally.deaths_t = [1096];
+  const fight = { ...far, 1: mkPath((t) => [6000, 0, t < 1095 ? 1 : 0, 0, 100]) };
+  const mf = { ...m, paths: { step, players: fight } };
+  assert.deepStrictEqual(D.soloDeathRows(mf, me).map((r) => r.t), [1400, 1700], 'смерть в бою, где только что погиб союзник, не одиночная');
+  // союзник погиб давно (30 с назад) — смерть по-прежнему одиночная
+  ally.deaths = [[1070, 400, 0, 7, 0, 0]];
+  assert.strictEqual(D.soloDeathRows(mf, me).length, 3);
+  // союзник погиб далеко от места моей смерти — тоже не повод считать её командной
+  ally.deaths = [[1096, 9000, 0, 7, 0, 0]];
+  assert.strictEqual(D.soloDeathRows(mf, me).length, 3);
+
+  // 2 из 5 поздних смертей — «warn», не «bad»
+  ally.deaths = [];
+  me.deaths = [[1100, 0, 0, 7, 100, 0], [1200, 5000, 0, 7, 0, 0], [1300, 5000, 0, 7, 0, 0], [1400, 5000, 0, 7, 0, 0], [1700, 0, 0, 7, 100, 0]];
+  me.d = 5;
+  const mixed = {};
+  for (const p of players) mixed[p.slot] = mkPath(() => [p === me ? 0 : p.team === 0 ? 5000 : 7000, 0, 1, 0, 100]);
+  // союзники стоят в 5 000 от точки (0, 0) и рядом с точкой (5 000, 0) — смерти в (5 000, 0) не одиночные
+  const mw = { ...m, paths: { step, players: mixed } };
+  const lw = L.gameLeaks({ m: mw, me, f: pf(me, mw, null), ref: null, tier: 5, heroName: (x) => `H${x}` }).find((l) => l.key === 'solo_deaths');
+  assert.ok(lw && /2 из 5/.test(lw.text) && lw.level === 'warn', `${lw && lw.text}`);
+});
+
+test('errors audit: win-rate comparison is adjusted for the number of deaths', () => {
+  const L = require('../src/core/leaks');
+  // победа зависит ТОЛЬКО от числа смертей; замечание чаще бывает в играх с большим числом смертей
+  const leak = { key: 'solo_deaths', area: 'Выживание', level: 'warn', title: 'T', text: 'x', fix: [], score: 50, cost: {}, moments: [{ t: 700, text: 'm' }] };
+  const games = [];
+  let id = 0;
+  const add = (d, flagged, won) => games.push({ match_id: ++id, start_time: id, won, hero: 1, d, leaks: flagged ? [leak] : [], checked: ['solo_deaths'] });
+  // 2 смерти: все побеждают; 5: половина; 8: никто. С замечанием: 5 / 15 / 25 игр, без: 25 / 15 / 5
+  for (const [d, nFlag, nNo, winShare] of [[2, 5, 25, 1], [5, 15, 15, 0.5], [8, 25, 5, 0]]) {
+    for (let i = 0; i < nFlag; i++) add(d, true, i < nFlag * winShare);
+    for (let i = 0; i < nNo; i++) add(d, false, i < nNo * winShare);
+  }
+  const row = L.leakProfile(games).rows[0];
+  assert.ok(row.wrWithout - row.wrWith > 0.3, `«в лоб» разница огромная: ${row.wrWith} / ${row.wrWithout}`);
+  assert.ok(row.wrAdj && Math.abs(row.wrAdj.diff) < 0.02, `с поправкой на смерти связи нет: ${row.wrAdj && row.wrAdj.diff}`);
+  assert.ok(Math.abs(row.impact - (row.count / games.length) * 50) < 1e-9, 'влияние не завышено поддельной связью');
+  // настоящая связь (в каждой группе с замечанием проигрывают чаще) — поправка её сохраняет
+  const real = [];
+  let rid = 0;
+  const addR = (d, flagged, won) => real.push({ match_id: ++rid, start_time: rid, won, hero: 1, d, leaks: flagged ? [leak] : [], checked: ['solo_deaths'] });
+  for (const d of [2, 5, 8]) {
+    for (let i = 0; i < 10; i++) addR(d, true, i < 3);
+    for (let i = 0; i < 10; i++) addR(d, false, i < 7);
+  }
+  const rr = L.leakProfile(real).rows[0];
+  assert.ok(rr.wrAdj.diff < -0.35 && rr.wrAdj.diff > -0.45, `настоящая связь сохранена: ${rr.wrAdj.diff}`);
+  assert.ok(rr.impact > (rr.count / real.length) * 50, 'настоящая связь усиливает важность');
+  // число смертей неизвестно — поправки нет, как раньше
+  const noD = games.map(({ d, ...g }) => g);
+  assert.strictEqual(L.leakProfile(noD).rows[0].wrAdj, null);
+});
+
+test('errors audit: died_rich is a lower bound, counter_missing has episodes', () => {
+  const L = require('../src/core/leaks');
+  const { playerFeatures: pf } = require('../src/core/features');
+  const assets = { items: { 12: { id: 12, name: 'Резак', slot: 'weapon', cost: 3000, tier: 3 } } };
+  const players = [];
+  for (let i = 0; i < 12; i++) {
+    const team = i < 6 ? 0 : 1;
+    players.push({ account_id: 1 + i, hero_id: 20 + i, team, slot: i, lane: 1, won: team === 1, k: 0, d: i === 0 ? 2 : 0, a: 0, nw: 20000,
+      items: i === 0 ? [[12, 800, 0, 0]] : [], deaths: i === 0 ? [[1000, 0, 0, 6, 0, 0], [1500, 0, 0, 6, 0, 0]] : [], deaths_t: i === 0 ? [1000, 1500] : [], pu: [],
+      stats: [{ t: 540, nw: 6000, d: 0, g_lost: 0, g_brk: 600, g_neutral: 600, k: 0, a: 0 }, { t: 1800, nw: 30000, d: i === 0 ? 2 : 0, g_lost: 900, g_brk: 2600, g_neutral: 4000, k: 0, a: 0 }] });
+  }
+  const me = players[0];
+  const m = { match_id: 5, start_time: 1, duration_s: 1800, players, badge: [52, 52], dmg: { t: [180, 1800], d: { '6>0': [0, 9000], '7>0': [0, 1000] } } };
+  const counters = { 26: [{ id: 99, lift: 1.9, rateVs: 0.3 }] };
+  const checked = new Set();
+  const leaks = L.gameLeaks({ m, me, f: pf(me, m, assets), ref: null, tier: 5, assets, counters, checked, heroName: (x) => `H${x}`, itemName: (x) => `I${x}` });
+  const rich = leaks.find((l) => l.key === 'died_rich');
+  assert.ok(rich && rich.level === 'warn', 'богатая смерть: предупреждение, не «ошибка»');
+  assert.ok(/не меньше/.test(rich.text) && !/\d[.,]\d/.test(rich.text), `нижняя граница, целые числа: ${rich.text}`);
+  assert.ok(/гипотеза/.test(rich.context));
+  const cm = leaks.find((l) => l.key === 'counter_missing');
+  assert.ok(cm, 'ответа на героя нет');
+  assert.deepStrictEqual(cm.moments.map((x) => x.t), [1000, 1500], 'эпизоды — смерти от этого героя');
+  assert.ok(/статистика/.test(cm.context) && /доказанный/.test(cm.context), 'не выдаём статистику за причину');
+  assert.ok(!/undefined|NaN/.test(JSON.stringify(leaks)));
 });
 
 test('versus: candidates and side by side', () => {

@@ -131,7 +131,7 @@ const CATALOG = [
   },
   {
     key: 'lost_souls', family: 'soulRisk', fmt: N, area: 'Выживание', cmp: 'le', heroSpecific: false,
-    metric: (g) => g.match && g.me ? majorSoulLosses(g.me, g.match.duration_s) : null,
+    metric: (g) => g.match && g.me ? majorSoulLosses(g.me, g.match.duration_s, undefined, g.match) : null,
     title: () => `Ни одной смерти с потерей ${N(SOUL_LOSS_THRESHOLD)} душ или больше`,
     short: 'смерти с крупной потерей душ',
     tip: 'Перед рискованным пушем Walker проверь размер мешка и возможность безопасно отойти или купить предмет.',

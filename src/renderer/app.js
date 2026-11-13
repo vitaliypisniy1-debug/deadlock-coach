@@ -64,6 +64,13 @@
     if (hero && hero.img) return h(`img.hero-ico${cls}`, { src: hero.img, alt: '', loading: 'lazy' });
     return h(`div.hero-ico.ph${cls}`, heroName(id).slice(0, 2));
   }
+  // Арты героя из справочника игры (card — вертикальная карточка, wide — фон) и цвет героя для подсветки.
+  const cssUrl = (u) => (u ? `url("${String(u).replace(/["\\]/g, '')}")` : 'none');
+  const heroArtStyle = (hh) => {
+    if (!hh) return null;
+    const c = Array.isArray(hh.color) && hh.color.length === 3 ? hh.color.join(',') : '255,122,69';
+    return `--art: ${cssUrl(hh.card || hh.img)}; --wide: ${cssUrl(hh.wide || hh.card || hh.img)}; --hc: ${c}`;
+  };
   const heroCardStyle = (id) => {
     const hh = S.assets.heroes[id];
     const src = hh && (hh.card || hh.img);
@@ -1072,6 +1079,7 @@
   function animateView(id) {
     const el = $(`view-${id}`);
     if (!el) return;
+    if (window.FX) { window.FX.enter(el); return; }
     el.classList.remove('enter');
     void el.offsetWidth;
     el.classList.add('enter');
@@ -1286,8 +1294,9 @@
     const order = new Map(mine.map((x, i) => [x.hero_id, i]));
     const list = allHeroes().slice().sort((a, b) => (order.has(a.id) ? order.get(a.id) : 999) - (order.has(b.id) ? order.get(b.id) : 999) || a.name.localeCompare(b.name));
     const sel = new Set(multi ? selected : [selected]);
-    return h('div.hgrid', list.map((x) => h(`button.hpick${sel.has(x.id) ? '.on' : ''}${lane === x.id ? '.lane' : ''}`, { disabled: disabled.has(x.id) || null, onclick: () => onPick(x.id), title: x.name },
-      x.img ? h('img', { src: x.img, alt: '' }) : h('span.ph', x.name.slice(0, 2)),
+    return h('div.hgrid', list.map((x) => h(`button.hpick${sel.has(x.id) ? '.on' : ''}${lane === x.id ? '.lane' : ''}`, { disabled: disabled.has(x.id) || null, onclick: () => onPick(x.id), title: x.name, style: heroArtStyle(x) },
+      (x.card || x.img) ? null : h('span.ph', x.name.slice(0, 2)),
+      x.type ? h('b.cls.' + x.type) : null,
       h('span', x.name),
       lane === x.id ? h('i', 'линия') : null)));
   }
@@ -1913,15 +1922,45 @@
     const deltaText = delta === null ? 'Для сравнения нужно больше матчей с результатом.'
       : `${delta > 0 ? '+' : ''}${delta.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} п. п. к обычному винрейту`;
     const heroRows = h('div.dash-heroes', d.heroes.slice(0, 5).map((x) =>
-      h('button.dash-hero-row', { onclick: () => { setView('myheroes'); openHeroSummary(x.heroId); } },
+      h('button.dash-hero-row', { style: heroArtStyle(S.assets.heroes[x.heroId]), onclick: () => { setView('myheroes'); openHeroSummary(x.heroId); } },
         heroIcon(x.heroId), h('div', h('strong', heroName(x.heroId)), h('div.dash-hero-track', h('span', { style: { width: `${x.games / d.heroes[0].games * 100}%` } }))),
         h('span.muted.small', `${x.games} ${plural(x.games, 'матч', 'матча', 'матчей')} · ${x.wins}–${x.losses}${x.unknown ? ' · без результата: ' + x.unknown : ''}`),
         h('span.num', x.wins + x.losses >= 3 ? F.pct(x.wr) : '—'))));
-    v.replaceChildren(banner, h('div.dash-grid',
+    // --- ключевые цифры: что важнее всего видно сразу ---
+    const wrPct = d.week.wr === null ? null : Math.round(d.week.wr * 100);
+    const tone = delta === null ? '' : delta >= 1 ? 'good' : delta <= -1 ? 'bad' : '';
+    const ring = (pct) => {
+      const r = 34, c = 2 * Math.PI * r;
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 80 80'); svg.setAttribute('class', 'hl-ring'); svg.setAttribute('aria-hidden', 'true');
+      svg.innerHTML = `<circle cx="40" cy="40" r="${r}" class="hl-ring-bg"/><circle cx="40" cy="40" r="${r}" class="hl-ring-fg" stroke-dasharray="${(c * (pct ?? 0) / 100).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 40 40)"/>`;
+      return svg;
+    };
+    const lastRank = d.rank.length ? d.rank.at(-1) : null;
+    const hl = h('div.hl-row',
+      h(`div.hl-tile.feature${tone ? '.' + tone : ''}`,
+        h('div.hl-main',
+          h('div.hl-label', Icon('trending-up'), 'Винрейт за 7 дней'),
+          h('div.hl-value.num', wrPct === null ? '—' : h('span', { 'data-count': String(wrPct), 'data-suffix': '%' }, wrPct + '%')),
+          delta === null ? h('div.hl-sub', 'Мало матчей с результатом для сравнения')
+            : h('div.hl-sub', h(`span.hl-chip${tone ? '.' + tone : ''}`, `${delta > 0 ? '+' : ''}${delta.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} п. п.`), ' к прошлым 30 дням (' + F.pct(d.baseline.wr) + ')')),
+        ring(wrPct)),
+      h('div.hl-tile',
+        h('div.hl-label', Icon('swords'), 'Матчей за неделю'),
+        h('div.hl-value.num', h('span', { 'data-count': String(d.week.games) }, String(d.week.games))),
+        h('div.hl-sub', `${d.week.wins} побед · ${d.week.losses} поражений`)),
+      h('div.hl-tile',
+        h('div.hl-label', Icon('clock'), 'Время в игре'),
+        h('div.hl-value.num', h('span', { 'data-count': String(+d.hours.toFixed(1)), 'data-decimals': '1' }, d.hours.toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 })), h('span.hl-unit', ' ч')),
+        h('div.hl-sub', `${d.heroes.length} ${plural(d.heroes.length, 'герой', 'героя', 'героев')} за неделю`)),
+      h('div.hl-tile',
+        h('div.hl-label', Icon('crown'), 'Ранг'),
+        lastRank ? h('div.hl-rank', rankImg(Math.floor(lastRank.badge / 10), lastRank.badge % 10), h('div.hl-value.sm', badgeLabel(lastRank.badge))) : h('div.hl-value.sm', '—'),
+        h('div.hl-sub', lastRank ? `${d.rank.length} отметок · ${d.season ? 'сезон' : '30 дней'}` : 'Нет отметок')));
+    v.replaceChildren(banner, hl, h('div.dash-grid',
       card('Игры за неделю', h('span.muted.small', `${d.week.games} ${plural(d.week.games, 'матч', 'матча', 'матчей')}`), bars, legend),
       card('Мои герои за неделю', h('button.btn.small', { onclick: () => setView('myheroes') }, 'Все герои', Icon('arrow')),
         d.heroes.length ? heroRows : h('div.muted.dash-empty', 'За неделю пока нет матчей.')),
-      card('Форма за 7 дней', null, h('div.dash-rates', rate(d.week, 'Последние 7 дней'), rate(d.baseline, 'Предыдущие 30 дней')), h('div.hint', deltaText)),
       card('Изменения рейтинга', null, dashboardRank(d.rank, d.season))),
       h('div.dash-footer', h('span.muted.small', model.error ? `История недоступна · ${model.error}`
         : model.loading ? 'Проверяю свежие матчи…' : d.source === 'saved' ? 'Показаны сохранённые матчи' : 'По доступной истории Deadlock API'),
@@ -2345,7 +2384,7 @@
   function heroModeArea() {
     if (S.my.heroesLoading && !S.my.heroes) return h('div.panel', h('div.row', h('span.spin'), 'Собираю твоих героев…'));
     if (!S.my.heroes || !S.my.heroes.length) return h('div.empty', h('strong', 'Пока нет игр'), 'Сыграй пару матчей — и здесь появится сводка по каждому твоему герою.');
-    const picker = h('div.hero-picker', S.my.heroes.map((x) => h(`button.hero-pick${S.my.hero === x.hero_id ? '.on' : ''}`, { onclick: () => openHeroSummary(x.hero_id), title: x.topGames ? `Игр топов на этом герое: ${x.topGames}` : 'Игр топов на этом герое пока нет' },
+    const picker = h('div.hero-picker', S.my.heroes.map((x) => h(`button.hero-pick${S.my.hero === x.hero_id ? '.on' : ''}`, { style: heroArtStyle(S.assets.heroes[x.hero_id]), onclick: () => openHeroSummary(x.hero_id), title: x.topGames ? `Игр топов на этом герое: ${x.topGames}` : 'Игр топов на этом герое пока нет' },
       heroIcon(x.hero_id),
       h('span.hero-pick-name', heroName(x.hero_id)),
       h('span.hero-pick-meta.num', `${x.games} · ${x.games ? Math.round((x.wins / x.games) * 100) : 0}%`))));
@@ -2945,7 +2984,7 @@
     // ---------- главное сейчас ----------
     const top = rows[0];
     const goal = d.profile.goal;
-    const nextGoal = goal ? h('section.panel', h('h2', 'Цель на следующий матч'), h('b', goal.title),
+    const nextGoal = goal ? h('section.panel.kraft', h('h2', 'Цель на следующий матч'), h('b', goal.title),
       h('p', goal.action), h('div.hint', goal.check),
       h('div.hint', `Основание — «${goal.reason}» в ${goal.count} из ${goal.eligible} матчей, которые можно было проверить.`),
       h('div.row',

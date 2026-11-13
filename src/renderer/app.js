@@ -61,8 +61,8 @@
   const itemName = (id) => (S.assets.items[id] ? S.assets.items[id].name : `Предмет ${id}`);
   function heroIcon(id, cls = '') {
     const hero = S.assets.heroes[id];
-    // крупные портреты — арт героя, в списках и таблицах — свой герб героя (см. crest.js)
-    if (hero && /(lg|xl)/.test(cls) && (hero.card || hero.img)) return h(`div.hero-ico.art${cls}`, { style: heroArtStyle(hero), role: 'img', 'aria-label': heroName(id) });
+    // везде арт героя из справочника игры; герб (crest.js) только если арта нет
+    if (hero && (hero.card || hero.img)) return h(`div.hero-ico.art${cls}`, { style: heroArtStyle(hero), role: 'img', 'aria-label': heroName(id) });
     if (hero && window.HeroCrest) return h(`div.hero-ico.crest${cls}`, { html: window.HeroCrest(hero), role: 'img', 'aria-label': heroName(id) });
     return h(`div.hero-ico.ph${cls}`, heroName(id).slice(0, 2));
   }

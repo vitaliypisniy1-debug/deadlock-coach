@@ -32,6 +32,7 @@ const { heroPool, pickAdvice, gamePlan, buildPickMeta, heroRole, RANKED_HERO_RUL
 const { counterCodex } = require('../core/counters');
 const { buildHeroMeta, windows: metaWindows, topHeroGames, ladderAccounts, DAY: META_DAY } = require('../core/metashift');
 const { buildHeroProfile } = require('../core/heroProfile');
+const { computeLift } = require('../core/lift');
 const { RULES } = require('../core/counterRules');
 const codexData = require('../core/data/codexData.json');
 const { matchBuild, buildText, buildFile } = require('../core/buildExport');
@@ -1559,13 +1560,52 @@ class Sync {
       }
       pool = await this._codexPool.job;
     }
-    const prof = await this.heroBuildProfile(X, pm);
-    const res = counterCodex(X, { pm, table, assets: this.assets, pool, stale: stale && !!pm, profile: prof.profile });
+    const [prof, lift] = await Promise.all([this.heroBuildProfile(X, pm), this.heroLift(X)]);
+    const res = counterCodex(X, { pm, table, assets: this.assets, pool, stale: stale && !!pm, profile: prof.profile, lift });
     if (pmError) res.meta.error = pmError;
     if (prof.error) res.meta.profileError = prof.error;
     if (prof.at) res.meta.profileAt = prof.at;
     this._codexCache = { X, pmKey: pmKey(pm), tKey, res };
     return res;
+  }
+
+  // Lift контрпредметов против героя X (порог игр, интервал и пояснения — src/core/lift.js).
+  // Запросов немного: базовая линия (винрейты предметов во всех играх окна) — один на всех героев,
+  // кэш 12 часов; на героя — один запрос, кэш 6 часов в файле. При сбое сети берём сохранённое с датой.
+  // Окно 14 дней, ранг Оракул 1+, рейтинг: именно на этом окне проверена устойчивость порогов.
+  async heroLift(X) {
+    const DAY = 86400;
+    const HOUR6 = 6 * 3600;
+    const since = Math.floor(Date.now() / 1000 / HOUR6) * HOUR6 - 14 * DAY; // ступенька в 6 часов — стабильный ключ кэша
+    const badge = 81;
+    const lim = (p) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('таймаут 10 с')), 10000))]);
+    const slim = (rows) => (Array.isArray(rows) ? rows : []).filter((r) => r.item_id && r.matches > 0 && (r.bucket === 0 || r.bucket === undefined)).map((r) => ({ item_id: r.item_id, wins: r.wins, matches: r.matches, bucket: 0 }));
+    const load = async (key, ttl, fetcher) => {
+      const cached = this.store.read(key, null);
+      const fresh = cached && Array.isArray(cached.rows) && cached.badge === badge && Date.now() - cached.at < ttl;
+      if (fresh) return { rows: cached.rows, at: cached.at, since: cached.since, error: null, stale: false };
+      try {
+        if (typeof this.api.itemStatsAnalytics !== 'function') throw new Error('метод недоступен');
+        const rows = slim(await lim(fetcher()));
+        if (!rows.length) throw new Error('API не вернул данных');
+        const out = { at: Date.now(), since, badge, rows };
+        this.store.write(key, out);
+        return { rows, at: out.at, since, error: null, stale: false };
+      } catch (e) {
+        if (cached && Array.isArray(cached.rows)) return { rows: cached.rows, at: cached.at, since: cached.since, error: e.message, stale: true };
+        return { rows: null, at: null, since, error: e.message, stale: false };
+      }
+    };
+    this._liftBase = this._liftBase || {};
+    const baseJob = this._liftBase.job && Date.now() - this._liftBase.t < 60e3 ? this._liftBase.job : (this._liftBase = { t: Date.now(), job: load('codexlift-base.json', 12 * 3600e3, () => this.api.itemStatsAnalytics({ since, badge })) }).job;
+    const [base, enemy] = await Promise.all([baseJob, load(`codexlift-${X}.json`, 6 * 3600e3, () => this.api.itemStatsAnalytics({ enemyId: X, since, badge }))]);
+    const meta = {
+      since: enemy.since || base.since || since, days: 14, badge, rank: 'Оракул 1+', mode: 'рейтинговые',
+      at: enemy.at && base.at ? Math.min(enemy.at, base.at) : enemy.at || base.at,
+      error: enemy.error || base.error || null, stale: !!(enemy.stale || base.stale),
+    };
+    if (!enemy.rows || !base.rows) return { result: null, meta };
+    return { result: computeLift(enemy.rows, base.rows), meta };
   }
 
   // Профиль покупок героя для справочника контрпиков: что на нём обычно собирают.

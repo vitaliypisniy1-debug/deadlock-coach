@@ -2007,6 +2007,47 @@ test('counter advice: from hero threats and build profile, no weak recommendatio
   }
 });
 
+test('item lift: thresholds, hero-strength correction, noise, missing data', () => {
+  const { computeLift, MIN_GAMES, MIN_EFFECT } = require('../src/core/lift');
+  const C = require('../src/core/counters');
+  assert.strictEqual(MIN_GAMES, 1000);
+  assert.strictEqual(MIN_EFFECT, 0.015);
+  const row = (id, n, w) => ({ item_id: id, matches: n, wins: Math.round(n * w), bucket: 0 });
+  const base = [1, 2, 3, 4, 5].map((id) => row(id, 200000, 0.5));
+  // 1) мало игр: даже огромная разница без числа; 2) шум; 3) подтверждено; 4) предупреждение; 5) значимо, но меньше 1,5 п.п.
+  const enemy = [row(1, 999, 0.7), row(2, 3000, 0.51), row(3, 6000, 0.6), row(4, 6000, 0.4), row(5, 400000, 0.5)];
+  const r = computeLift(enemy, base);
+  const st = (id) => r.byItem.get(id);
+  assert.strictEqual(st(1).status, 'few', 'меньше 1000 игр — мало данных');
+  assert.strictEqual(st(2).status, 'none', 'разница 1 п.п. при 3000 играх — в пределах шума');
+  assert.strictEqual(st(3).status, 'confirmed');
+  assert.ok(st(3).lo > 0 && st(3).lift > 0.015, 'интервал выше нуля и разница не меньше 1,5 п.п.');
+  assert.strictEqual(st(4).status, 'warning', 'значимо хуже — предупреждение');
+  assert.ok(st(4).hi < 0 && st(4).lift < -0.015);
+  assert.ok(Math.abs(st(5).lift) < 0.015 && st(5).status === 'none', 'много игр, но разница меньше порога — без числа');
+  // 6) поправка на силу героя: против слабого героя все предметы выигрывают на 4 п.п. чаще — это не lift предмета
+  const weak = [1, 2, 3, 4, 5].map((id) => row(id, 20000, 0.54));
+  const rw = computeLift(weak, base);
+  assert.ok(Math.abs(rw.shift - 0.04) < 0.002, 'сдвиг от силы героя найден');
+  for (const id of [1, 2, 3, 4, 5]) assert.strictEqual(rw.byItem.get(id).status, 'none', 'без поправки это выглядело бы как подтверждённый lift');
+  // 7) нет данных: пусто, предмет без базовой линии отсутствует
+  assert.strictEqual(computeLift([], base).games, 0);
+  assert.strictEqual(computeLift(null, null).byItem.size, 0);
+  assert.ok(!computeLift([row(99, 5000, 0.6)], base).byItem.has(99), 'нет базовой линии — нет lift');
+  // 8) в ответе справочника: без данных числа нет, поле явно null и сказано, что Lift недоступен
+  const codex = require('../src/core/data/codexData.json');
+  const noLift = C.counterItemsFor(6, {});
+  assert.ok(noLift.recommended.length && noLift.recommended.every((i) => i.lift === null), 'нет данных — нет числа');
+  assert.strictEqual(noLift.liftInfo.available, false);
+  // 9) порядок рекомендаций от Lift не зависит
+  const ids = noLift.recommended.map((i) => codex.items[i.name].id);
+  const fake = computeLift(ids.map((id, k) => row(id, 5000, 0.5 + 0.02 * (k % 3))), ids.map((id) => row(id, 100000, 0.5)));
+  const withLift = C.counterItemsFor(6, { lift: { result: fake, meta: {} } });
+  assert.deepStrictEqual(withLift.recommended.map((i) => i.name), noLift.recommended.map((i) => i.name), 'Lift не меняет порядок');
+  assert.ok(withLift.recommended.every((i) => i.lift && ['confirmed', 'warning', 'none', 'few'].includes(i.lift.status)));
+  for (const i of withLift.recommended) assert.strictEqual(i.lift.numbers, i.lift.status === 'confirmed' || i.lift.status === 'warning', 'числа только при подтверждённой разнице');
+});
+
 test('measured self-healing per hero drives anti-heal advice', () => {
   const C = require('../src/core/counters');
   const heal = require('../src/core/data/heroHealing.json');
@@ -2061,12 +2102,23 @@ test('codex lookup: no network on hero switch, saved data on failure', () => wit
     items: { 2: { id: 2, name: 'Toxic Bullets', cost: 1250, tier: 3, slot: 'weapon' } } });
   let calls = 0;
   let profileCalls = 0;
+  let liftCalls = 0;
+  let failLift = false;
   let failProfile = false;
   const codexItems = require('../src/core/data/codexData.json').items;
   const api = {
     // профиль покупок героя: окно после патча (hero-stats) и покупки (item-stats)
     heroStatsAnalytics: async ({ since } = {}) => (since === require('../src/core/counterRules').RULES.patchSince ? [{ hero_id: 5, matches: 5000 }, { hero_id: 6, matches: 5000 }] : (calls++, [])),
-    itemStatsAnalytics: async ({ heroId }) => {
+    itemStatsAnalytics: async ({ heroId, enemyId }) => {
+      if (!heroId) {
+        // Lift: базовая линия (без героя) и «против героя»: Rebuttal выигрывает против героя заметно чаще обычного
+        liftCalls++;
+        if (failLift) throw new Error('offline');
+        const R = codexItems['Rebuttal'].id, H = codexItems['Healbane'].id, T = codexItems['Toxic Bullets'].id;
+        return enemyId
+          ? [{ item_id: R, wins: 1800, matches: 3000, bucket: 0 }, { item_id: H, wins: 1500, matches: 3000, bucket: 0 }, { item_id: T, wins: 1500, matches: 3000, bucket: 0 }]
+          : [{ item_id: R, wins: 5000, matches: 10000, bucket: 0 }, { item_id: H, wins: 5000, matches: 10000, bucket: 0 }, { item_id: T, wins: 5000, matches: 10000, bucket: 0 }];
+      }
       profileCalls++;
       if (failProfile) throw new Error('offline');
       return [{ item_id: codexItems['Rebuttal'].id, matches: 4000, bucket: 0 }, { item_id: codexItems['Healbane'].id, matches: 100, bucket: 0 }];
@@ -2093,11 +2145,21 @@ test('codex lookup: no network on hero switch, saved data on failure', () => wit
   assert.ok(a.items.profile && a.items.profile.games === 5000 && a.items.profile.since > 1000, 'профиль построен по окну после патча');
   assert.strictEqual(a.items.profile.top[0].name, 'Rebuttal', 'в профиле — частая покупка');
   // профиль сохранён в файле: новый Sync без сети берёт его из кэша
+  // Lift: базовая линия одна на всех героев (3 запроса: база + два героя), у Abrams (6) — подтверждённая разница у Rebuttal
+  assert.strictEqual(liftCalls, 3, 'Lift: база один раз и по запросу на героя');
+  assert.ok(b.items.liftInfo.available && b.items.liftInfo.days === 14 && b.items.liftInfo.minGames === 1000, 'окно и порог Lift переданы');
+  const reb = b.items.recommended.find((x) => x.name === 'Rebuttal');
+  assert.ok(reb && reb.lift.status === 'confirmed' && reb.lift.numbers && reb.lift.liftPp >= 1.5 && reb.lift.loPp > 0, 'Rebuttal: выигрывали чаще обычного, интервал выше нуля');
+  const hb = b.items.recommended.find((x) => x.name === 'Healbane');
+  assert.ok(hb && hb.lift.status === 'warning' && hb.lift.numbers && hb.lift.liftPp <= -1.5 && hb.lift.hiPp < 0 && /реже/.test(hb.lift.label), 'Healbane: значимо хуже среднего предмета против героя — предупреждение');
   failProfile = true;
+  failLift = true;
   const sync3 = new Sync({ store, api });
   const d3 = await sync3.codexLookup(null, 5);
   assert.ok(d3.items.profile && !d3.meta.profileError, 'свежий кэш профиля — без запроса');
   assert.strictEqual(profileCalls, 2, 'кэш профиля не вызвал сеть');
+  assert.strictEqual(liftCalls, 3, 'кэш Lift не вызвал сеть');
+  assert.ok(d3.items.liftInfo.available && !d3.meta.liftError, 'свежий кэш Lift');
   failProfile = false;
 
   // устаревшая мета + сбой сети: показываем сохранённые данные с датой и ошибкой

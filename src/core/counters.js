@@ -18,6 +18,7 @@ const { RULES, threatLabel } = require('./counterRules');
 const TABLE = safeRequire('./data/heroThreats.json');
 const CODEX = safeRequire('./data/codexData.json');
 const HEAL = safeRequire('./data/heroHealing.json');
+const { liftLabel, MIN_GAMES, MIN_EFFECT } = require('./lift');
 
 function safeRequire(p) {
   try { return require(p); } catch { return null; }
@@ -198,7 +199,7 @@ function recommendItems(hero, profile, heal = null) {
 
 // Контрпредметы против выбранного врага.
 // table — counterTable(): { hero: [{ id, lift, rateVs }] } из покупок топов (наблюдение, не доказательство).
-function counterItemsFor(enemyId, { table = {}, assets = null, profile = null } = {}) {
+function counterItemsFor(enemyId, { table = {}, assets = null, profile = null, lift = null } = {}) {
   const X = Number(enemyId);
   const item = (id) => (assets && assets.items && assets.items[id]) || null;
   const purchases = (table[X] || []).map((r) => {
@@ -215,11 +216,20 @@ function counterItemsFor(enemyId, { table = {}, assets = null, profile = null } 
   const hero = TABLE && TABLE.heroes && TABLE.heroes[X];
   const heal = hero && HEAL && HEAL.heroes ? HEAL.heroes[X] || null : null;
   const rec = hero ? recommendItems(hero, profile, heal) : { items: [], threats: [] };
+  // Lift: статистическое подтверждение рекомендации (порядок не меняет). lift = { result, meta } из sync.heroLift.
+  const res = lift && lift.result ? lift.result : null;
+  for (const i of rec.items) {
+    const id = CODEX.items[i.name].id;
+    const s = res ? res.byItem.get(id) || { status: 'few', n: 0 } : null;
+    const lab = s ? liftLabel(s) : null;
+    i.lift = s ? { status: s.status, n: s.n, label: lab.text, numbers: lab.numbers, ...(lab.numbers ? { liftPp: Math.round(s.lift * 1000) / 10, loPp: Math.round(s.lo * 1000) / 10, hiPp: Math.round(s.hi * 1000) / 10, wr: Math.round(s.wr * 1000) / 10, baseWr: Math.round(s.baseWr * 1000) / 10 } : {}) } : null;
+  }
   return {
     purchases,
     recommended: rec.items,
     threats: rec.threats,
     verified: !!hero,
+    liftInfo: lift ? { available: !!res, shiftPp: res ? Math.round(res.shift * 1000) / 10 : null, games: res ? res.games : 0, minGames: MIN_GAMES, minEffectPp: MIN_EFFECT * 100, ...(lift.meta || {}) } : { available: false, minGames: MIN_GAMES, minEffectPp: MIN_EFFECT * 100 },
     healing: heal ? { ...heal, of: HEAL.heroesCount, since: HEAL.since, medianPerMinute: HEAL.medianPerMinute } : null,
     abilities: hero ? hero.abilities.map((a) => ({ slot: a.slot, name: a.name, damage: a.damage, cc: a.cc || [], note: a.note })) : null,
     profile: profile ? { games: profile.games, small: profile.small, top: profile.top, slotShare: profile.slotShare, since: profile.since || null } : null,
@@ -229,10 +239,10 @@ function counterItemsFor(enemyId, { table = {}, assets = null, profile = null } 
 
 // Полный ответ справочника по одному врагу. Результат помечен enemy — при смене героя во время
 // запроса интерфейс сверяет метку и не подменяет данные.
-function counterCodex(enemyId, { pm = null, table = {}, assets = null, pool = [], stale = false, profile = null } = {}) {
+function counterCodex(enemyId, { pm = null, table = {}, assets = null, pool = [], stale = false, profile = null, lift = null } = {}) {
   const X = Number(enemyId);
   const picks = counterPicks(X, { pm, pool });
-  const items = counterItemsFor(X, { table, assets, profile });
+  const items = counterItemsFor(X, { table, assets, profile, lift });
   const age = pm && pm.at ? Math.round((Date.now() - pm.at) / 60000) : null;
   return {
     enemy: X,

@@ -1816,6 +1816,16 @@
     // ---------- что купить ----------
     const items = d.items || {};
     const hr = d.heroRule;
+    // Lift: статистическое подтверждение рекомендации (числа — только при ≥1 000 игр, интервале без нуля и разнице от 1,5 п.п.)
+    const li = items.liftInfo || {};
+    const sgn = (v) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1)}`;
+    const liftRow = (l) => (!l ? null
+      : l.numbers ? h('div.small', { style: { margin: '2px 0' } }, `Статистика: ${l.status === 'confirmed' ? 'с этим предметом против него выигрывали чаще' : 'предупреждение: с этим предметом против него выигрывали реже'} — ${sgn(l.liftPp)} п.п. к обычному (99% интервал ${sgn(l.loPp)}…${sgn(l.hiPp)}), ${l.n} ${plural(l.n, 'игра', 'игры', 'игр')}.`)
+        : l.status === 'few' ? h('div.small', { style: { margin: '2px 0' } }, h('span.pill.low', 'мало данных'), ` Меньше ${li.minGames} игр против него — числа нет.`)
+          : h('div.dim.small', { style: { margin: '2px 0' } }, 'Статистика: не подтверждено — разница в пределах шума.'));
+    const liftNote = li.available
+      ? h('div.hint', `Lift — разница между винрейтом игроков с предметом против ${heroName(enemy)} и обычным винрейтом этого предмета (с поправкой на силу самого героя). Окно ${li.days} дней, ${li.mode}, ранг ${li.rank}${li.at ? `, данные от ${new Date(li.at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'numeric' })}` : ''}${li.stale ? ' (сохранённые — обновить не удалось: ' + li.error + ')' : ''}. Это связь, а не причина: предмет часто берут те, кто уже выигрывает, и против героя собирают целый набор. Он подтверждает механику, но порядок советов не определяет.`)
+      : h('div.hint', `Статистика Lift недоступна${li.error ? ' (' + li.error + ')' : ''} — советы основаны на способностях героя.`);
     // рекомендации из угроз героя: у каждой — причины, источник и ограничения
     const mechRows = (items.recommended || []).map((x) => h('div.codex-item',
       h('div.row', { style: { alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
@@ -1823,6 +1833,7 @@
         h('b', x.name),
         h('span.muted.small', `${x.cost} душ · ${x.slot === 'vitality' ? 'Живучесть' : x.slot === 'spirit' ? 'Дух' : x.slot === 'weapon' ? 'Оружие' : ''} T${x.tier}`)),
       h('div', { style: { margin: '4px 0' } }, `Почему: ${x.why.join('; ')}.`),
+      liftRow(x.lift),
       h('details', h('summary', 'Как работает предмет'), h('div.codex-detail', h('div', h('b', 'Эффект: '), x.text), h('div', h('b', 'Полезен: '), x.goodVs), h('div', h('b', 'Не решит: '), x.notEnough), h('div.dim.small', `Источник: ${x.src}`)))));
     const prof = items.profile;
     const profLine = prof && prof.top && prof.top.length
@@ -1844,7 +1855,7 @@
         h('ul.codex-threats', hr.threats.map((t) => h('li', t.text || t))),
         profLine)
         : h('div.hint', `Механики ${heroName(enemy)} не проверены — рекомендации ниже основаны только на покупках топов и статистике. Универсальных советов не показываю.`),
-      mechRows.length ? h('div', { style: { marginBottom: '12px' } }, h('h3', `Что купить по угрозам ${heroName(enemy)}`), mechRows) : null,
+      mechRows.length ? h('div', { style: { marginBottom: '12px' } }, h('h3', `Что купить по угрозам ${heroName(enemy)}`), liftNote, mechRows) : null,
       buyRows.length ? h('div', h('h3', 'По покупкам топов'), h('div.hint', `Предметы, которые в матчах топового уровня против ${heroName(enemy)} берут минимум в 1.5 раза чаще, чем на тех же героях без него. Это наблюдение, а не доказательство: покупка может быть ответом на весь состав соперника, а дорогие предметы чаще встречаются в длинных играх.`), buyRows) : null,
       !mechRows.length && !buyRows.length ? h('div.muted', 'Надёжных контрпредметов пока нет: покупок против этого героя в матчах топов меньше порога (нужно ≥60 игр с обеих сторон), а механика из файлов игры не подтверждена.') : null);
     parts.push(itemPanel);

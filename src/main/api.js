@@ -290,8 +290,12 @@ class Api {
 
   // Покупки на одном герое (для профиля сборки в справочнике контрпиков):
   // доля матчей героя с покупкой каждого предмета, игры normal, минимальный средний ранг матча.
-  itemStatsAnalytics({ heroId, since, badge }) {
-    const q = [`hero_id=${Number(heroId)}`, 'game_mode=normal', `min_average_badge=${badge}`, `min_unix_timestamp=${since}`];
+  // enemyId — «против героя X»: покупки игроков, чья команда играет против него (для Lift в справочнике);
+  // без heroId и enemyId — базовая линия: винрейт каждого предмета во всех играх окна.
+  itemStatsAnalytics({ heroId = null, enemyId = null, since, badge }) {
+    const q = ['game_mode=normal', 'match_mode=ranked', `min_average_badge=${badge}`, `min_unix_timestamp=${since}`];
+    if (heroId) q.unshift(`hero_id=${Number(heroId)}`);
+    if (enemyId) q.unshift(`enemy_hero_ids=${Number(enemyId)}`);
     return this.get(`/v1/analytics/item-stats?${q.join('&')}`, { ttlMs: 3 * 3600e3 }).then((r) => (Array.isArray(r) ? r : []));
   }
 

@@ -2,6 +2,7 @@
 // Режим 1: статистика топ-игроков — пики, винрейты, частые билды.
 
 const { median, wilson } = require('./stats');
+const { sampleStatus } = require('./metashift');
 
 // Режимы матча в игре (ECitadelMatchMode): 1 обычный, 4 рейтинговый,
 // 2 приватное лобби, 3 боты, 5 тест, 6 обучение, 7 лаборатория героев.
@@ -83,7 +84,9 @@ function heroTable(records) {
       pick_share: list.length / total,
       players: players.size,
       kda,
-      lowSample: list.length < 10,
+      // единый порог выборки с мета-таблицей по API: меньше 300 игр — «мало данных»
+      status: sampleStatus(list.length),
+      lowSample: sampleStatus(list.length) === 'low',
     });
   }
   rows.sort((a, b) => b.games - a.games);

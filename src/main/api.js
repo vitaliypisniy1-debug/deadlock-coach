@@ -295,6 +295,31 @@ class Api {
     return this.get(`/v1/analytics/item-stats?${q.join('&')}`, { ttlMs: 3 * 3600e3 }).then((r) => (Array.isArray(r) ? r : []));
   }
 
+  // Мета героев: готовая статистика по всем матчам ранга, суточные корзины между from и to (unix, to не входит).
+  // game_mode=normal, match_mode=ranked, минимальный средний ранг матча badge (91 = Фантом 1).
+  heroStatsDaily({ from, to, badge }) {
+    const q = ['game_mode=normal', 'match_mode=ranked', 'bucket=start_time_day', `min_average_badge=${badge}`, `min_unix_timestamp=${from}`, `max_unix_timestamp=${to - 1}`];
+    return this.get(`/v1/analytics/hero-stats?${q.join('&')}`, { ttlMs: 30 * 60e3 }).then((r) => (Array.isArray(r) ? r : []));
+  }
+
+  // Баны по суткам: у API нет game_mode, только режим матча; в ранговых матчах банов 4 (до сезона 2 было 3).
+  heroBansDaily({ from, to, badge }) {
+    const q = ['match_mode=ranked', 'bucket=start_time_day', `min_average_badge=${badge}`, `min_unix_timestamp=${from}`, `max_unix_timestamp=${to - 1}`];
+    return this.get(`/v1/analytics/hero-ban-stats?${q.join('&')}`, { ttlMs: 30 * 60e3 }).then((r) => (Array.isArray(r) ? r : []));
+  }
+
+  // Список обновлений и новостей Steam (название и дата) — только чтобы пометить окна меты.
+  patches() {
+    return this.get('/v2/patches', { ttlMs: 6 * 3600e3 }).then((r) => (Array.isArray(r) ? r : (r && r.patches) || []));
+  }
+
+  // Матчи заданных игроков на одном герое за период (только их строки в players).
+  topHeroMatches({ accountIds, heroId, since, limit = 100 }) {
+    const q = ['include_info=true', 'include_player_info=true', 'only_filtered_players=true', 'game_mode=normal', `hero_ids=${Number(heroId)}`,
+      `min_unix_timestamp=${since}`, 'order_by=start_time', 'order_direction=desc', `limit=${limit}`, `account_ids=${accountIds.join(',')}`];
+    return this.get(`/v1/matches/metadata?${q.join('&')}`, { ttlMs: 30 * 60e3 }).then((r) => (Array.isArray(r) ? r : []));
+  }
+
   ingestSalts(records) {
     return this.post('/v1/matches/salts', records);
   }

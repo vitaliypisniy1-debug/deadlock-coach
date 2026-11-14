@@ -2540,6 +2540,82 @@ test('versus: candidates and side by side', () => {
   assert.strictEqual(v.me.sources[0].rows.length, 7);
 });
 
+require('./metashift')(test);
+
+test('hero meta: loaded from the API once an hour, saved result with date on network failure, error without a save', () => withStoreDir(async (dir) => {
+  const { Sync } = require('../src/main/sync');
+  const MS = require('../src/core/metashift');
+  const store = new Store(dir);
+  const win = MS.windows(Math.floor(Date.now() / 1000));
+  const rows = [];
+  for (let i = 0; i < 14; i++) {
+    rows.push({ bucket: win.prev.from + i * MS.DAY, hero_id: 1, matches: 3000, wins: 1500 });
+    rows.push({ bucket: win.cur.from + i * MS.DAY, hero_id: 1, matches: 3000, wins: 1800 });
+    rows.push({ bucket: win.cur.from + i * MS.DAY, hero_id: 2, matches: 3000, wins: 1500 });
+    rows.push({ bucket: win.prev.from + i * MS.DAY, hero_id: 2, matches: 3000, wins: 1500 });
+  }
+  const calls = { stats: 0, bans: 0, patches: 0 };
+  let down = false;
+  const api = {
+    heroStatsDaily: async ({ badge }) => { calls.stats++; if (down) throw new Error('Нет связи'); assert.ok(badge === 91 || badge === 81); return rows; },
+    heroBansDaily: async () => { calls.bans++; throw new Error('ban-stats 500'); },
+    patches: async () => { calls.patches++; return []; },
+  };
+  const sync = new Sync({ store, api });
+  await assert.rejects(() => (async () => { down = true; try { return await sync.heroMeta({ force: true }); } finally { down = false; } })(), /Нет связи/, 'без сохранённого результата ошибка доходит до экрана');
+  const first = await sync.heroMeta();
+  assert.strictEqual(first.stale, false);
+  assert.strictEqual(first.heroes.find((x) => x.hero_id === 1).wrShift.verdict, 'up');
+  assert.strictEqual(first.bans.available, false, 'баны не загрузились — блок скрыт с причиной');
+  assert.ok(/не загрузились/.test(first.bans.reason));
+  assert.ok(store.read('heroshift.json', null).at > 0, 'результат сохранён в профиль');
+  const before = calls.stats;
+  const again = await sync.heroMeta();
+  assert.strictEqual(calls.stats, before, 'в течение часа повторный запрос не уходит в сеть');
+  assert.strictEqual(again.stale, false);
+  down = true;
+  const saved = await sync.heroMeta({ force: true });
+  assert.strictEqual(saved.stale, true);
+  assert.ok(/Нет связи/.test(saved.error) && saved.at === first.at, 'показано сохранённое с прежней датой');
+  assert.strictEqual(saved.heroes.length, first.heroes.length);
+}));
+
+test('hero top games: one request for the top ladder players, saved list on network failure', () => withStoreDir(async (dir) => {
+  const { Sync } = require('../src/main/sync');
+  const store = new Store(dir);
+  const now = Math.floor(Date.now() / 1000);
+  const iso = (t) => new Date(t * 1000).toISOString().replace('T', ' ').slice(0, 19);
+  let down = false;
+  let requests = 0;
+  let asked = null;
+  const api = {
+    leaderboard: async () => [
+      { rank: 1, account_name: 'Один', possible_account_ids: [101] },
+      { rank: 2, account_name: 'Двое', possible_account_ids: [102, 103] },
+    ],
+    topHeroMatches: async (q) => {
+      requests++;
+      asked = q;
+      if (down) throw new Error('Нет связи');
+      return [{ match_id: 7, start_time: iso(now - 3600), duration_s: 1700, winning_team: 'Team0', players: [{ account_id: 101, hero_id: 13, team: 'Team0', kills: 4, deaths: 2, assists: 6, net_worth: 25000 }] }];
+    },
+  };
+  const sync = new Sync({ store, api });
+  const settings = { region: 'Europe' };
+  const r = await sync.heroTopGames(13, settings);
+  assert.deepStrictEqual(asked.accountIds, [101], 'в запрос уходят только однозначные аккаунты');
+  assert.strictEqual(asked.heroId, 13);
+  assert.deepStrictEqual([r.summary.games, r.summary.wins, r.ladder.resolved, r.ladder.entries, r.stale], [1, 1, 1, 2, false]);
+  await sync.heroTopGames(13, settings);
+  assert.strictEqual(requests, 1, 'в течение часа список берётся из профиля');
+  down = true;
+  const saved = await sync.heroTopGames(13, settings, { force: true });
+  assert.strictEqual(saved.stale, true);
+  assert.ok(/Нет связи/.test(saved.error));
+  assert.strictEqual(saved.games.length, 1);
+  await assert.rejects(() => sync.heroTopGames(7, settings, { force: true }), /Нет связи/, 'для героя без сохранённого списка ошибка не прячется');
+}));
+
 Promise.all(pending).then(() => {
   console.log(`\n${passed} tests passed.\n`);
   console.log('Пример выводов разбора для слабой игры:');

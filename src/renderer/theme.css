@@ -1007,3 +1007,14 @@ body::before {
 .lm-empty strong { font: 800 clamp(30px, 3.2vw, 44px)/1.1 var(--display); color: #fff; }
 .lm-empty span { color: var(--muted); font-size: 16px; }
 @media (max-width: 1100px) { .lm-card { max-width: 100%; } .lm-kda small { display: none; } .dash-banner.has-banner::after { background: linear-gradient(90deg, rgba(8, 18, 22, 0.94) 0%, rgba(8, 18, 22, 0.78) 100%); } }
+
+/* подгонка под готовые баннеры: арт у правого края, слева плотнее затемнение, чтобы текст читался на любом баннере */
+.dash-banner.has-banner::after { background: linear-gradient(90deg, rgba(8, 18, 22, 0.97) 0%, rgba(8, 18, 22, 0.86) 28%, rgba(8, 18, 22, 0.5) 50%, rgba(8, 18, 22, 0) 72%); }
+.dash-banner.has-banner .dash-result-art { background-position: right center; background-size: auto 100%; }
+.dash-banner.has-banner .lm-kicker, .dash-banner.has-banner .lm-kda, .dash-banner.has-banner .lm-heroname, .dash-banner.has-banner .lm-cta { text-shadow: 0 2px 14px rgba(0, 0, 0, 0.85); }
+.lm-refresh { background: rgba(8, 18, 22, 0.62); backdrop-filter: blur(6px); }
+@media (max-width: 1100px) { .dash-banner.has-banner::after { background: linear-gradient(90deg, rgba(8, 18, 22, 0.97) 0%, rgba(8, 18, 22, 0.88) 60%, rgba(8, 18, 22, 0.7) 100%); } }
+@media (max-width: 1100px) {
+  .lm-card { max-width: 72%; }
+  .dash-banner.has-banner::after { background: linear-gradient(90deg, rgba(8, 18, 22, 0.96) 0%, rgba(8, 18, 22, 0.84) 40%, rgba(8, 18, 22, 0.4) 64%, rgba(8, 18, 22, 0) 86%); }
+}

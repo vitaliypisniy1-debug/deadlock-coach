@@ -394,7 +394,7 @@ test('hero banner file names: one rule for the UI and the ingest script', () => 
   const heroSlug = require('../src/renderer/heroSlug');
   assert.strictEqual(heroSlug('Paradox'), 'paradox');
   assert.strictEqual(heroSlug('Lady Geist'), 'lady-geist');
-  assert.strictEqual(heroSlug('Mo & Krill'), 'mo-and-krill');
+  assert.strictEqual(heroSlug('Mo & Krill'), 'mo-krill');
   assert.strictEqual(heroSlug('The Doorman'), 'the-doorman');
   assert.strictEqual(heroSlug('Deadman Danny'), 'deadman-danny');
   const list = require('../tools/hero-list.json');

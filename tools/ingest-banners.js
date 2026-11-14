@@ -36,7 +36,7 @@ function writeReadme() {
   const lines = [];
   lines.push('ПАПКА ДЛЯ БАННЕРОВ ГЕРОЕВ (Deadlock Coach)', '');
   lines.push('Сюда кладите картинки баннеров «Победа» и «Поражение» для каждого героя. Потом один раз запускаете приём, и баннеры появляются на Главной.', '');
-  lines.push('КАК НАЗЫВАТЬ ФАЙЛЫ', '  имя-героя-win.webp      баннер победы', '  имя-героя-loss.webp     баннер поражения', '', 'Имя героя: английское, строчными буквами, слова через дефис (&  заменяется на and).', 'Подходят и имена от генератора: paradox-welcome-win-scene.png, haze-welcome-loss-scene.png (приём сам приведёт к нужному имени и формату).','Примеры: paradox-win.webp, paradox-loss.webp, lady-geist-win.webp, mo-and-krill-loss.webp, the-doorman-win.webp', '');
+  lines.push('КАК НАЗЫВАТЬ ФАЙЛЫ', '  имя-героя-win.webp      баннер победы', '  имя-героя-loss.webp     баннер поражения', '', 'Имя героя: английское, строчными буквами, слова через дефис (знак & убирается: Mo & Krill = mo-krill).', 'Подходят и имена от генератора: paradox-welcome-win-scene.png, haze-welcome-loss-scene.png (приём сам приведёт к нужному имени и формату).','Примеры: paradox-win.webp, paradox-loss.webp, lady-geist-win.webp, mo-krill-loss.webp, the-doorman-win.webp', '');
   lines.push('КАКОЙ ДОЛЖНА БЫТЬ КАРТИНКА', '  Формат: webp или png.', '  Размер: около 1860 x 318 (широкая полоса). Если больше, приём уменьшит сам.', '  Слева картинка должна плавно уходить в прозрачность (фигура героя справа). На тёмном фоне карточки так выглядит лучше всего.', '  Вес: до 150-200 КБ на файл (приём сам пересохранит в webp, если файл тяжелее).', '');
   lines.push('КАК ПРИНЯТЬ БАННЕРЫ', '  1. Положите файлы в эту папку.', '  2. Откройте терминал в папке проекта и выполните:  npm run banners', '  3. Приём напишет отчёт: что принято, что отклонено и почему, каких баннеров ещё нет.', '  4. Принятые файлы появятся в проекте, дальше их смотрит и коммитит сессия разработки.', '  Если баннера для героя нет, на Главной показывается обычный арт героя (с зелёным или красным акцентом по результату).', '');
   lines.push(`ПОЛНЫЙ СПИСОК: ${HEROES.length} героев, ${HEROES.length * 2} файлов`, '');
@@ -59,7 +59,8 @@ function writeManifest() {
 }
 
 function main() {
-  writeReadme();
+  if (!argVal('--inbox')) writeReadme(); // памятка пишется только в обычную папку-приёмник
+
   fs.mkdirSync(OUT, { recursive: true });
   const accepted = [], rejected = [], warnings = [];
   const raw = fs.readdirSync(INBOX).filter((f) => /\.(webp|png)$/i.test(f));
@@ -85,7 +86,7 @@ function main() {
       maxWidth: MAX_W, targetBytes: TARGET_BYTES, tmpDir: path.join(tmpDir, 'out'), reportFile,
     }));
     const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
-    try { execFileSync(require('electron'), [path.join(__dirname, 'ingest-banners-worker.js'), jobFile], { env, timeout: 180000, stdio: 'ignore' }); } catch (e) { /* отчёт проверим ниже */ }
+    try { execFileSync(require('electron'), [path.join(__dirname, 'ingest-banners-worker.js'), jobFile], { env, timeout: 900000, stdio: 'ignore' }); } catch (e) { /* отчёт проверим ниже */ }
     const report = fs.existsSync(reportFile) ? JSON.parse(fs.readFileSync(reportFile, 'utf8')) : { fatal: 'рабочая часть не запустилась' };
     if (report.fatal) { console.log('ОШИБКА приёма:', report.fatal); process.exit(1); }
     for (const r of report) {

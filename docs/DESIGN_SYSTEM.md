@@ -47,3 +47,5 @@
 Графики: `charts-ec.js` (Apache ECharts, `vendor/echarts.min.js`) подменяет lineChart, formChart и добавляет rankChart; прежние SVG-графики в `charts.js` остаются запасными. Пустые состояния: `.empty` получает иллюстрацию по разделу (`assets/art/empty-*.svg`). Заставки героев: `.hero-banner` берёт `--art`, `--wide`, `--hc` из `heroCardStyle()`.
 
 Герои в списках и таблицах: `heroIcon()` рисует герб героя (`crest.js`: форма по классу, цвет героя, буква), крупные портреты `.lg`/`.xl` берут арт героя. Для нового списка героев использовать `heroIcon(id)`.
+
+Баннеры последнего матча: \`assets/art/banners/<герой>-win|loss.webp\`, список \`banners.js\`, приём \`npm run banners\` (\`tools/ingest-banners.js\`), правило имён в \`heroSlug.js\`. Подпись «сколько прошло»: \`timeAgo.js\`.

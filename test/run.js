@@ -370,6 +370,52 @@ test('dashboard keeps seven calendar days, a separate baseline and personal rank
   assert.deepStrictEqual(stats.heroes.map((h) => [h.heroId, h.games]), [[7, 2], [72, 1]]);
 });
 
+test('agoRu: only now, minutes, hours, days with Russian forms', () => {
+  const agoRu = require('../src/renderer/timeAgo');
+  assert.strictEqual(agoRu(0), 'только что');
+  assert.strictEqual(agoRu(59), 'только что');
+  assert.strictEqual(agoRu(60), '1 минуту назад');
+  assert.strictEqual(agoRu(2 * 60), '2 минуты назад');
+  assert.strictEqual(agoRu(5 * 60), '5 минут назад');
+  assert.strictEqual(agoRu(11 * 60), '11 минут назад');
+  assert.strictEqual(agoRu(21 * 60), '21 минуту назад');
+  assert.strictEqual(agoRu(3600), '1 час назад');
+  assert.strictEqual(agoRu(3 * 3600), '3 часа назад');
+  assert.strictEqual(agoRu(5 * 3600), '5 часов назад');
+  assert.strictEqual(agoRu(24 * 3600), '1 день назад');
+  assert.strictEqual(agoRu(2 * 86400), '2 дня назад');
+  assert.strictEqual(agoRu(11 * 86400), '11 дней назад');
+  assert.strictEqual(agoRu(-5), null);
+  assert.strictEqual(agoRu(NaN), null);
+  assert.strictEqual(agoRu(undefined), null);
+});
+
+test('hero banner file names: one rule for the UI and the ingest script', () => {
+  const heroSlug = require('../src/renderer/heroSlug');
+  assert.strictEqual(heroSlug('Paradox'), 'paradox');
+  assert.strictEqual(heroSlug('Lady Geist'), 'lady-geist');
+  assert.strictEqual(heroSlug('Mo & Krill'), 'mo-and-krill');
+  assert.strictEqual(heroSlug('The Doorman'), 'the-doorman');
+  assert.strictEqual(heroSlug('Deadman Danny'), 'deadman-danny');
+  const list = require('../tools/hero-list.json');
+  const slugs = list.map(heroSlug);
+  assert.strictEqual(new Set(slugs).size, list.length, 'имена файлов не повторяются');
+  assert.ok(slugs.every((s) => /^[a-z0-9]+(-[a-z0-9]+)*$/.test(s)));
+  // манифест баннеров ссылается только на героев из списка и на существующие файлы
+  global.window = {};
+  delete require.cache[require.resolve('../src/renderer/banners.js')];
+  require('../src/renderer/banners.js');
+  const fsx = require('fs'), pathx = require('path');
+  for (const [slug, files] of Object.entries(global.window.HERO_BANNERS)) {
+    assert.ok(slugs.includes(slug), 'герой из манифеста есть в списке: ' + slug);
+    for (const [res, file] of Object.entries(files)) {
+      assert.ok(res === 'win' || res === 'loss');
+      assert.ok(fsx.existsSync(pathx.join(__dirname, '..', 'src', 'renderer', 'assets', 'art', 'banners', file)), 'файл баннера на месте: ' + file);
+    }
+  }
+  delete global.window;
+});
+
 test('last match for the Home card: one record, no invented numbers', () => {
   const { dashboardStats, lastMatchSummary, gameFromHistory } = require('../src/core/overview');
   const now = Math.floor(new Date(2026, 10, 14, 12, 0).getTime() / 1000);
@@ -377,7 +423,7 @@ test('last match for the Home card: one record, no invented numbers', () => {
   // последний по времени, а не по порядку в списке; герой, итог и счёт из одной записи
   const rows = [row(11, now - 100, { hero_id: 7, match_result: 1, player_kills: 1, player_deaths: 9, player_assists: 2 }), row(10, now - 5000), row(12, now - 9000)];
   const st = dashboardStats(rows, now);
-  assert.deepStrictEqual(st.lastMatch, { matchId: 11, heroId: 7, startTime: now - 100, result: 'loss', kda: { k: 1, d: 9, a: 2 } });
+  assert.deepStrictEqual(st.lastMatch, { matchId: 11, heroId: 7, startTime: now - 100, durationS: 1800, endTime: now - 100 + 1800, result: 'loss', kda: { k: 1, d: 9, a: 2 } });
   assert.strictEqual(st.lastMatch.matchId, st.latest.match_id, 'тот же матч, что и «Последний матч · герой · дата»');
   // победа
   assert.strictEqual(dashboardStats([row(1, now - 50, { match_result: 0, player_team: 0 })], now).lastMatch.result, 'win');
@@ -388,6 +434,10 @@ test('last match for the Home card: one record, no invented numbers', () => {
   const lm = dashboardStats([noKda], now).lastMatch;
   assert.strictEqual(lm.kda, null);
   assert.strictEqual(lm.heroId, 72);
+  // длительности нет: конца матча не знаем, считаем только от начала
+  const noDur = dashboardStats([row(7, now - 50, { match_duration_s: 0 })], now).lastMatch;
+  assert.strictEqual(noDur.endTime, null);
+  assert.strictEqual(noDur.durationS, null);
   // нет данных / мусор / будущее время: null без NaN
   assert.strictEqual(dashboardStats([], now).lastMatch, null);
   assert.strictEqual(lastMatchSummary(undefined), null);

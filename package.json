@@ -9,7 +9,8 @@
     "postinstall": "node tools/get-electron.js",
     "start": "electron .",
     "test": "node test/run.js",
-    "dist": "npx --yes electron-builder@25.1.8 --win nsis portable --publish never"
+    "dist": "npx --yes electron-builder@25.1.8 --win nsis portable --publish never",
+    "banners": "node tools/ingest-banners.js"
   },
   "devDependencies": {
     "electron": "^33.2.1"

@@ -52,6 +52,9 @@ function lastMatchSummary(games) {
   if (!g) return null;
   return {
     matchId: g.match_id, heroId: g.hero_id, startTime: g.start_time,
+    // конец матча известен только если в записи есть длительность; иначе считать «сколько прошло» можно лишь от начала
+    durationS: g.duration_s > 0 ? g.duration_s : null,
+    endTime: g.duration_s > 0 ? g.start_time + g.duration_s : null,
     result: g.won === true ? 'win' : g.won === false ? 'loss' : null,
     kda: g.kda_known ? { k: g.k, d: g.d, a: g.a } : null,
   };

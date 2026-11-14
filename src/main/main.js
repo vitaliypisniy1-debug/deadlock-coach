@@ -449,6 +449,8 @@ function registerIpc() {
   });
 
   handle('hero:build', async (heroId) => sync.heroBuild(Number(heroId), store.settings()));
+  handle('meta:heroes', async (opts) => sync.heroMeta({ force: !!(opts && opts.force) }));
+  handle('hero:topgames', async ({ heroId, force } = {}) => sync.heroTopGames(heroId, store.settings(), { force: !!force }));
 
   handle('players:search', async (q) => sync.searchPlayers(q));
   handle('favorites:list', async () => sync.favorites());

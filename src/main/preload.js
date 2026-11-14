@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('dc', {
   status: () => call('status:get'),
   overrideAccount: (name, accountId) => call('top:override', { name, accountId }),
   heroBuild: (heroId) => call('hero:build', heroId),
+  heroMeta: (opts) => call('meta:heroes', opts || {}),
+  heroTopGames: (heroId, force) => call('hero:topgames', { heroId, force: !!force }),
   playerDetail: (accountId) => call('player:detail', accountId),
   searchPlayers: (q) => call('players:search', q),
   matchDetail: (matchId, accountId) => call('match:detail', { matchId, accountId }),

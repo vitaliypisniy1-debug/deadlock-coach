@@ -13,6 +13,9 @@
     view: 'meta',
     metaTab: 'heroes',
     sort: { key: 'games', dir: -1 },
+    msort: { key: 'games', dir: -1 },
+    heroMeta: { data: null, loading: false, error: null, loadedAt: 0 },
+    topGames: {},
     selectedHero: null,
     heroDetail: null,
     heroLoading: false,
@@ -151,6 +154,7 @@
       } else if (!S.my.list && !S.my.loading) loadMyMatches();
       else loadMyMatches(true);
     }
+    if (view === 'meta' && S.metaTab === 'heroes') loadHeroMeta();
     if (view === 'overview' && S.auth && Date.now() - S.dashboard.updated > 120000) loadOverview();
     if (view === 'coach' && S.auth && !S.coach.loading && (!S.coach.data || S.coach.for !== S.auth.accountId)) loadCoach(false);
     if (view === 'growth' && S.auth && !S.growth.loading && (!S.growth.data || S.growth.for !== S.auth.accountId)) loadGrowth();
@@ -354,50 +358,219 @@
         h('span.dim', { style: { fontSize: '12px' } }, `обновление ${F.clock(r.at)}`)));
   }
 
+  // ---------- мета героев по готовой статистике API (матчи не скачиваем) ----------
+  const META_TTL = 30 * 60e3;
+  async function loadHeroMeta(force = false) {
+    const hm = S.heroMeta;
+    if (hm.loading) return;
+    if (!force && hm.data && Date.now() - hm.loadedAt < META_TTL) return;
+    hm.loading = true;
+    hm.error = null;
+    if (S.view === 'meta') renderMeta();
+    try {
+      hm.data = await dc.heroMeta({ force });
+      hm.loadedAt = Date.now();
+    } catch (e) {
+      hm.error = e.message;
+    } finally {
+      hm.loading = false;
+      if (S.view === 'meta') renderMeta();
+    }
+  }
+
+  async function loadTopGames(heroId, force = false) {
+    const t = S.topGames[heroId] || (S.topGames[heroId] = { data: null, loading: false, error: null });
+    if (t.loading) return;
+    if (!force && t.data && Date.now() - t.loadedAt < META_TTL) return;
+    t.loading = true;
+    t.error = null;
+    if (S.view === 'meta' && S.selectedHero === heroId) renderMeta();
+    try {
+      t.data = await dc.heroTopGames(heroId, force);
+      t.loadedAt = Date.now();
+    } catch (e) {
+      t.error = e.message;
+    } finally {
+      t.loading = false;
+      if (S.view === 'meta' && S.selectedHero === heroId) renderMeta();
+    }
+  }
+
+  const utcDay = (ts) => new Date(ts * 1000).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', timeZone: 'UTC' });
+  const spanDays = (w) => `${utcDay(w.from)}–${utcDay(w.to - 86400)}`; // to в данных не включается
+  const signed = (v, digits = 1) => `${v < 0 ? '−' : '+'}${Math.abs(v).toFixed(digits).replace('.', ',')}`;
+  const ppText = (d) => `${signed(d * 100)} п.п.`;
+  const STATUS_TEXT = { low: 'мало данных', orient: 'ориентир', ok: 'достаточно' };
+
+  function metaWindowLine(d) {
+    const rank = `${badgeLabel(d.badge)}+`;
+    return `Рейтинговые матчи · ранг ${rank} · ${spanDays(d.windows.cur)} (${d.windows.days} дн.) · около ${F.num(d.matches.cur)} матчей · сравниваем с ${spanDays(d.windows.prev)} (около ${F.num(d.matches.prev)}) · обновлено ${F.ago(d.at / 1000)}`;
+  }
+
+  function shiftCell(sh, { kind }) {
+    if (!sh || sh.verdict === 'nodata') return h('span.muted', { title: 'В одном из окон мало игр героя (меньше 1 000) или героя не было — сдвиг не считаем' }, '—');
+    if (sh.verdict === 'noise') {
+      const title = kind === 'pick'
+        ? `Доля пиков изменилась на ${ppText(sh.d)} — в пределах шума или меньше четверти от прежней`
+        : `Разница ${ppText(sh.d)}, 99%-интервал от ${ppText(sh.lo)} до ${ppText(sh.hi)} — в пределах шума или меньше 1 п.п.`;
+      return h('span.muted', { title }, 'без сдвига');
+    }
+    const up = sh.verdict === 'up';
+    const good = kind === 'ban' ? null : up;
+    const color = good === null ? 'var(--orange-2)' : good ? 'var(--good)' : 'var(--bad)';
+    const text = kind === 'pick' ? `${up ? '↑' : '↓'} ${signed(sh.rel * 100, 0)}%` : `${up ? '↑' : '↓'} ${ppText(sh.d)}`;
+    const title = kind === 'pick'
+      ? `Доля пиков героя: ${ppText(sh.d)} от всех выборов, это ${signed(sh.rel * 100, 0)}% к прежней доле. Герой берётся ${up ? 'чаще' : 'реже'} — причина из статистики не следует (патч, баны, мода).`
+      : `Разница ${ppText(sh.d)}, 99%-интервал от ${ppText(sh.lo)} до ${ppText(sh.hi)}. Это сдвиг в статистике матчей, причина из неё не следует.`;
+    return h('span.num', { style: { color, fontWeight: 700 }, title }, text);
+  }
+
+  function metaNotes(d) {
+    const out = [];
+    if (d.stale) out.push(h('div.note.hot', Icon('refresh'), h('div', `Не удалось обновить данные${d.error ? ` (${d.error})` : ''}. Показаны сохранённые данные от ${F.clock(d.at / 1000)}.`)));
+    out.push(h('div.howto', h('div', h('b', 'Как читать. '), `Это статистика матчей выбранного ранга, а не «сила героя». Порог выборки по числу игр героя в окне: меньше ${d.thresholds.low} — «мало данных», героя нельзя считать сильным или слабым; ${d.thresholds.low}–${d.thresholds.ok - 1} — «ориентир»; от ${F.num(d.thresholds.ok)} — «достаточно». Цвет винрейта ставится, только если интервал целиком выше или ниже 50%. Стрелка сдвига — когда разница с прошлым окном значима (99%) и не меньше 1 п.п. винрейта или четверти от прежней доли пиков; сдвиг показывает, что изменилось, а не почему.`)));
+    if (d.patches && d.patches.length) {
+      const list = d.patches.map((p) => `${utcDay(p.ts)} ${p.title}${p.window === 'prev' ? ' (прошлое окно)' : ''}`).join(' · ');
+      out.push(h('div.howto', h('div', h('b', 'Обновления Steam в окнах. '), `${list}. Сдвиг мог быть вызван ими — это гипотеза, статистика причину не называет.`)));
+    }
+    return out;
+  }
+
+  function metaBansNote(d) {
+    const b = d.bans;
+    if (!b || !b.available) return h('div.hint', `Баны не показываем: ${(b && b.reason) || 'нет данных'}`);
+    return h('div.hint', `Баны: ранговые матчи ${utcDay(b.from)}–${utcDay(b.to - 86400)} (${b.days} ${plural(b.days, 'сутки', 'суток', 'суток')}), данные есть у ${F.num(b.matches)} матчей${b.coverage ? ` (около ${F.pct(b.coverage)} всех)` : ''}; считаем только сутки с тем же числом банов на матч (${b.perMatch.toFixed(1).replace('.', ',')}). Доля — в скольких матчах героя забанили. ${b.shiftAvailable ? '' : (b.shiftReason || '')} Бан и пикрейт связаны: забаненного героя взять нельзя.`);
+  }
+
+  function metaSortValue(r, key) {
+    if (key === 'wrd') return r.wrShift && r.wrShift.d !== undefined ? r.wrShift.d : -1;
+    if (key === 'ban') return r.ban ? r.ban.rate : -1;
+    return r[key];
+  }
+
+  function heroMetaTable(d) {
+    const rows = d.heroes.slice();
+    const { key, dir } = S.msort;
+    rows.sort((a, b) => (metaSortValue(a, key) - metaSortValue(b, key)) * dir || b.games - a.games);
+    const th = (label, k, cls = '', title = null) => {
+      const sorted = S.msort.key === k;
+      return h(`th.sortable${cls}${sorted ? '.sorted' : ''}`, {
+        title,
+        onclick: () => {
+          S.msort = { key: k, dir: sorted ? -S.msort.dir : -1 };
+          renderMeta();
+        },
+      }, label + (sorted ? (S.msort.dir < 0 ? ' ↓' : ' ↑') : ''));
+    };
+    const maxShare = Math.max(...rows.map((r) => r.pick_share), 0.0001);
+    const hasBans = d.bans && d.bans.available;
+    return h('table.table',
+      h('thead', h('tr', h('th', 'Герой'), th('Игр', 'games', '.r', 'Игр героя в окне'), th('Винрейт', 'winrate', '', 'Доля побед; полоска — интервал, где реально лежит винрейт'), th('Сдвиг', 'wrd', '.r', 'Изменение винрейта к прошлому окну'),
+        th('Доля пиков', 'pick_share', '', 'Какая часть всех выбранных героев приходится на этого'), h('th.r', { title: 'Изменение доли пиков к прошлому окну' }, 'Сдвиг'),
+        hasBans ? th('Баны', 'ban', '.r', 'В скольких матчах героя забанили') : null)),
+      h('tbody', rows.map((r) => {
+        const lo = Math.max(0, Math.min(1, (r.ci_lo - 0.4) / 0.2));
+        const hi = Math.max(0, Math.min(1, (r.ci_hi - 0.4) / 0.2));
+        const pt = Math.max(0, Math.min(1, (r.winrate - 0.4) / 0.2));
+        const sure = r.status !== 'low' && (r.ci_lo > 0.5 || r.ci_hi < 0.5);
+        const color = sure ? (r.winrate >= 0.5 ? 'var(--good)' : 'var(--bad)') : 'var(--text-2)';
+        return h(`tr.click${r.status === 'low' ? '.low' : ''}${S.selectedHero === r.hero_id ? '.selected' : ''}`, { onclick: () => loadHero(r.hero_id) },
+          h('td', h('div.hero-cell', heroIcon(r.hero_id), heroName(r.hero_id), r.status === 'low' ? h('span.pill.low', { title: `Меньше ${d.thresholds.low} игр в окне: героя нельзя считать сильным или слабым` }, 'мало данных') : r.status === 'orient' ? h('span.pill.warn', { title: `От ${d.thresholds.low} до ${d.thresholds.ok - 1} игр: цифра ориентировочная` }, 'ориентир') : null)),
+          h('td.r.num', F.num(r.games)),
+          h('td', h('div.wr', h('span.wr-val.num', { style: { color } }, F.pct(r.winrate, 1)),
+            h('div.wr-ci', { title: `С учётом числа игр реальный винрейт где-то между ${F.pct(r.ci_lo, 1)} и ${F.pct(r.ci_hi, 1)}` },
+              h('div.axis'), h('div.mid'), h('div.range', { style: { left: `${lo * 100}%`, width: `${(hi - lo) * 100}%` } }), h('div.dot', { style: { left: `${pt * 100}%` } })))),
+          h('td.r', shiftCell(r.wrShift, { kind: 'wr' })),
+          h('td', h('div.row.nowrap', h('div.bar', { style: { width: '56px' } }, h('span', { style: { width: `${(r.pick_share / maxShare) * 100}%` } })), h('span.num.muted', F.pct(r.pick_share, 1)))),
+          h('td.r', shiftCell(r.pickShift, { kind: 'pick' })),
+          hasBans ? h('td.r.num', r.ban ? h('span', { title: `Забанен в ${F.num(r.ban.bans)} из ${F.num(d.bans.matches)} матчей; интервал ${F.pct(r.ban.ci_lo, 1)}–${F.pct(r.ban.ci_hi, 1)}` }, F.pct(r.ban.rate, 0), r.ban.shift && r.ban.shift.verdict !== 'nodata' ? h('span', { style: { marginLeft: '6px' } }, shiftCell(r.ban.shift, { kind: 'ban' })) : null) : '—') : null);
+      })));
+  }
+
+  function heroMetaSection() {
+    const hm = S.heroMeta;
+    const d = hm.data;
+    if (!d) {
+      if (hm.loading) return h('div.panel', h('div.row', h('span.spin'), 'Загружаю статистику героев из Deadlock API…'));
+      return h('div.empty', h('strong', 'Статистика героев не загрузилась'), hm.error || 'Нет связи с Deadlock API.',
+        h('div.row', { style: { marginTop: '10px' } }, h('button.btn', { onclick: () => loadHeroMeta(true) }, Icon('refresh'), 'Повторить')));
+    }
+    const moves = d.heroes.filter((r) => r.wrShift.verdict === 'up' || r.wrShift.verdict === 'down').length;
+    const parts = [];
+    parts.push(h('div.kpis',
+      kpi('Матчей в окне', F.num(d.matches.cur), `около · ${spanDays(d.windows.cur)}`, null, 100),
+      kpi('Героев', String(d.heroes.length), d.lowCount ? `«мало данных» у ${d.lowCount}` : 'у всех достаточно данных', null, Math.min(100, (d.heroes.length / 44) * 100)),
+      kpi('Заметных сдвигов', String(moves), 'винрейт к прошлому окну', null, Math.min(100, (moves / 20) * 100)),
+      kpi('Баны', d.bans && d.bans.available ? F.pct(d.bans.coverage, 0) : '—', d.bans && d.bans.available ? 'матчей с данными о банах' : 'не показываем', null, d.bans && d.bans.available ? (d.bans.coverage || 0) * 100 : 0)));
+    parts.push(...metaNotes(d));
+    parts.push(h('div.panel', h('div.table-scroll', heroMetaTable(d)), metaBansNote(d)));
+    return h('div', ...parts);
+  }
+
+  // Старая таблица: игры топ-50 из ладдера (сохранённые матчи); мало игр на героя — для рейтинга силы не годится.
+  function top50Body(m) {
+    const body = [];
+    if (!m || !m.totalRecords) {
+      body.push(h('div.empty', h('strong', m ? 'Матчей топов пока нет' : 'Данных пока нет'),
+        'Нажми «Собрать матчи топ-50». Первый сбор занимает несколько минут: программа находит топов в ладдере и скачивает их матчи. Дальше обновления быстрые — скачиваются только новые игры.'));
+      if (S.status && S.status.report && !S.busy) body.push(diagnosticsPanel(S.status.report));
+      return body;
+    }
+    const favN = S.favs.length;
+    body.push(h('div.kpis',
+      kpi('Матчей топов', F.num(m.totalMatches), `за ${m.days} дн.`, null, Math.min(100, m.totalMatches / 3)),
+      kpi('Игр в выборке', F.num(m.totalRecords), 'топ + избранные', null, Math.min(100, m.totalRecords / 6)),
+      kpi('Героев в мете', String(m.heroes.length), 'сыграно топами', null, Math.min(100, (m.heroes.length / 38) * 100)),
+      kpi('Отслеживаем', String((m.players || []).length), `из них ${favN} избранных`, null, Math.min(100, ((m.players || []).length / 70) * 100))));
+    if (m.source === 'prev_season') {
+      body.push(h('div.note.hot', Icon('refresh'), h('div', 'Эти данные собраны по топу прошлого сезона. Нажми «Обновить данные» — соберу топ текущего сезона.')));
+    }
+    if (m.source === 'ladder+discovered') {
+      body.push(h('div.howto', `Ладдер текущего сезона пока короче топ-${S.settings.topN}, поэтому недостающих игроков я добрал из свежих матчей этого сезона с самым высоким рангом.`));
+    }
+    if (m.source === 'discovered' || m.source === 'list') {
+      body.push(h('div.howto', m.source === 'list'
+        ? 'Топ взят из твоего списка игроков (Настройки).'
+        : 'Ладдер текущего сезона пока пуст, поэтому топ собран из игроков с самым высоким рангом в свежих матчах этого сезона. Как только ладдер заполнится, программа переключится на него.'));
+    }
+    if (m.unresolved) {
+      body.push(h('div.howto', `У ${m.unresolved} ${plural(m.unresolved, 'игрок', 'игрока', 'игроков')} из ладдера не удалось определить аккаунт — их игры не учтены. Можно указать аккаунт вручную в разделе «Про-игроки».`));
+    }
+    body.push(S.metaTab === 'heroes' ? heroesSection(m) : playersSection(m));
+    return body;
+  }
+
   function renderMeta() {
     const v = $('view-meta');
     const m = S.meta;
-    if (m && m.totalRecords && S.metaTab === 'heroes' && S.selectedHero) {
+    if (S.metaTab === 'heroes' && S.selectedHero) {
       v.replaceChildren(heroPage());
       return;
     }
     const regionName = { Europe: 'Европа', NAmerica: 'Сев. Америка', SAmerica: 'Юж. Америка', Asia: 'Азия', Oceania: 'Океания' }[m ? m.region : S.settings.region] || S.settings.region;
-    const sub = m
-      ? `${regionName} · топ-${S.settings.topN} · последние ${m.days} дн. · ${m.totalMatches} ${plural(m.totalMatches, 'матч', 'матча', 'матчей')} · обновлено ${F.ago(S.status ? S.status.lastSync : m.generatedAt)}`
-      : `${regionName} · топ-${S.settings.topN} · последние ${S.settings.days} дн.`;
-    const head = h(S.metaTab === 'players' ? 'div.page-head.scene-players' : 'div.page-head',
-      h('div', h('div.crumbs', `Мета · топ-${S.settings.topN} текущего сезона`), h('h1', S.metaTab === 'players' ? 'Про-игроки' : 'Мета героев'), h('div.sub', sub)),
-      h('div.row', S.busy ? h('span.muted.row', h('span.spin'), 'Собираю данные…') : null,
-        h('button.btn.primary', { onclick: refreshTop, disabled: S.busy }, Icon('refresh'), 'Обновить данные')));
-    const body = [];
-    if (!m || !m.totalRecords) {
-      body.push(h('div.empty', h('strong', m ? 'Матчей топов пока нет' : 'Данных пока нет'),
-        'Нажми «Обновить данные». Первый сбор занимает несколько минут: программа находит топов в ладдере и скачивает их матчи. Дальше обновления быстрые — скачиваются только новые игры.'));
-      if (S.status && S.status.report && !S.busy) body.push(diagnosticsPanel(S.status.report));
-    } else {
-      const favN = S.favs.length;
-      body.push(h('div.kpis',
-        kpi('Матчей топов', F.num(m.totalMatches), `за ${m.days} дн.`, null, Math.min(100, m.totalMatches / 3)),
-        kpi('Игр в выборке', F.num(m.totalRecords), 'топ + избранные', null, Math.min(100, m.totalRecords / 6)),
-        kpi('Героев в мете', String(m.heroes.length), 'сыграно топами', null, Math.min(100, (m.heroes.length / 38) * 100)),
-        kpi('Отслеживаем', String((m.players || []).length), `из них ${favN} избранных`, null, Math.min(100, ((m.players || []).length / 70) * 100))));
-      if (m.source === 'prev_season') {
-        body.push(h('div.note.hot', Icon('refresh'), h('div', 'Эти данные собраны по топу прошлого сезона. Нажми «Обновить данные» — соберу топ текущего сезона.')));
-      }
-      if (m.source === 'ladder+discovered') {
-        body.push(h('div.howto', `Ладдер текущего сезона пока короче топ-${S.settings.topN}, поэтому недостающих игроков я добрал из свежих матчей этого сезона с самым высоким рангом.`));
-      }
-      if (m.source === 'discovered' || m.source === 'list') {
-        body.push(h('div.howto', m.source === 'list'
-          ? 'Топ взят из твоего списка игроков (Настройки).'
-          : 'Ладдер текущего сезона пока пуст, поэтому топ собран из игроков с самым высоким рангом в свежих матчах этого сезона. Как только ладдер заполнится, программа переключится на него.'));
-      }
-      if (m.unresolved) {
-        body.push(h('div.howto', `У ${m.unresolved} ${plural(m.unresolved, 'игрок', 'игрока', 'игроков')} из ладдера не удалось определить аккаунт — их игры не учтены. Можно указать аккаунт вручную в разделе «Про-игроки».`));
-      }
-      body.push(S.metaTab === 'heroes' ? heroesSection(m) : playersSection(m));
+    const players = S.metaTab === 'players';
+    const hmData = S.heroMeta.data;
+    const sub = players
+      ? (m
+        ? `${regionName} · топ-${S.settings.topN} · последние ${m.days} дн. · ${m.totalMatches} ${plural(m.totalMatches, 'матч', 'матча', 'матчей')} · обновлено ${F.ago(S.status ? S.status.lastSync : m.generatedAt)}`
+        : `${regionName} · топ-${S.settings.topN} · последние ${S.settings.days} дн.`)
+      : (hmData ? metaWindowLine(hmData) : 'Статистика героев по матчам ранга — загружается из Deadlock API');
+    const head = h(players ? 'div.page-head.scene-players' : 'div.page-head',
+      h('div', h('div.crumbs', players ? `Мета · топ-${S.settings.topN} текущего сезона` : 'Мета · все матчи ранга'), h('h1', players ? 'Про-игроки' : 'Мета героев'), h('div.sub', sub)),
+      players
+        ? h('div.row', S.busy ? h('span.muted.row', h('span.spin'), 'Собираю данные…') : null,
+          h('button.btn.primary', { onclick: refreshTop, disabled: S.busy }, Icon('refresh'), 'Обновить данные'))
+        : h('div.row', S.heroMeta.loading ? h('span.muted.row', h('span.spin'), 'Загружаю данные…') : null,
+          h('button.btn.primary', { onclick: () => loadHeroMeta(true), disabled: S.heroMeta.loading }, Icon('refresh'), 'Обновить данные')));
+    if (players) {
+      v.replaceChildren(head, ...top50Body(m));
+      return;
     }
-    v.replaceChildren(head, ...body);
+    const topHead = h('div.row', { style: { justifyContent: 'space-between', margin: '26px 0 6px' } },
+      h('div', h('h2', { style: { margin: 0 } }, `Топ-${S.settings.topN}: что играют лучшие`),
+        h('div.muted', { style: { fontSize: '13px' } }, `Игры игроков из ладдера за ${S.settings.days} дн. Выборка мала (десятки–сотни игр на героя), поэтому винрейт здесь описывает топ, а не силу героя.`)),
+      S.busy ? h('span.muted.row', h('span.spin'), 'Собираю данные…') : h('button.btn', { onclick: refreshTop, disabled: S.busy }, Icon('refresh'), 'Собрать матчи топ-50'));
+    v.replaceChildren(head, heroMetaSection(), topHead, ...top50Body(m));
   }
 
   function heroesSection(m) {
@@ -421,7 +594,7 @@
         const hi = Math.max(0, Math.min(1, (r.ci_hi - 0.25) / 0.5));
         const pt = Math.max(0, Math.min(1, (r.winrate - 0.25) / 0.5));
         return h(`tr.click${r.lowSample ? '.low' : ''}${S.selectedHero === r.hero_id ? '.selected' : ''}`, { onclick: () => loadHero(r.hero_id) },
-          h('td', h('div.hero-cell', heroIcon(r.hero_id), heroName(r.hero_id), r.lowSample ? h('span.pill', 'мало игр') : null)),
+          h('td', h('div.hero-cell', heroIcon(r.hero_id), heroName(r.hero_id), r.lowSample ? h('span.pill.low', { title: 'Меньше 300 игр: героя нельзя считать сильным или слабым' }, 'мало данных') : null)),
           h('td.r.num', r.games),
           h('td', h('div.row.nowrap', h('div.bar', { style: { width: '56px' } }, h('span', { style: { width: `${(r.pick_share / maxShare) * 100}%` } })), h('span.num.muted', F.pct(r.pick_share, 1)))),
           h('td', h('div.wr', h('span.wr-val.num', { style: { color: r.winrate >= 0.5 ? 'var(--good)' : 'var(--bad)' } }, F.pct(r.winrate)),
@@ -442,10 +615,12 @@
     S.heroLoading = true;
     S.heroDetail = null;
     renderMeta();
+    loadHeroMeta();
+    loadTopGames(heroId);
     try {
       S.heroDetail = await dc.heroBuild(heroId);
     } catch (e) {
-      toast(e.message, true);
+      S.heroDetail = { heroId, games: 0, wins: 0, variants: [], players: [], error: e.message };
     } finally {
       S.heroLoading = false;
       if (S.selectedHero === heroId) renderMeta();
@@ -569,9 +744,73 @@
       h(`button${i === selected ? '.on' : ''}`, { onclick: () => onPick(i), 'aria-pressed': i === selected ? 'true' : 'false' }, `${v.label.replace(/^(Вариант \d+|Основной билд): /, '')} · ${F.pct(v.winrate)}`)));
   }
 
+  // Строка героя из меты по API: винрейт, сдвиг, доля пиков, баны.
+  function heroMetaPanel(heroId) {
+    const d = S.heroMeta.data;
+    const r = d && d.heroes.find((x) => x.hero_id === heroId);
+    if (!r) return null;
+    const win = `${spanDays(d.windows.cur)} против ${spanDays(d.windows.prev)}`;
+    const shiftText = (sh, kind) => {
+      if (!sh || sh.verdict === 'nodata') return 'нет сравнения: мало игр в одном из окон';
+      if (sh.verdict === 'noise') return 'без заметного сдвига';
+      const up = sh.verdict === 'up';
+      return kind === 'pick' ? `${up ? '↑' : '↓'} ${signed(sh.rel * 100, 0)}% к прежней доле` : `${up ? '↑' : '↓'} ${ppText(sh.d)} (${win})`;
+    };
+    const sure = r.status !== 'low' && (r.ci_lo > 0.5 || r.ci_hi < 0.5);
+    return h('section.panel',
+      h('h2', 'Все матчи ранга (Deadlock API)'),
+      h('div.muted', { style: { fontSize: '13px', marginBottom: '10px' } }, `${metaWindowLine(d)}${d.stale ? ' · сохранённые данные' : ''}`),
+      h('div.kpis',
+        kpi('Игр героя в окне', F.num(r.games), STATUS_TEXT[r.status], r.status === 'low' ? 'warn' : null, Math.min(100, (r.games / 20000) * 100)),
+        kpi('Винрейт', F.pct(r.winrate, 1), `вероятно ${F.pct(r.ci_lo, 1)}–${F.pct(r.ci_hi, 1)}`, sure ? (r.winrate >= 0.5 ? 'good' : 'bad') : null, r.winrate * 100),
+        kpi('Доля пиков', F.pct(r.pick_share, 1), shiftText(r.pickShift, 'pick'), null, Math.min(100, r.pick_share * 1500)),
+        kpi('Баны', r.ban ? F.pct(r.ban.rate, 0) : '—', r.ban ? `в ${F.num(r.ban.bans)} из ${F.num(d.bans.matches)} матчей` : 'не показываем: нет надёжных данных', null, r.ban ? r.ban.rate * 100 : 0)),
+      h('div.hint', { style: { marginTop: '8px' } }, `Сдвиг винрейта: ${shiftText(r.wrShift, 'wr')}. Это статистика матчей ранга, а не сила героя; причину сдвига она не называет.`));
+  }
+
+  // Последние игры героя у игроков топ-300 ладдера за 2 недели.
+  function topGamesPanel(heroId) {
+    const t = S.topGames[heroId];
+    const title = h('h2', 'Последние игры топ-300 за 2 недели');
+    if (!t || (t.loading && !t.data)) return h('section.panel', title, h('div.row', h('span.spin'), 'Загружаю игры топа…'));
+    if (!t.data) {
+      return h('section.panel', title, h('div.muted', t.error || 'Не удалось загрузить игры топа.'),
+        h('div.row', { style: { marginTop: '8px' } }, h('button.btn.small', { onclick: () => loadTopGames(heroId, true) }, Icon('refresh'), 'Повторить')));
+    }
+    const d = t.data;
+    const s = d.summary;
+    const regionName = { Europe: 'Европа', NAmerica: 'Сев. Америка', SAmerica: 'Юж. Америка', Asia: 'Азия', Oceania: 'Океания' }[d.region] || d.region;
+    const parts = [h('div.row', { style: { justifyContent: 'space-between' } }, title,
+      h('button.btn.small', { onclick: () => loadTopGames(heroId, true), disabled: t.loading }, Icon('refresh'), 'Обновить'))];
+    if (t.error || d.stale) parts.push(h('div.note.hot', Icon('refresh'), h('div', `Не удалось обновить${t.error || d.error ? ` (${t.error || d.error})` : ''}. Показаны сохранённые игры от ${F.clock(d.at / 1000)}.`)));
+    parts.push(h('div.muted', { style: { fontSize: '13px' } },
+      `Ладдер региона «${regionName}»: аккаунт однозначно определён у ${d.ladder.resolved} из ${d.ladder.entries} игроков (в ладдере сейчас ${d.ladder.entries} из ${d.ladder.cap} мест). Игроков с несколькими возможными аккаунтами не берём, чтобы не принять чужие игры за игры топа.`));
+    if (!s.games) {
+      parts.push(h('div.empty', h('strong', 'Игр на этом герое нет'), 'У игроков из топа не нашлось игр на этом герое за 14 дней.'));
+      return h('section.panel', ...parts);
+    }
+    parts.push(h('div.row', { style: { gap: '10px', margin: '10px 0' } },
+      h('b', `${s.games} ${plural(s.games, 'игра', 'игры', 'игр')}${d.truncated ? ' (API отдаёт не больше 1000 матчей — взяты самые свежие)' : ''} · ${s.players} ${plural(s.players, 'игрок', 'игрока', 'игроков')}`),
+      h('span', `победы ${F.pct(s.winrate)} (вероятно ${F.pct(s.ci_lo)}–${F.pct(s.ci_hi)})`),
+      s.status === 'low' ? h('span.pill.low', { title: 'Меньше 300 игр: по этой выборке нельзя судить о силе героя' }, 'мало данных') : s.status === 'orient' ? h('span.pill.warn', 'ориентир') : null));
+    const shown = d.games.slice(0, 30);
+    parts.push(h('div.table-scroll', h('table.table',
+      h('thead', h('tr', h('th', 'Когда'), h('th', 'Игрок'), h('th', 'Итог'), h('th.r', 'K/D/A'), h('th.r', 'Души'), h('th.r', 'Время'))),
+      h('tbody', shown.map((g) => h('tr',
+        h('td.muted', F.ago(g.start_time)),
+        h('td', h('a', { href: '#', onclick: (e) => { e.preventDefault(); openPlayer(g.account_id); } }, `${g.rank ? '#' + g.rank + ' ' : ''}${g.name}`)),
+        h('td', h(`span.res.${g.won ? 'win' : 'loss'}`, g.won ? 'победа' : 'поражение')),
+        h('td.r.num', `${g.k ?? '—'}/${g.d ?? '—'}/${g.a ?? '—'}`),
+        h('td.r.num', F.num(g.nw)),
+        h('td.r.num.muted', F.time(g.duration_s))))))));
+    if (s.games > shown.length) parts.push(h('div.hint', `В таблице последние ${shown.length} из ${s.games} игр; процент побед выше посчитан по всем ${s.games}.`));
+    parts.push(h('div.hint', 'Это игры конкретных игроков топа на этом герое: исход и сборка зависят от игрока и состава матча, поэтому по ним нельзя судить о силе героя.'));
+    return h('section.panel', ...parts);
+  }
+
   function heroPage() {
     const back = h('button.btn.small', { onclick: () => { S.selectedHero = null; renderMeta(); } }, '← Все герои');
-    if (S.heroLoading || !S.heroDetail) return h('div', h('div.row', { style: { marginBottom: '14px' } }, back), h('div.panel', h('div.row', h('span.spin'), 'Считаю сборки…')));
+    if (S.heroLoading || !S.heroDetail) return h('div', h('div.row', { style: { marginBottom: '14px' } }, back), heroMetaPanel(S.selectedHero), topGamesPanel(S.selectedHero), h('div.panel', h('div.row', h('span.spin'), 'Считаю сборки…')));
     const d = S.heroDetail;
     const row = S.meta && S.meta.heroes.find((x) => x.hero_id === d.heroId);
     const vi = Math.min(S.heroVariant || 0, Math.max(0, d.variants.length - 1));
@@ -582,11 +821,11 @@
       h('div.row', back,
         v ? h('button.btn', { onclick: () => document.getElementById('in-game') && document.getElementById('in-game').scrollIntoView({ behavior: 'smooth' }) }, 'Найти билд в игре') : null,
         v ? h('button.btn.primary', { onclick: () => dc.copy(buildChecklist(d.heroId, v)).then(() => toast('Чек-лист скопирован')) }, Icon('copy'), 'Скопировать чек-лист') : null));
-    if (!d.games) return h('div', head, h('div.empty', h('strong', 'Нет игр топов'), 'Топы не играли на этом герое за выбранный период.'));
+    if (!d.games) return h('div', head, heroMetaPanel(d.heroId), topGamesPanel(d.heroId), h('div.empty', h('strong', 'Нет сохранённых игр топ-50'), d.error ? `Сборки топ-50 не загрузились: ${d.error}` : 'Игроки из топ-50 не играли на этом герое за выбранный период, поэтому сборок нет.'));
     const wr = d.wins / d.games;
-    const parts = [head,
+    const parts = [head, heroMetaPanel(d.heroId), topGamesPanel(d.heroId),
       h('div.kpis',
-        kpi('Игр топов', String(d.games), row ? `${F.pct(row.pick_share, 1)} всех пиков` : null, null, row ? Math.min(100, row.pick_share * 800) : 50),
+        kpi('Игр топ-50', String(d.games), row ? `${F.pct(row.pick_share, 1)} всех пиков` : null, null, row ? Math.min(100, row.pick_share * 800) : 50),
         kpi('Винрейт', F.pct(wr), row ? `вероятно ${F.pct(row.ci_lo)}–${F.pct(row.ci_hi)}` : null, wr >= 0.5 ? 'good' : 'bad', wr * 100),
         kpi('Топов играют', String(d.players.length), 'разных игроков', null, Math.min(100, d.players.length * 5)),
         kpi('Сборок', String(d.variants.length), d.variants.length > 1 ? 'разные стили' : 'одна основная', null, v ? v.share * 100 : 100))];

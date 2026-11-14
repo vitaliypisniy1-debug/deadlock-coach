@@ -30,6 +30,7 @@ const { matchTips } = require('../core/tipsMatch');
 const { skillOrder, skillConsensus, compareSkills } = require('../core/skills');
 const { heroPool, pickAdvice, gamePlan, buildPickMeta, heroRole, RANKED_HERO_RULE } = require('../core/pick');
 const { counterCodex } = require('../core/counters');
+const { buildHeroMeta, windows: metaWindows, topHeroGames, ladderAccounts, DAY: META_DAY } = require('../core/metashift');
 const { buildHeroProfile } = require('../core/heroProfile');
 const { RULES } = require('../core/counterRules');
 const codexData = require('../core/data/codexData.json');
@@ -764,6 +765,81 @@ class Sync {
       }
     })();
     return this.running;
+  }
+
+  // ---------- мета героев по готовой статистике API (матчи не скачиваем) ----------
+  // Кэш в профиле на час (heroshift.json); при ошибке сети отдаём последний сохранённый результат с датой.
+  async heroMeta({ force = false } = {}) {
+    const cached = this.store.read('heroshift.json', null);
+    const usable = cached && cached.v === 1 && Array.isArray(cached.heroes) && cached.heroes.length ? cached : null;
+    if (!force && usable && Date.now() - usable.at < 3600e3) return { ...usable, stale: false };
+    if (this._hmRunning) return this._hmRunning;
+    this._hmRunning = (async () => {
+      try {
+        const now = nowSec();
+        const win = metaWindows(now);
+        let badge = 91; // Фантом 1+
+        const load = (b) => this.api.heroStatsDaily({ from: win.prev.from, to: win.cur.to, badge: b });
+        let rows = await load(badge);
+        const curGames = (r) => r.filter((x) => x.bucket >= win.cur.from).reduce((sum, x) => sum + (Number(x.matches) || 0), 0);
+        // на высоком ранге мало игр — берём уровень пониже, как в «Перед игрой»
+        if (curGames(rows) / 12 < 15000) {
+          badge = 81;
+          rows = await load(badge);
+        }
+        let banRows = null;
+        let banError = null;
+        try {
+          banRows = await this.api.heroBansDaily({ from: win.prev.from, to: win.cur.to, badge });
+        } catch (e) {
+          banError = e.message;
+        }
+        let patches = [];
+        try {
+          patches = await this.api.patches();
+        } catch (e) {
+          this.emit('log', `patches: ${e.message}`);
+        }
+        const meta = buildHeroMeta({ heroRows: rows, banRows, patches, now });
+        if (!meta.heroes.length) throw new Error('deadlock-api не отдал статистику героев');
+        if (banError && !meta.bans.available) meta.bans.reason = `Баны не загрузились (${banError}).`;
+        const out = { ...meta, at: Date.now(), badge, mode: 'ranked' };
+        this.store.write('heroshift.json', out);
+        return { ...out, stale: false };
+      } catch (e) {
+        if (usable) return { ...usable, stale: true, error: e.message };
+        throw e;
+      } finally {
+        this._hmRunning = null;
+      }
+    })();
+    return this._hmRunning;
+  }
+
+  // Последние игры героя за 14 дней у игроков топ-300 ладдера региона (одним запросом к API).
+  // Берём только игроков с однозначным аккаунтом: чужие игры нельзя выдавать за игры топа.
+  async heroTopGames(heroId, settings, { force = false } = {}) {
+    heroId = Number(heroId);
+    const all = this.store.read('herotopgames.json', {}) || {};
+    const cached = all[heroId] && all[heroId].region === settings.region ? all[heroId] : null;
+    if (!force && cached && Date.now() - cached.at < 3600e3) return { ...cached, stale: false };
+    try {
+      const raw = await this.api.leaderboard(settings.region);
+      const entries = Array.isArray(raw) ? raw : (raw && raw.entries) || [];
+      const ladder = ladderAccounts(entries, this.store.read('overrides.json', {}) || {}, 300);
+      if (!ladder.accounts.size) throw new Error('в ладдере региона нет игроков с определённым аккаунтом');
+      const now = nowSec();
+      const matches = await this.api.topHeroMatches({ accountIds: [...ladder.accounts.keys()], heroId, since: now - 14 * META_DAY, limit: 1000 });
+      const res = topHeroGames({ matches, accounts: ladder.accounts, heroId, now, days: 14 });
+      // итог считаем по всем играм за период, в профиле храним только свежие 200 строк таблицы
+      const out = { ...res, games: res.games.slice(0, 200), region: settings.region, ladder: { entries: ladder.entries, resolved: ladder.resolved, cap: ladder.cap }, truncated: matches.length >= 1000, at: Date.now() };
+      all[heroId] = out;
+      this.store.write('herotopgames.json', all);
+      return { ...out, stale: false };
+    } catch (e) {
+      if (cached) return { ...cached, stale: true, error: e.message };
+      throw e;
+    }
   }
 
   // ---------- билд героя: варианты сборок, паверспайки, кто играет ----------

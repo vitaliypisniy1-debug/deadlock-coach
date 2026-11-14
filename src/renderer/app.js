@@ -2170,7 +2170,7 @@
     const nowS = Math.floor(Date.now() / 1000);
     document.querySelectorAll('[data-since]').forEach((el) => {
       const t = window.agoRu(nowS - Number(el.dataset.since));
-      el.textContent = t ? `${el.dataset.prefix} ${t}` : '';
+      el.textContent = t ? `${el.dataset.prefix} ${t}`.trim() : '';
     });
   };
   setInterval(tickAgo, 30000);
@@ -2245,6 +2245,7 @@
     const bannerUrl = bannerFile ? `assets/art/banners/${bannerFile}` : null;
     const resWord = lm && lm.result === 'win' ? 'Победа' : lm && lm.result === 'loss' ? 'Поражение' : 'Результат неизвестен';
     const kdaWords = lm && lm.kda ? `${lm.kda.k} убийств, ${lm.kda.d} смертей, ${lm.kda.a} помощи` : 'счёт неизвестен';
+    const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
     const lmCard = !d ? null : lm ? h(`button.lm-card.${lm.result || 'none'}`, {
       type: 'button', onclick: () => openDashboardMatch(lm.matchId),
       'aria-label': `Последний матч: ${lmName}, ${resWord.toLowerCase()}, ${kdaWords}. Открыть разбор матча`,
@@ -2254,10 +2255,12 @@
         title: lm.endTime ? 'Считаем от конца матча' : 'Время окончания неизвестно, считаем от начала матча',
       })),
       h('span.lm-result', resWord),
-      h('span.lm-herorow', heroIcon(lm.heroId), h('span.lm-heroname', lmName)),
-      lm.kda ? h('span.lm-kda', { 'aria-hidden': 'true' }, h('b', lm.kda.k), h('i', '/'), h('b.d', lm.kda.d), h('i', '/'), h('b', lm.kda.a), h('small', 'убийства · смерти · помощь'))
-        : h('span.lm-kda.none', 'Счёт неизвестен'),
-      h('span.lm-cta', 'Открыть разбор матча', Icon('arrow')))
+      h('span.lm-line',
+        h('span.lm-herorow', heroIcon(lm.heroId), h('span.lm-heroname', lmName)),
+        lm.kda ? h('span.lm-kda', { 'aria-hidden': 'true', title: 'Убийства / смерти / помощь' }, h('b', lm.kda.k), h('i', '/'), h('b.d', lm.kda.d), h('i', '/'), h('b', lm.kda.a), h('small', 'K / D / A'))
+          : h('span.lm-kda.none', 'Счёт неизвестен'),
+        lm.durationS ? h('span.lm-dur', { title: 'Длительность матча' }, Icon('clock'), mmss(lm.durationS)) : null,
+        h('span.lm-cta', 'Открыть разбор', Icon('arrow'))))
       : h('div.lm-empty', h('strong', 'Пока нет сыгранных матчей'), h('span', 'Сыграй матч, и он появится здесь.'));
     const portrait = lmHero?.card || lmHero?.img;
     const backdrop = !bannerUrl && lmHero?.wide;
@@ -2275,66 +2278,127 @@
       return;
     }
     queueMicrotask(tickAgo);
-    const card = (title, action, ...children) => h('section.panel.dash-card',
+    const mine = d.accountId === undefined || Number(d.accountId) === Number(S.auth.accountId);
+    const card = (cls, title, action, ...children) => h(`section.panel.dash-card.hm-card.${cls}`,
       h('div.dash-card-head', h('h2', title), action), children);
-    const maxGames = Math.max(1, ...d.days.map((x) => x.games));
-    const bars = h('div.dash-days', { role: 'list', 'aria-label': 'Игры по дням' }, d.days.map((x) => {
-      const label = `${dashboardDate(x.start)} · побед: ${x.wins} · поражений: ${x.losses}${x.unknown ? ' · без результата: ' + x.unknown : ''}`;
-      const segment = (n, kind) => n ? h(`span.${kind}`, { style: { flex: String(n) } }) : null;
-      return h('div.dash-day', { role: 'listitem', title: label, 'aria-label': label },
-        h('strong.num', x.games), h('div.dash-track', { 'aria-hidden': 'true' },
-          x.games ? h('div.dash-stack', { style: { height: `${x.games / maxGames * 100}%` } }, segment(x.wins, 'win'), segment(x.losses, 'loss'), segment(x.unknown, 'unknown')) : null),
-        h('span.muted', dashboardDate(x.start)),
-        h('span.dash-day-result.num', { 'aria-hidden': 'true' }, `${x.wins}–${x.losses}`));
-    }));
-    const legend = h('div.dash-legend', h('span.win', 'Победы'), h('span.loss', 'Поражения'), h('span', 'Счёт под датой'),
-      d.week.unknown ? h('span.unknown', 'Без результата') : null);
-    const rate = (value, label) => h('div.dash-rate', h('strong.num', F.pct(value.wr)), h('span', label),
-      h('span.muted.small', `${value.wins + value.losses} с результатом из ${value.games} матчей`));
+
+    // ---------- полоса показателей: четыре числа в одну строку ----------
     const delta = d.week.wr === null || d.baseline.wr === null ? null : 100 * (d.week.wr - d.baseline.wr);
-    const deltaText = delta === null ? 'Для сравнения нужно больше матчей с результатом.'
-      : `${delta > 0 ? '+' : ''}${delta.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} п. п. к обычному винрейту`;
-    const heroRows = h('div.dash-heroes', d.heroes.slice(0, 5).map((x) =>
-      h('button.dash-hero-row', { style: heroArtStyle(S.assets.heroes[x.heroId]), onclick: () => { setView('myheroes'); openHeroSummary(x.heroId); } },
-        heroIcon(x.heroId), h('div', h('strong', heroName(x.heroId)), h('div.dash-hero-track', h('span', { style: { width: `${x.games / d.heroes[0].games * 100}%` } }))),
-        h('span.muted.small', `${x.games} ${plural(x.games, 'матч', 'матча', 'матчей')} · ${x.wins}–${x.losses}${x.unknown ? ' · без результата: ' + x.unknown : ''}`),
-        h('span.num', x.wins + x.losses >= 3 ? F.pct(x.wr) : '—'))));
-    // --- ключевые цифры: что важнее всего видно сразу ---
     const wrPct = d.week.wr === null ? null : Math.round(d.week.wr * 100);
     const tone = delta === null ? '' : delta >= 1 ? 'good' : delta <= -1 ? 'bad' : '';
-    const ring = (pct) => {
-      const r = 34, c = 2 * Math.PI * r;
-      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      svg.setAttribute('viewBox', '0 0 80 80'); svg.setAttribute('class', 'hl-ring'); svg.setAttribute('aria-hidden', 'true');
-      svg.innerHTML = `<circle cx="40" cy="40" r="${r}" class="hl-ring-bg"/><circle cx="40" cy="40" r="${r}" class="hl-ring-fg" stroke-dasharray="${(c * (pct ?? 0) / 100).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 40 40)"/>`;
-      return svg;
-    };
     const lastRank = d.rank.length ? d.rank.at(-1) : null;
-    const hl = h('div.hl-row',
-      h(`div.hl-tile.feature${tone ? '.' + tone : ''}`,
-        h('div.hl-main',
-          h('div.hl-label', Icon('trending-up'), 'Винрейт за 7 дней'),
-          h('div.hl-value.num', wrPct === null ? '—' : h('span', { 'data-count': String(wrPct), 'data-suffix': '%' }, wrPct + '%')),
-          delta === null ? h('div.hl-sub', 'Мало матчей с результатом для сравнения')
-            : h('div.hl-sub', h(`span.hl-chip${tone ? '.' + tone : ''}`, `${delta > 0 ? '+' : ''}${delta.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} п. п.`), ' к прошлым 30 дням (' + F.pct(d.baseline.wr) + ')')),
-        ring(wrPct)),
-      h('div.hl-tile',
-        h('div.hl-label', Icon('swords'), 'Матчей за неделю'),
-        h('div.hl-value.num', h('span', { 'data-count': String(d.week.games) }, String(d.week.games))),
-        h('div.hl-sub', `${d.week.wins} побед · ${d.week.losses} поражений`)),
-      h('div.hl-tile',
-        h('div.hl-label', Icon('clock'), 'Время в игре'),
-        h('div.hl-value.num', h('span', { 'data-count': String(+d.hours.toFixed(1)), 'data-decimals': '1' }, d.hours.toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 })), h('span.hl-unit', ' ч')),
-        h('div.hl-sub', `${d.heroes.length} ${plural(d.heroes.length, 'герой', 'героя', 'героев')} за неделю`)),
-      h('div.hl-tile',
-        h('div.hl-label', Icon('crown'), 'Ранг'),
-        lastRank ? h('div.hl-rank', rankImg(Math.floor(lastRank.badge / 10), lastRank.badge % 10), h('div.hl-value.sm', badgeLabel(lastRank.badge))) : h('div.hl-value.sm', '—'),
-        h('div.hl-sub', lastRank ? `${d.rank.length} отметок · ${d.season ? 'сезон' : '30 дней'}` : 'Нет отметок')));
-    v.replaceChildren(banner, hl, h('div.dash-grid',
-      card('Игры за неделю', h('span.muted.small', `${d.week.games} ${plural(d.week.games, 'матч', 'матча', 'матчей')}`), bars, legend),
-      card('Мои герои за неделю', h('button.btn.small', { onclick: () => setView('myheroes') }, 'Все герои', Icon('arrow')),
-        d.heroes.length ? heroRows : h('div.muted.dash-empty', 'За неделю пока нет матчей.')),
-      card('Изменения рейтинга', null, dashboardRank(d.rank, d.season))),
+    const kpiCell = (cls, icon, label, value, sub) => h(`div.hm-kpi${cls}`, h('div.hm-kpi-label', Icon(icon), label), h('div.hm-kpi-main', value, sub));
+    const hl = h('section.panel.hm-kpis', { 'aria-label': 'Показатели за неделю' },
+      kpiCell(tone ? '.' + tone : '', 'trending-up', 'Винрейт за 7 дней',
+        h('strong.hm-kpi-value.num', wrPct === null ? '—' : h('span', { 'data-count': String(wrPct), 'data-suffix': '%' }, wrPct + '%')),
+        delta === null ? h('span.hm-kpi-sub', 'мало матчей для сравнения')
+          : h('span.hm-kpi-sub', h(`span.hl-chip${tone ? '.' + tone : ''}`, `${delta > 0 ? '+' : ''}${delta.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} п. п.`), ` к прошлым 30 дням (${F.pct(d.baseline.wr)})`)),
+      kpiCell('', 'swords', 'Матчей за неделю',
+        h('strong.hm-kpi-value.num', h('span', { 'data-count': String(d.week.games) }, String(d.week.games))),
+        h('span.hm-kpi-sub', `${d.week.wins} ${plural(d.week.wins, 'победа', 'победы', 'побед')} · ${d.week.losses} ${plural(d.week.losses, 'поражение', 'поражения', 'поражений')}`)),
+      kpiCell('', 'clock', 'Время в игре',
+        h('strong.hm-kpi-value.num', h('span', { 'data-count': String(+d.hours.toFixed(1)), 'data-decimals': '1' }, d.hours.toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 })), h('span.hl-unit', ' ч')),
+        h('span.hm-kpi-sub', `${d.heroes.length} ${plural(d.heroes.length, 'герой', 'героя', 'героев')} за неделю`)),
+      kpiCell('', 'crown', 'Ранг',
+        lastRank ? h('span.hm-kpi-rank', rankImg(Math.floor(lastRank.badge / 10), lastRank.badge % 10), h('strong.hm-kpi-value.sm', badgeLabel(lastRank.badge))) : h('strong.hm-kpi-value.sm', '—'),
+        h('span.hm-kpi-sub', lastRank ? `${d.rank.length} ${plural(d.rank.length, 'отметка', 'отметки', 'отметок')} · ${d.season ? 'сезон' : '30 дней'}` : 'нет отметок')));
+
+    // ---------- герои недели: на ком получается, на ком нет ----------
+    const VERDICT = { good: 'получается', bad: 'не идёт', even: 'ровно', few: 'мало игр' };
+    const rule = d.verdictRule || { minGames: 5, margin: 3 };
+    const openHero = (id) => { setView('myheroes'); openHeroSummary(id); };
+    const wrBar = (x) => {
+      const n = x.wins + x.losses;
+      if (!n) return h('span.hm-wr.none', '—');
+      // шкала полоски: от 25% до 75%, середина — 50%; всё, что дальше, упирается в край
+      const pos = Math.max(0, Math.min(1, (x.wr - 0.25) / 0.5)) * 100;
+      const left = Math.min(pos, 50);
+      const width = Math.max(Math.abs(pos - 50), 1.5);
+      return h(`span.hm-wr.${x.wr > 0.5 ? 'up' : x.wr < 0.5 ? 'down' : 'mid'}`,
+        h('span.hm-wr-track', { 'aria-hidden': 'true' }, h('i', { style: { left: `${left}%`, width: `${width}%` } })), h('b.num', F.pct(x.wr)));
+    };
+    const beforeText = (b) => {
+      const n = b ? b.wins + b.losses : 0;
+      if (!n) return 'до этого 30 дней без игр';
+      return `до этого за 30 дней: ${b.wins}–${b.losses}${n >= 3 ? ` (${F.pct(b.wr)})` : ''}`;
+    };
+    const heroLine = (x) => {
+      const verdict = x.verdict || 'few';
+      const label = `${heroName(x.heroId)}: ${x.games} ${plural(x.games, 'матч', 'матча', 'матчей')} за неделю, побед ${x.wins}, поражений ${x.losses}${x.unknown ? ', без результата ' + x.unknown : ''}, оценка недели: ${VERDICT[verdict]}`;
+      return h(`button.hm-hero.v-${verdict}`, { type: 'button', style: heroArtStyle(S.assets.heroes[x.heroId]), onclick: () => openHero(x.heroId), 'aria-label': label },
+        heroIcon(x.heroId),
+        h('span.hm-hero-name', h('strong', heroName(x.heroId)), h('span.hm-hero-before', beforeText(x.before))),
+        h('span.hm-hero-games.num', String(x.games)),
+        h('span.hm-hero-score.num', `${x.wins}–${x.losses}`),
+        wrBar(x),
+        h('span.hm-hero-kda.num', Number.isFinite(x.kda) ? x.kda.toFixed(1).replace('.', ',') : '—'),
+        h(`span.hm-verdict.${verdict}`, VERDICT[verdict]));
+    };
+    const byMargin = (sign) => d.heroes.filter((x) => x.verdict === (sign > 0 ? 'good' : 'bad')).sort((p, q) => sign * ((q.wins - q.losses) - (p.wins - p.losses)) || q.games - p.games)[0];
+    const best = byMargin(1);
+    const worst = byMargin(-1);
+    const callout = (x, kind) => h(`button.hm-call.${kind}`, { type: 'button', onclick: () => openHero(x.heroId) },
+      heroIcon(x.heroId, '.sm'),
+      h('span', h('small', kind === 'good' ? 'Лучше всего на неделе' : 'Хуже всего на неделе'), h('strong', `${heroName(x.heroId)} · ${x.wins}–${x.losses}`)));
+    const calls = best || worst
+      ? h('div.hm-calls', best ? callout(best, 'good') : h('div.hm-call.none', 'Явно удачного героя на этой неделе нет'),
+        worst ? callout(worst, 'bad') : h('div.hm-call.none', 'Явно неудачного героя на этой неделе нет'))
+      : h('div.hm-call.none', `Пока ни на одном герое нет явного перевеса: оценка ставится от ${rule.minGames} игр с результатом.`);
+    const HERO_ROWS = 6;
+    const heroesBody = d.heroes.length ? [
+      calls,
+      h('div.hm-hero.hm-hero-head', { 'aria-hidden': 'true' }, h('span'), h('span', 'Герой'), h('span', 'Игр'), h('span', 'Счёт'), h('span', 'Винрейт'), h('span', { title: 'Обычное значение (убийства + помощь) / смерти за игру' }, 'KDA'), h('span', 'Неделя')),
+      h('div.hm-hero-list', d.heroes.slice(0, HERO_ROWS).map(heroLine)),
+      h('div.hm-note', `Оценка недели ставится от ${rule.minGames} игр с результатом: «получается» — побед минимум на ${rule.margin} больше, чем поражений, «не идёт» — наоборот. Это итог недели, а не вывод о том, как ты играешь на герое.`),
+    ] : [h('div.muted.dash-empty', 'За неделю пока нет матчей.')];
+    const heroesCard = card('hm-heroes', 'Мои герои за неделю',
+      h('button.btn.small', { onclick: () => setView('myheroes') }, d.heroes.length > HERO_ROWS ? `Все герои (${d.heroes.length})` : 'Все герои', Icon('arrow')),
+      ...heroesBody);
+
+    // ---------- последние матчи ----------
+    const recent = mine ? (d.recent || []) : [];
+    const RES = { win: 'Победа', loss: 'Поражение' };
+    const matchLine = (m) => h(`button.hm-match.${m.result || 'none'}`, {
+      type: 'button', onclick: () => openDashboardMatch(m.matchId),
+      'aria-label': `${heroName(m.heroId)}, ${RES[m.result] ? RES[m.result].toLowerCase() : 'результат неизвестен'}${m.kda ? `, счёт ${m.kda.k}/${m.kda.d}/${m.kda.a}` : ''}. Открыть разбор матча`,
+    },
+      heroIcon(m.heroId, '.sm'),
+      h('span.hm-match-hero', h('strong', heroName(m.heroId)), h('span.hm-match-ago', { 'data-since': String(m.endTime || m.startTime), 'data-prefix': '' })),
+      h('span.hm-match-res', RES[m.result] || 'Нет итога'),
+      m.kda ? h('span.hm-match-kda.num', { title: 'Убийства / смерти / помощь' }, `${m.kda.k} / ${m.kda.d} / ${m.kda.a}`) : h('span.hm-match-kda.num.none', '—'),
+      h('span.hm-match-dur.num', { title: 'Длительность матча' }, m.durationS ? mmss(m.durationS) : '—'));
+    const recentCard = card('hm-recent', 'Последние матчи',
+      h('button.btn.small', { onclick: () => setView('matches') }, 'Все матчи', Icon('arrow')),
+      recent.length ? h('div.hm-match-list', recent.map(matchLine)) : h('div.muted.dash-empty', 'Матчей пока нет.'));
+
+    // ---------- игры по дням ----------
+    const maxGames = Math.max(1, ...d.days.map((x) => x.games));
+    const weekday = (ts) => new Date(ts * 1000).toLocaleDateString('ru-RU', { weekday: 'short' });
+    const bars = h('div.hm-days', { role: 'list', 'aria-label': 'Игры по дням' }, d.days.map((x) => {
+      const label = `${dashboardDate(x.start)} · побед: ${x.wins} · поражений: ${x.losses}${x.unknown ? ' · без результата: ' + x.unknown : ''}`;
+      const segment = (n, kind) => n ? h(`span.${kind}`, { style: { flex: String(n) } }) : null;
+      return h('div.hm-day', { role: 'listitem', title: label, 'aria-label': label },
+        h('strong.num', x.games ? String(x.games) : ''),
+        h('div.hm-day-track', { 'aria-hidden': 'true' },
+          x.games ? h('div.hm-day-stack', { style: { height: `${x.games / maxGames * 100}%` } }, segment(x.wins, 'win'), segment(x.losses, 'loss'), segment(x.unknown, 'unknown')) : null),
+        h('span.hm-day-date', `${weekday(x.start)} ${new Date(x.start * 1000).getDate()}`),
+        h('span.hm-day-score.num', { 'aria-hidden': 'true' }, x.games ? `${x.wins}–${x.losses}` : '—'));
+    }));
+    const weekCard = card('hm-week', 'Игры за неделю',
+      h('span.hm-legend', h('i.win'), 'победы', h('i.loss'), 'поражения', d.week.unknown ? h('i.unknown') : null, d.week.unknown ? 'без итога' : null),
+      bars);
+
+    // ---------- рейтинг ----------
+    const rankBody = !d.rank.length ? h('div.muted.dash-empty', 'В доступной истории пока нет отметок личного ранга.')
+      : d.rank.length === 1 ? h('div.hint', 'Для графика нужны хотя бы две отметки.')
+        : (window.Charts && window.Charts.rankChart) ? window.Charts.rankChart(d.rank, { label: badgeLabel, onOpen: openDashboardMatch })
+          : dashboardRank(d.rank, d.season);
+    const rankCard = card('hm-rank', 'Изменения рейтинга',
+      lastRank ? h('span.hm-rank-now', rankImg(Math.floor(lastRank.badge / 10), lastRank.badge % 10), h('strong', badgeLabel(lastRank.badge)),
+        h('span.muted.small', `${d.rank.length} ${plural(d.rank.length, 'отметка', 'отметки', 'отметок')} · ${d.season ? 'текущий сезон' : 'последние 30 дней'}`)) : null,
+      rankBody);
+
+    v.replaceChildren(banner, hl, h('div.hm-grid', heroesCard, recentCard, weekCard, rankCard),
       h('div.dash-footer', h('span.muted.small', model.error ? `История недоступна · ${model.error}`
         : model.loading ? 'Проверяю свежие матчи…' : d.source === 'saved' ? 'Показаны сохранённые матчи' : 'По доступной истории Deadlock API'),
       h('button.btn.small', { onclick: () => { model.details = true; if (!S.ov.data) loadOverviewDetails(); else renderOverview(); } }, 'Подробная статистика', Icon('arrow'))));

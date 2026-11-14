@@ -74,3 +74,16 @@
 - **Не подтверждено** — `div.lift.none`: тихая серая строка без числа (таких большинство).
 - **Мало данных** — `div.lift.few`: `span.pill.low` + пояснение, числа нет. `lift = null` — строки нет.
 - **Пояснение над списком** — `div.lift-note`: обязательная фраза «связь, а не причина» (`.lift-note-main`), строка происхождения данных (`.lift-note-meta`: окно, режим, ранг, дата), раскрывающееся «Как считается» (пороги и поправка `shiftPp`). Сохранённые данные — `.lift-note.stale` + `.lift-note-stale` (оранжевая полоса и строка). Статистика недоступна — обычный `.hint`.
+
+## Главная v3: компактный первый экран (ветка `design/home-compact`, 14.11.2026)
+
+Разметка — `renderOverview()` в `app.js`, стили — раздел «Главная, версия 3» в конце `theme.css`. Данные — `dashboardStats()` в `src/core/overview.js`.
+
+- **Полоса последнего матча** — прежние `section.dash-banner` и `button.lm-card`, но в одну полосу: `.lm-kicker`, `.lm-result`, строка `.lm-line` (герой `.lm-herorow`, счёт `.lm-kda`, длительность `.lm-dur`, ссылка `.lm-cta`). Картинка героя привязана к правому краю, как раньше.
+- **Строка показателей** — `section.panel.hm-kpis` из четырёх `div.hm-kpi` (`.good` / `.bad` красит винрейт): `.hm-kpi-label`, `.hm-kpi-main` (`.hm-kpi-value`, `.hm-kpi-sub`, для ранга `.hm-kpi-rank`).
+- **Сетка** — `div.hm-grid` (12 колонок), карточки `section.panel.dash-card.hm-card` + `.hm-heroes` / `.hm-recent` / `.hm-week` / `.hm-rank`.
+- **Герои недели** — `div.hm-calls` с `button.hm-call.good|bad` («лучше всего» / «хуже всего»; `.hm-call.none`, если такого героя нет); строки `button.hm-hero.v-good|v-bad|v-even|v-few`: портрет, `.hm-hero-name` (+ `.hm-hero-before` — предыдущие 30 дней), `.hm-hero-games`, `.hm-hero-score`, `.hm-wr.up|down|mid` (полоска от 50%, шкала 25–75%), `.hm-hero-kda`, `.hm-verdict.good|bad|even|few`. У `v-few` цифры без цвета. Под таблицей `.hm-note` с правилом оценки.
+- **Последние матчи** — `button.hm-match.win|loss|none`: портрет, `.hm-match-hero` (+ `.hm-match-ago`), `.hm-match-res`, `.hm-match-kda`, `.hm-match-dur`. Клик открывает разбор матча.
+- **Игры за неделю** — `div.hm-days` / `.hm-day` (`.hm-day-track`, `.hm-day-stack` с `.win` / `.loss` / `.unknown`, `.hm-day-date`, `.hm-day-score`), легенда `.hm-legend`.
+- **Рейтинг** — график ECharts высотой 148 px, текущий ранг в шапке карточки `.hm-rank-now`.
+- **Узкое окно** — до 1280 px герои и матчи во всю ширину (матчи в две колонки, без длительности), до 1100 px показатели в две строки.

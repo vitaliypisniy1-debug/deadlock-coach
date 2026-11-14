@@ -1069,3 +1069,162 @@ body::before {
 .lift-note.stale { border-left-color: var(--accent); }
 .lift-note summary { cursor: pointer; font-size: 12.5px; color: var(--sky); user-select: none; }
 .lift-note summary:hover { color: #fff; }
+
+/* ===================================================================================================
+   Главная, версия 3: компактный первый экран (контракт: docs/DESIGN_SYSTEM.md, раздел «Главная v3»)
+   Баннер последнего матча в одну полосу, показатели в одну строку, герои недели с оценкой,
+   последние матчи, игры по дням и рейтинг. Всё помещается на первый экран окна 1600×1000.
+   =================================================================================================== */
+
+/* --- баннер последнего матча: полоса высотой около 150 px вместо 300 --- */
+#view-overview .dash-banner { min-height: 0; margin-bottom: 14px; border-radius: 20px; }
+#view-overview .lm-card { padding: 16px clamp(20px, 2.2vw, 30px); gap: 2px; max-width: 72%; border-radius: 20px; }
+#view-overview .lm-kicker { font-size: 11.5px; }
+#view-overview .lm-result { font-size: clamp(30px, 2.9vw, 42px); line-height: 1.05; }
+#view-overview .lm-card.none .lm-result { font-size: clamp(24px, 2.3vw, 32px); }
+.lm-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 22px; margin-top: 8px; }
+#view-overview .lm-herorow { gap: 10px; }
+#view-overview .lm-herorow .hero-ico.art { width: 30px; height: 41px; border-radius: 8px; }
+#view-overview .lm-heroname { font-size: 18px; }
+#view-overview .lm-kda { font-size: 24px; gap: 6px; }
+#view-overview .lm-kda small { font-size: 11px; margin-left: 8px; letter-spacing: 0.1em; }
+#view-overview .lm-kda.none { font-size: 15px; }
+.lm-dur { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); font: 600 14px var(--body); font-variant-numeric: tabular-nums; }
+.lm-dur .ico { width: 15px; height: 15px; color: var(--muted); }
+#view-overview .lm-cta { margin-top: 0; font-size: 14px; }
+#view-overview .lm-refresh { top: 10px; right: 10px; }
+#view-overview .lm-empty { padding: 22px 28px; }
+#view-overview .lm-empty strong { font-size: 26px; }
+#view-overview .dash-banner.has-banner .lm-dur { text-shadow: 0 2px 14px rgba(0, 0, 0, 0.85); }
+#view-overview .dash-hero-art { height: 150%; top: -10%; }
+
+/* --- полоса показателей --- */
+.hm-kpis.panel { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1.15fr; gap: 0; padding: 0; margin: 0 0 14px; }
+.hm-kpi { display: grid; align-content: start; gap: 4px; min-width: 0; padding: 11px 20px 11px; border-left: 1px solid var(--edge); }
+.hm-kpi:first-child { border-left: 0; }
+.hm-kpi-label { display: flex; align-items: center; gap: 7px; font: 600 11.5px var(--body); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.hm-kpi-label .ico { width: 14px; height: 14px; color: var(--accent); flex: none; }
+.hm-kpi-main { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; min-width: 0; min-height: 34px; }
+.hm-kpi-value { font: 800 28px/34px var(--display); color: #fff; white-space: nowrap; }
+.hm-kpi-value.sm { font-size: 22px; }
+.hm-kpi-value .hl-unit { font-size: 0.55em; color: var(--muted); }
+.hm-kpi.good .hm-kpi-value { color: #8ff0bd; }
+.hm-kpi.bad .hm-kpi-value { color: #ffa1a1; }
+.hm-kpi-sub { color: var(--muted); font-size: 13px; line-height: 1.35; }
+.hm-kpi-sub .hl-chip { padding: 2px 8px; font-size: 12px; margin-right: 2px; }
+.hm-kpi-rank { display: inline-flex; align-items: center; gap: 10px; }
+.hm-kpi-rank .rank-img { width: 30px; height: 30px; object-fit: contain; }
+
+/* --- сетка карточек --- */
+.hm-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
+.hm-card.panel { margin: 0; min-width: 0; padding: 15px 18px 16px; }
+.hm-card .dash-card-head { margin: 0 0 10px; }
+.hm-card .dash-card-head h2 { font: 700 16px/1.2 var(--head); }
+.hm-heroes { grid-column: span 7; }
+.hm-recent { grid-column: span 5; }
+.hm-week { grid-column: span 5; }
+.hm-rank { grid-column: span 7; }
+#view-overview .dash-footer { margin-top: 12px; }
+
+/* --- герои недели --- */
+.hm-calls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; }
+.hm-call { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 6px 12px; border-radius: 12px; border: 1px solid var(--edge); background: rgba(255, 255, 255, 0.03); color: inherit; font: inherit; text-align: left; }
+button.hm-call { cursor: pointer; transition: transform 0.15s var(--ease), border-color 0.15s var(--ease); }
+button.hm-call:hover { transform: translateY(-1px); }
+.hm-call small { display: block; font: 600 10.5px var(--body); letter-spacing: 0.12em; text-transform: uppercase; }
+.hm-call strong { display: block; font: 700 15px/1.25 var(--body); color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hm-call > span { min-width: 0; }
+.hm-call.good { border-color: rgba(95, 227, 161, 0.36); background: linear-gradient(90deg, rgba(95, 227, 161, 0.14), rgba(95, 227, 161, 0.02)); }
+.hm-call.good small { color: #8ff0bd; }
+.hm-call.bad { border-color: rgba(255, 123, 123, 0.36); background: linear-gradient(90deg, rgba(255, 123, 123, 0.13), rgba(255, 123, 123, 0.02)); }
+.hm-call.bad small { color: #ffa1a1; }
+.hm-call.none { border-style: dashed; color: var(--muted); font-size: 13px; }
+.hm-hero { display: grid; grid-template-columns: 30px minmax(0, 1.5fr) 34px 46px minmax(96px, 1fr) 36px 96px; align-items: center; gap: 12px; width: 100%; padding: 3px 8px; border: 0; border-radius: 10px; background: none; color: var(--text); font: inherit; text-align: left; }
+button.hm-hero { cursor: pointer; transition: background 0.15s var(--ease); }
+button.hm-hero:hover, button.hm-hero:focus-visible { background: rgba(255, 255, 255, 0.05); }
+.hm-hero-head { padding: 0 8px 4px; font: 600 10.5px var(--body); letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); border-bottom: 1px solid var(--edge); border-radius: 0; margin-bottom: 4px; }
+.hm-hero-head > span:nth-child(3), .hm-hero-head > span:nth-child(4), .hm-hero-head > span:nth-child(6) { text-align: right; }
+.hm-hero-head > span:nth-child(7) { text-align: right; }
+.hm-hero .hero-ico.art { width: 28px; height: 38px; border-radius: 7px; }
+.hm-hero-name { display: grid; min-width: 0; }
+.hm-hero-name strong { font: 700 15px/1.25 var(--body); color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hm-hero-before { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hm-hero-games, .hm-hero-score, .hm-hero-kda { text-align: right; font-weight: 600; font-size: 14px; }
+.hm-hero-games { color: var(--text-2); }
+.hm-hero-kda { color: var(--text-2); }
+.hm-wr { display: grid; grid-template-columns: minmax(0, 1fr) 42px; align-items: center; gap: 10px; }
+.hm-wr.none { display: block; text-align: right; color: var(--muted); }
+.hm-wr-track { position: relative; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.07); }
+.hm-wr-track::after { content: ''; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: rgba(255, 255, 255, 0.38); }
+.hm-wr-track i { position: absolute; top: 0; bottom: 0; border-radius: 3px; background: var(--text-2); }
+.hm-wr.up .hm-wr-track i { background: var(--good); }
+.hm-wr.down .hm-wr-track i { background: var(--bad); }
+.hm-wr b { text-align: right; font-weight: 700; font-size: 14px; color: #fff; }
+.hm-wr.up b { color: #8ff0bd; }
+.hm-wr.down b { color: #ffa1a1; }
+/* мало игр: цифры есть, но без цвета, чтобы 2–1 не выглядело как вывод */
+.hm-hero.v-few .hm-wr b { color: var(--text-2); }
+.hm-hero.v-few .hm-wr-track i { background: var(--dim); }
+.hm-verdict { justify-self: end; padding: 3px 10px; border-radius: 999px; border: 1px solid transparent; font: 600 12px/1.3 var(--body); white-space: nowrap; }
+.hm-verdict.good { color: #8ff0bd; background: rgba(95, 227, 161, 0.13); border-color: rgba(95, 227, 161, 0.36); }
+.hm-verdict.bad { color: #ffa1a1; background: rgba(255, 123, 123, 0.13); border-color: rgba(255, 123, 123, 0.36); }
+.hm-verdict.even { color: var(--text-2); background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.1); }
+.hm-verdict.few { color: var(--muted); border: 1px dashed var(--line-2, rgba(255, 255, 255, 0.18)); }
+.hm-note { margin-top: 6px; padding: 0 8px; font-size: 11.5px; line-height: 1.4; color: var(--dim); }
+
+/* --- последние матчи --- */
+.hm-match-list { display: grid; gap: 4px; }
+.hm-match { position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr) 82px 74px 42px; align-items: center; gap: 10px; width: 100%; padding: 4px 10px 4px 14px; border: 0; border-radius: 10px; background: rgba(255, 255, 255, 0.025); color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: background 0.15s var(--ease); }
+.hm-match::before { content: ''; position: absolute; left: 0; top: 6px; bottom: 6px; width: 3px; border-radius: 2px; background: var(--dim); }
+.hm-match.win::before { background: var(--good); }
+.hm-match.loss::before { background: var(--bad); }
+.hm-match:hover, .hm-match:focus-visible { background: rgba(255, 255, 255, 0.06); }
+.hm-match-hero { display: grid; min-width: 0; }
+.hm-match-hero strong { font: 700 14.5px/1.25 var(--body); color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hm-match-ago { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hm-match-res { font: 700 13px var(--body); color: var(--muted); }
+.hm-match.win .hm-match-res { color: #8ff0bd; }
+.hm-match.loss .hm-match-res { color: #ffa1a1; }
+.hm-match-kda { text-align: right; font-weight: 600; font-size: 14px; color: #fff; white-space: nowrap; }
+.hm-match-kda.none { color: var(--muted); }
+.hm-match-dur { text-align: right; font-size: 13px; color: var(--muted); }
+
+/* --- игры по дням --- */
+.hm-legend { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.hm-legend i { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); margin-left: 8px; }
+.hm-legend i:first-child { margin-left: 0; }
+.hm-legend i.win { background: var(--good); }
+.hm-legend i.loss { background: var(--bad); }
+.hm-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; align-items: end; }
+.hm-day { display: grid; justify-items: center; gap: 3px; min-width: 0; }
+.hm-day strong { min-height: 16px; font: 700 13px/16px var(--body); color: #fff; }
+.hm-day-track { display: flex; align-items: flex-end; width: 16px; height: 84px; border-radius: 6px; background: rgba(255, 255, 255, 0.05); overflow: hidden; }
+.hm-day-stack { display: flex; flex-direction: column; width: 100%; min-height: 3px; }
+.hm-day-stack .win { background: linear-gradient(180deg, #7ff0bb, #46cf91); }
+.hm-day-stack .loss { background: linear-gradient(180deg, #ff9b9b, #f06a6a); }
+.hm-day-stack .unknown { background: var(--dim); }
+.hm-day-date { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.hm-day-score { font: 600 12.5px var(--body); color: var(--text-2); }
+
+/* --- рейтинг --- */
+.hm-rank-now { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.hm-rank-now .rank-img { width: 24px; height: 24px; object-fit: contain; }
+.hm-rank-now strong { font: 700 14px var(--body); color: #fff; white-space: nowrap; }
+.hm-rank .chart-wrap.ec { height: 148px !important; }
+.hm-rank .dash-empty, .hm-week .dash-empty, .hm-recent .dash-empty { padding: 18px 0; }
+
+/* --- узкое окно (минимум 1040×680) --- */
+@media (max-width: 1280px) {
+  .hm-heroes, .hm-recent { grid-column: 1 / -1; }
+  .hm-week, .hm-rank { grid-column: span 6; }
+  .hm-match-list { grid-template-columns: 1fr 1fr; gap: 4px 10px; }
+  .hm-match { grid-template-columns: 28px minmax(0, 1fr) 78px 70px; }
+  .hm-match-dur { display: none; }
+}
+@media (max-width: 1100px) {
+  #view-overview .lm-card { max-width: 100%; }
+  .hm-kpis.panel { grid-template-columns: 1fr 1fr; }
+  .hm-kpi:nth-child(3) { border-left: 0; }
+  .hm-kpi:nth-child(n+3) { border-top: 1px solid var(--edge); }
+  .hm-hero { grid-template-columns: 30px minmax(0, 1.3fr) 30px 44px minmax(80px, 1fr) 34px 92px; gap: 10px; }
+}

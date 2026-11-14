@@ -416,6 +416,44 @@ test('hero banner file names: one rule for the UI and the ingest script', () => 
   delete global.window;
 });
 
+test('Home: hero verdict for the week needs 5 games and a 3-game margin', () => {
+  const { heroVerdict } = require('../src/core/overview');
+  assert.strictEqual(heroVerdict({ wins: 2, losses: 1 }), 'few');
+  assert.strictEqual(heroVerdict({ wins: 4, losses: 0 }), 'few');
+  assert.strictEqual(heroVerdict({ wins: 7, losses: 1 }), 'good');
+  assert.strictEqual(heroVerdict({ wins: 4, losses: 1 }), 'good');
+  assert.strictEqual(heroVerdict({ wins: 0, losses: 6 }), 'bad');
+  assert.strictEqual(heroVerdict({ wins: 4, losses: 5 }), 'even');
+  assert.strictEqual(heroVerdict({ wins: 9, losses: 7 }), 'even');
+  assert.strictEqual(heroVerdict({}), 'few');
+});
+
+test('Home: recent matches newest first, heroes carry the verdict and the earlier 30 days', () => {
+  const { dashboardStats } = require('../src/core/overview');
+  const now = Math.floor(new Date(2026, 10, 14, 20, 0, 0).getTime() / 1000);
+  const mk = (id, hero, ago, won, extra = {}) => ({ match_id: id, hero_id: hero, start_time: now - ago, match_duration_s: 1800, match_mode: 4, game_mode: 1,
+    match_result: won ? 0 : 1, player_team: 0, player_kills: 5, player_deaths: 4, player_assists: 6, ...extra });
+  const rows = [];
+  for (let i = 0; i < 6; i++) rows.push(mk(100 + i, 13, 3600 * (i + 3), i < 5));          // неделя: герой 13, 5–1
+  for (let i = 0; i < 6; i++) rows.push(mk(200 + i, 7, 3600 * (i + 30), false));          // неделя: герой 7, 0–6
+  rows.push(mk(300, 52, 3600 * 50, true));                                                // неделя: герой 52, 1–0
+  for (let i = 0; i < 4; i++) rows.push(mk(400 + i, 13, 86400 * (10 + i), i < 2));        // раньше: герой 13, 2–2
+  const st = dashboardStats(rows, now);
+  const hero = (id) => st.heroes.find((x) => x.heroId === id);
+  assert.strictEqual(hero(13).verdict, 'good');
+  assert.strictEqual(hero(7).verdict, 'bad');
+  assert.strictEqual(hero(52).verdict, 'few');
+  assert.deepStrictEqual({ w: hero(13).before.wins, l: hero(13).before.losses }, { w: 2, l: 2 });
+  assert.strictEqual(hero(7).before.games, 0);
+  assert.strictEqual(hero(7).before.wr, null);
+  assert.deepStrictEqual(st.verdictRule, { minGames: 5, margin: 3 });
+  assert.strictEqual(st.recent.length, 8);
+  assert.strictEqual(st.recent[0].matchId, 100);
+  assert.deepStrictEqual(st.recent[0], st.lastMatch);
+  assert.ok(st.recent.every((m, i, a) => i === 0 || a[i - 1].startTime >= m.startTime));
+  assert.deepStrictEqual(dashboardStats([], now).recent, []);
+});
+
 test('last match for the Home card: one record, no invented numbers', () => {
   const { dashboardStats, lastMatchSummary, gameFromHistory } = require('../src/core/overview');
   const now = Math.floor(new Date(2026, 10, 14, 12, 0).getTime() / 1000);

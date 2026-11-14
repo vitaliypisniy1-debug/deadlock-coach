@@ -46,10 +46,31 @@ function gameFromHistory(m) {
 
 // Последний сыгранный матч для карточки на Главной: герой, результат и K/D/A берутся из ОДНОЙ записи.
 // Ничего не выдумываем: нет записи — null; результат неизвестен — result: null; счёт неизвестен — kda: null.
+const matchUsable = (g) => g && Number.isInteger(g.match_id) && g.match_id > 0 && Number.isFinite(g.start_time) && g.start_time > 0 && Number.isInteger(g.hero_id) && g.hero_id > 0;
+const sortedUsable = (games) => (Array.isArray(games) ? games : []).filter(matchUsable).sort((a, b) => a.start_time - b.start_time || a.match_id - b.match_id);
 function lastMatchSummary(games) {
-  const ok = (g) => g && Number.isInteger(g.match_id) && g.match_id > 0 && Number.isFinite(g.start_time) && g.start_time > 0 && Number.isInteger(g.hero_id) && g.hero_id > 0;
-  const g = (Array.isArray(games) ? games : []).filter(ok).sort((a, b) => a.start_time - b.start_time || a.match_id - b.match_id).at(-1);
-  if (!g) return null;
+  const g = sortedUsable(games).at(-1);
+  return g ? matchSummary(g) : null;
+}
+
+// Несколько последних матчей для списка на Главной (сначала самый свежий), в том же виде, что и последний матч.
+function recentMatches(games, limit = 8) {
+  return sortedUsable(games).slice(-limit).reverse().map(matchSummary);
+}
+
+// Оценка героя за неделю для Главной. Это описание результатов недели, а не вывод о силе игрока:
+// меньше 5 игр с результатом — 'few' (оценку не ставим); побед минимум на 3 больше поражений — 'good';
+// поражений минимум на 3 больше — 'bad'; иначе 'even'.
+const VERDICT_MIN_GAMES = 5;
+const VERDICT_MARGIN = 3;
+function heroVerdict({ wins = 0, losses = 0 } = {}) {
+  if (wins + losses < VERDICT_MIN_GAMES) return 'few';
+  if (wins - losses >= VERDICT_MARGIN) return 'good';
+  if (losses - wins >= VERDICT_MARGIN) return 'bad';
+  return 'even';
+}
+
+function matchSummary(g) {
   return {
     matchId: g.match_id, heroId: g.hero_id, startTime: g.start_time,
     // конец матча известен только если в записи есть длительность; иначе считать «сколько прошло» можно лишь от начала
@@ -93,17 +114,24 @@ function dashboardStats(history, now = Math.floor(Date.now() / 1000)) {
     if (!byHero.has(g.hero_id)) byHero.set(g.hero_id, []);
     byHero.get(g.hero_id).push(g);
   }
-  const heroes = [...byHero].map(([heroId, rows]) => ({
-    heroId, ...counts(rows),
-    kda: median(rows.map((g) => (g.k + g.a) / Math.max(1, g.d))),
-  })).sort((a, b) => b.games - a.games);
+  const heroes = [...byHero].map(([heroId, rows]) => {
+    const c = counts(rows);
+    return {
+      heroId, ...c,
+      kda: median(rows.map((g) => (g.k + g.a) / Math.max(1, g.d))),
+      verdict: heroVerdict(c),
+      // те же 30 дней до этой недели, что и в сравнении общего винрейта: видно, случайна ли неделя
+      before: counts(earlier.filter((g) => g.hero_id === heroId)),
+    };
+  }).sort((a, b) => b.games - a.games);
   const season = now >= RANKED_HERO_RULE.from && now < RANKED_HERO_RULE.until;
   const rankSince = season ? RANKED_HERO_RULE.from : now - 30 * DAY;
   const rank = games.filter((g) => g.start_time >= rankSince && g.match_mode === 4
     && Number.isInteger(g.badge) && g.badge >= 10 && g.badge < 120)
     .map(({ badge, start_time, match_id }) => ({ badge, time: start_time, matchId: match_id }));
   return { days, week: counts(week), baseline: counts(earlier), heroes, rank, season,
-    latest: games.at(-1) || null, lastMatch: lastMatchSummary(games), hours: week.reduce((sum, g) => sum + g.duration_s, 0) / 3600 };
+    latest: games.at(-1) || null, lastMatch: lastMatchSummary(games), recent: recentMatches(games),
+    verdictRule: { minGames: VERDICT_MIN_GAMES, margin: VERDICT_MARGIN }, hours: week.reduce((sum, g) => sum + g.duration_s, 0) / 3600 };
 }
 
 // Показатели одного игрока в одном матче (по подробным данным).
@@ -451,4 +479,4 @@ function buildOverview({ history, matches, accountId, days = 7, now = Math.floor
   return out;
 }
 
-module.exports = { buildOverview, dashboardStats, lastMatchSummary, gameFromHistory, playerMetrics, METRICS, rankFromBadges, TIPS };
+module.exports = { buildOverview, dashboardStats, lastMatchSummary, recentMatches, heroVerdict, gameFromHistory, playerMetrics, METRICS, rankFromBadges, TIPS };

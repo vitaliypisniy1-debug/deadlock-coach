@@ -19,6 +19,8 @@ const argVal = (k) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] :
 const INBOX = path.resolve(argVal('--inbox') || path.join(ROOT, '..', 'banners-inbox'));
 
 const MIN_W = 1200, ASPECT_MIN = 4.5, ASPECT_MAX = 7.5, MAX_W = 1860, TARGET_BYTES = 160 * 1024, HARD_BYTES = 400 * 1024;
+// принимаем имя-героя-win.webp и имя-героя-welcome-win-scene.png (так называет файлы генератор картинок)
+const FILE_RE = /^(.+?)(?:-welcome)?-(win|loss)(?:-scene)?\.(webp|png)$/i;
 const slugs = new Map(HEROES.map((n) => [heroSlug(n), n]));
 
 function lev(a, b) {
@@ -34,7 +36,7 @@ function writeReadme() {
   const lines = [];
   lines.push('ПАПКА ДЛЯ БАННЕРОВ ГЕРОЕВ (Deadlock Coach)', '');
   lines.push('Сюда кладите картинки баннеров «Победа» и «Поражение» для каждого героя. Потом один раз запускаете приём, и баннеры появляются на Главной.', '');
-  lines.push('КАК НАЗЫВАТЬ ФАЙЛЫ', '  имя-героя-win.webp      баннер победы', '  имя-героя-loss.webp     баннер поражения', '', 'Имя героя: английское, строчными буквами, слова через дефис (&  заменяется на and).', 'Примеры: paradox-win.webp, paradox-loss.webp, lady-geist-win.webp, mo-and-krill-loss.webp, the-doorman-win.webp', '');
+  lines.push('КАК НАЗЫВАТЬ ФАЙЛЫ', '  имя-героя-win.webp      баннер победы', '  имя-героя-loss.webp     баннер поражения', '', 'Имя героя: английское, строчными буквами, слова через дефис (&  заменяется на and).', 'Подходят и имена от генератора: paradox-welcome-win-scene.png, haze-welcome-loss-scene.png (приём сам приведёт к нужному имени и формату).','Примеры: paradox-win.webp, paradox-loss.webp, lady-geist-win.webp, mo-and-krill-loss.webp, the-doorman-win.webp', '');
   lines.push('КАКОЙ ДОЛЖНА БЫТЬ КАРТИНКА', '  Формат: webp или png.', '  Размер: около 1860 x 318 (широкая полоса). Если больше, приём уменьшит сам.', '  Слева картинка должна плавно уходить в прозрачность (фигура героя справа). На тёмном фоне карточки так выглядит лучше всего.', '  Вес: до 150-200 КБ на файл (приём сам пересохранит в webp, если файл тяжелее).', '');
   lines.push('КАК ПРИНЯТЬ БАННЕРЫ', '  1. Положите файлы в эту папку.', '  2. Откройте терминал в папке проекта и выполните:  npm run banners', '  3. Приём напишет отчёт: что принято, что отклонено и почему, каких баннеров ещё нет.', '  4. Принятые файлы появятся в проекте, дальше их смотрит и коммитит сессия разработки.', '  Если баннера для героя нет, на Главной показывается обычный арт героя (с зелёным или красным акцентом по результату).', '');
   lines.push(`ПОЛНЫЙ СПИСОК: ${HEROES.length} героев, ${HEROES.length * 2} файлов`, '');
@@ -63,8 +65,8 @@ function main() {
   const raw = fs.readdirSync(INBOX).filter((f) => /\.(webp|png)$/i.test(f));
   const jobs = new Map();
   for (const f of raw) {
-    const m = /^(.+)-(win|loss)\.(webp|png)$/i.exec(f);
-    if (!m) { rejected.push([f, 'имя не подходит: нужно имя-героя-win.webp или имя-героя-loss.webp']); continue; }
+    const m = FILE_RE.exec(f);
+    if (!m) { rejected.push([f, 'имя не подходит: нужно имя-героя-win.webp или имя-героя-loss.webp (подходит и имя-героя-welcome-win-scene.png)']); continue; }
     const slug = m[1].toLowerCase(), res = m[2].toLowerCase();
     if (!slugs.has(slug)) { rejected.push([f, `героя «${slug}» нет в списке; возможно, имелось в виду «${closest(slug)}»`]); continue; }
     const key = `${slug}-${res}`;

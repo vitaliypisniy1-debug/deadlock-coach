@@ -1818,13 +1818,31 @@
     const hr = d.heroRule;
     // Lift: статистическое подтверждение рекомендации (числа — только при ≥1 000 игр, интервале без нуля и разнице от 1,5 п.п.)
     const li = items.liftInfo || {};
-    const sgn = (v) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1)}`;
-    const liftRow = (l) => (!l ? null
-      : l.numbers ? h('div.small', { style: { margin: '2px 0' } }, `Статистика: ${l.status === 'confirmed' ? 'с этим предметом против него выигрывали чаще' : 'предупреждение: с этим предметом против него выигрывали реже'} — ${sgn(l.liftPp)} п.п. к обычному (99% интервал ${sgn(l.loPp)}…${sgn(l.hiPp)}), ${l.n} ${plural(l.n, 'игра', 'игры', 'игр')}.`)
-        : l.status === 'few' ? h('div.small', { style: { margin: '2px 0' } }, h('span.pill.low', 'мало данных'), ` Меньше ${li.minGames} игр против него — числа нет.`)
-          : h('div.dim.small', { style: { margin: '2px 0' } }, 'Статистика: не подтверждено — разница в пределах шума.'));
+    const sgn = (v) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1).replace('.', ',')}`;
+    const pc = (v) => String(v).replace('.', ',');
+    // строка Lift под «Почему»: вторичная; число показываем только у подтверждённых и у предупреждений
+    const liftRow = (l) => {
+      if (!l) return null;
+      if (l.numbers) {
+        const ok = l.status === 'confirmed';
+        return h(`div.lift.${ok ? 'good' : 'warn'}`,
+          { title: `С предметом против него выигрывали в ${pc(l.wr)}% игр, обычный винрейт предмета ${pc(l.baseWr)}%` },
+          h('span.lift-num.num', `${sgn(l.liftPp)} п.п.`),
+          h('span.lift-text', ok ? 'с этим предметом против него выигрывали чаще обычного' : 'предупреждение: с этим предметом против него выигрывали реже обычного'),
+          h('span.lift-meta', `99% интервал ${sgn(l.loPp)}…${sgn(l.hiPp)} · ${F.num(l.n)} ${plural(l.n, 'игра', 'игры', 'игр')}`));
+      }
+      if (l.status === 'few') return h('div.lift.few', h('span.pill.low', 'мало данных'), h('span.lift-meta', `меньше ${F.num(li.minGames)} игр против него — числа нет`));
+      return h('div.lift.none', 'Статистика: не подтверждено — разница в пределах шума');
+    };
+    const liftDate = li.at ? new Date(li.at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'numeric' }) : null;
     const liftNote = li.available
-      ? h('div.hint', `Lift — разница между винрейтом игроков с предметом против ${heroName(enemy)} и обычным винрейтом этого предмета (с поправкой на силу самого героя). Окно ${li.days} дней, ${li.mode}, ранг ${li.rank}${li.at ? `, данные от ${new Date(li.at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'numeric' })}` : ''}${li.stale ? ' (сохранённые — обновить не удалось: ' + li.error + ')' : ''}. Это связь, а не причина: предмет часто берут те, кто уже выигрывает, и против героя собирают целый набор. Он подтверждает механику, но порядок советов не определяет.`)
+      ? h(`div.lift-note${li.stale ? '.stale' : ''}`,
+        h('div.lift-note-main', h('b', 'Строка «Статистика» под советом — связь, а не причина. '), 'Предмет часто берут те, кто уже выигрывает, и против героя собирают целый набор. Lift подтверждает механику, но порядок советов не определяет.'),
+        h('div.lift-note-meta', `Окно ${li.days} дней · ${li.mode} · ранг ${li.rank}${liftDate ? ` · данные от ${liftDate}` : ''}`),
+        li.stale ? h('div.lift-note-stale', Icon('refresh'), h('span', `Показаны сохранённые данные: обновить не удалось${li.error ? ` (${li.error})` : ''}.`)) : null,
+        h('details', h('summary', 'Как считается'), h('div.codex-detail',
+          h('div', `Lift — разница между винрейтом игроков с предметом против ${heroName(enemy)} и обычным винрейтом этого предмета, с поправкой на силу самого героя${li.shiftPp !== null && li.shiftPp !== undefined ? ` (поправка ${sgn(li.shiftPp)} п.п.)` : ''}.`),
+          h('div', `Число показываем, только если игр против героя не меньше ${F.num(li.minGames)}, 99%-й интервал не включает ноль и разница не меньше ${pc(li.minEffectPp)} п.п. Иначе — «не подтверждено» или «мало данных».`))))
       : h('div.hint', `Статистика Lift недоступна${li.error ? ' (' + li.error + ')' : ''} — советы основаны на способностях героя.`);
     // рекомендации из угроз героя: у каждой — причины, источник и ограничения
     const mechRows = (items.recommended || []).map((x) => h('div.codex-item',

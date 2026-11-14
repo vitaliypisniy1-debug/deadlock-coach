@@ -965,3 +965,34 @@ body::before {
     radial-gradient(120% 90% at 50% 0%, rgba(var(--hc), 0.65), rgba(var(--hc), 0.14) 62%, transparent),
     var(--panel-2);
 }
+
+/* ==========================================================================
+   Главная: последний матч в карточке приветствия (герой, результат, K/D/A) и баннеры результата
+   ========================================================================== */
+.dash-banner { --res: 143, 168, 172; }
+.dash-banner.res-win { --res: 95, 227, 161; border-color: rgba(95, 227, 161, 0.38); box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 30px 70px -36px rgba(95, 227, 161, 0.55); }
+.dash-banner.res-loss { --res: 255, 123, 123; border-color: rgba(255, 123, 123, 0.38); box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 30px 70px -36px rgba(255, 123, 123, 0.5); }
+.dash-banner.res-win::after, .dash-banner.res-loss::after { background: radial-gradient(circle, rgba(var(--res), 0.55) 0%, transparent 65%); opacity: 0.4; }
+/* готовый баннер героя Paradox (победа/поражение) */
+.dash-banner.has-banner::before { background: linear-gradient(95deg, #081216 0%, #0a171c 60%, #0d1d23 100%); filter: none; opacity: 1; }
+.dash-result-art { position: absolute; z-index: -1; inset: 0; pointer-events: none; background: var(--banner) right center / auto 100% no-repeat; }
+.dash-banner.has-banner .dash-result-art { -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 12%); mask-image: linear-gradient(90deg, transparent 0, #000 12%); }
+.dash-banner.has-banner::after { content: ''; position: absolute; z-index: -1; inset: 0; pointer-events: none; width: auto; height: auto; top: 0; right: 0; background: linear-gradient(90deg, rgba(8, 18, 22, 0.94) 0%, rgba(8, 18, 22, 0.7) 34%, rgba(8, 18, 22, 0) 62%); opacity: 1; }
+.dash-banner-copy { max-width: 64%; }
+.lm-line { display: flex; align-items: center; gap: 14px; margin-top: 14px; padding: 8px 18px 8px 8px; max-width: 100%; text-align: left; cursor: pointer; color: var(--text);
+  border-radius: 18px; background: rgba(8, 18, 22, 0.68); backdrop-filter: blur(8px); border: 1px solid var(--edge); transition: border-color 0.15s, transform 0.15s var(--ease); }
+.lm-line:hover { transform: translateY(-1px); border-color: rgba(var(--res), 0.7); }
+.lm-line.win { border-color: rgba(95, 227, 161, 0.5); }
+.lm-line.loss { border-color: rgba(255, 123, 123, 0.5); }
+.lm-line .hero-ico.art { width: 40px; height: 54px; border-radius: 10px; }
+.lm-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.lm-label { font: 600 11.5px var(--body); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.lm-hero { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font: 700 19px/1.1 var(--body); color: #fff; }
+.lm-res { font: 800 12.5px/1 var(--body); letter-spacing: 0.1em; text-transform: uppercase; padding: 4px 10px; border-radius: 99px; }
+.lm-line.win .lm-res { background: rgba(95, 227, 161, 0.2); color: #8ff0bd; }
+.lm-line.loss .lm-res { background: rgba(255, 123, 123, 0.2); color: #ffa1a1; }
+.lm-kda { display: flex; align-items: baseline; gap: 6px; margin-left: 10px; padding-left: 16px; border-left: 1px solid var(--edge); font: 800 28px/1 var(--display); color: #fff; font-variant-numeric: tabular-nums; }
+.lm-kda i { color: var(--dim); font-style: normal; font-size: 20px; }
+.lm-kda b.d { color: #ffa1a1; }
+.lm-kda small { font: 500 11px var(--body); color: var(--muted); margin-left: 8px; letter-spacing: 0.06em; }
+@media (max-width: 1100px) { .dash-banner-copy { max-width: 100%; } .lm-kda small { display: none; } .dash-banner.has-banner::after { background: linear-gradient(90deg, rgba(8, 18, 22, 0.94) 0%, rgba(8, 18, 22, 0.78) 100%); } }

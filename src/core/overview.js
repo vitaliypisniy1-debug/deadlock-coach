@@ -39,6 +39,21 @@ function gameFromHistory(m) {
     match_mode: m.match_mode ?? null,
     abandoned: !!(m.team_abandoned || m.abandoned_time_s),
     badge: Number(m.ranked_display_badge) || null,
+    // в записи есть все три числа счёта (иначе 0/0/0 выглядело бы как настоящий счёт)
+    kda_known: ['player_kills', 'player_deaths', 'player_assists'].every((k) => typeof m[k] === 'number' && Number.isFinite(m[k])),
+  };
+}
+
+// Последний сыгранный матч для карточки на Главной: герой, результат и K/D/A берутся из ОДНОЙ записи.
+// Ничего не выдумываем: нет записи — null; результат неизвестен — result: null; счёт неизвестен — kda: null.
+function lastMatchSummary(games) {
+  const ok = (g) => g && Number.isInteger(g.match_id) && g.match_id > 0 && Number.isFinite(g.start_time) && g.start_time > 0 && Number.isInteger(g.hero_id) && g.hero_id > 0;
+  const g = (Array.isArray(games) ? games : []).filter(ok).sort((a, b) => a.start_time - b.start_time || a.match_id - b.match_id).at(-1);
+  if (!g) return null;
+  return {
+    matchId: g.match_id, heroId: g.hero_id, startTime: g.start_time,
+    result: g.won === true ? 'win' : g.won === false ? 'loss' : null,
+    kda: g.kda_known ? { k: g.k, d: g.d, a: g.a } : null,
   };
 }
 
@@ -85,7 +100,7 @@ function dashboardStats(history, now = Math.floor(Date.now() / 1000)) {
     && Number.isInteger(g.badge) && g.badge >= 10 && g.badge < 120)
     .map(({ badge, start_time, match_id }) => ({ badge, time: start_time, matchId: match_id }));
   return { days, week: counts(week), baseline: counts(earlier), heroes, rank, season,
-    latest: games.at(-1) || null, hours: week.reduce((sum, g) => sum + g.duration_s, 0) / 3600 };
+    latest: games.at(-1) || null, lastMatch: lastMatchSummary(games), hours: week.reduce((sum, g) => sum + g.duration_s, 0) / 3600 };
 }
 
 // Показатели одного игрока в одном матче (по подробным данным).
@@ -433,4 +448,4 @@ function buildOverview({ history, matches, accountId, days = 7, now = Math.floor
   return out;
 }
 
-module.exports = { buildOverview, dashboardStats, gameFromHistory, playerMetrics, METRICS, rankFromBadges, TIPS };
+module.exports = { buildOverview, dashboardStats, lastMatchSummary, gameFromHistory, playerMetrics, METRICS, rankFromBadges, TIPS };

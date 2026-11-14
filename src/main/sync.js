@@ -1060,16 +1060,17 @@ class Sync {
   async dashboard(accountId, { cachedOnly = false } = {}) {
     const id = Number(accountId);
     const local = async () => { await this.store.ready; return this.savedHistory(id); };
-    if (cachedOnly) return { ...dashboardStats(await local()), source: 'saved' };
+    const stats = (rows, source) => ({ ...dashboardStats(rows), accountId: id, source });
+    if (cachedOnly) return stats(await local(), 'saved');
     try {
       const rows = await this.api.matchHistory(id, 2 * 60e3, { signal: AbortSignal.timeout(8000) });
-      if (!rows?.length) return { ...dashboardStats(await local()), source: 'saved' };
+      if (!rows?.length) return stats(await local(), 'saved');
       const saved = this.store.loadInfo.files ? this.savedHistory(id) : [];
-      return { ...dashboardStats([...saved, ...rows]), source: 'api' };
+      return stats([...saved, ...rows], 'api');
     } catch (error) {
       const saved = await local();
       if (!saved.length) throw error;
-      return { ...dashboardStats(saved), source: 'saved' };
+      return stats(saved, 'saved');
     }
   }
 

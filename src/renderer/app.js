@@ -1896,6 +1896,8 @@
       h('div.src-phases', cards));
   }
 
+  // имя есть, если в нём есть хотя бы одна буква или цифра (вход по ID даёт пустое имя или точку)
+  const hasRealName = (name) => /[\p{L}\p{N}]/u.test(String(name || '').trim());
   const dashboardDate = (ts) => new Date(ts * 1000).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
   const badgeLabel = (badge) => `${rankName(Math.floor(badge / 10))}${badge % 10 ? ' ' + badge % 10 : ''}`;
   const openDashboardMatch = (id) => { setView('matches'); openMatch(id); };
@@ -1960,20 +1962,31 @@
     const d = model.data;
     const latest = d?.latest;
     const hero = latest && S.assets.heroes[latest.hero_id];
-    const localArt = { 7: 'assets/wraith-banner.jpg', 72: 'assets/billy-banner.jpg' }[latest?.hero_id];
-    const portrait = localArt || hero?.card || hero?.img;
-    const backdrop = !localArt && hero?.wide;
-    const banner = h(`section.dash-banner${localArt ? '.painted' : ''}`,
+    // Последний матч: герой, результат и K/D/A из одной записи (lastMatch). Данные другого профиля не показываем.
+    const lm = d && d.lastMatch && (d.accountId === undefined || Number(d.accountId) === Number(S.auth.accountId)) ? d.lastMatch : null;
+    const lmHero = lm && S.assets.heroes[lm.heroId];
+    const lmName = lm ? heroName(lm.heroId) : null;
+    const paradoxBanner = lm && lm.result && lmHero && lmHero.name === 'Paradox' ? `assets/art/last-${lm.result === 'win' ? 'win' : 'loss'}-paradox.webp` : null;
+    const resWord = lm && lm.result === 'win' ? 'Победа' : lm && lm.result === 'loss' ? 'Поражение' : null;
+    const lastMatchLine = !d ? null : lm ? h(`button.lm-line${lm.result ? '.' + lm.result : ''}`, { onclick: () => openDashboardMatch(lm.matchId), title: 'Открыть этот матч' },
+      heroIcon(lm.heroId),
+      h('span.lm-main', h('span.lm-label', 'Последний матч · ', dashboardDate(lm.startTime)),
+        h('span.lm-hero', lmName, resWord ? h('b.lm-res', resWord) : null)),
+      lm.kda ? h('span.lm-kda', h('b', lm.kda.k), h('i', '/'), h('b.d', lm.kda.d), h('i', '/'), h('b', lm.kda.a), h('small', 'У / С / П')) : null)
+      : h('div.dash-latest', 'Пока нет сыгранных матчей');
+    const portrait = lmHero?.card || lmHero?.img;
+    const backdrop = !paradoxBanner && lmHero?.wide;
+    const banner = h(`section.dash-banner${paradoxBanner ? '.has-banner' : ''}${lm && lm.result ? '.res-' + lm.result : ''}`,
+      paradoxBanner ? h('div.dash-result-art', { style: `--banner: url("${paradoxBanner}")`, role: 'img', 'aria-label': lm.result === 'win' ? 'Paradox: победа' : 'Paradox: поражение' }) : null,
       backdrop ? h('img.dash-hero-bg', { src: backdrop, alt: '', onerror: (e) => { e.currentTarget.hidden = true; } }) : null,
-      portrait ? h('img.dash-hero-art', { src: portrait, alt: '', onerror: (e) => { e.currentTarget.hidden = true; } }) : null,
-      h('div.dash-banner-copy', h('h1', ...(/[p{L}p{N}]/u.test(S.auth.name?.trim() || '') ? ['Привет, ', h('span.dash-name', S.auth.name.trim())] : ['Привет!'])),
+      !paradoxBanner && portrait ? h('img.dash-hero-art', { src: portrait, alt: '', onerror: (e) => { e.currentTarget.hidden = true; } }) : null,
+      h('div.dash-banner-copy', h('h1', ...(hasRealName(S.auth.name) ? ['Привет, ', h('span.dash-name', S.auth.name.trim())] : ['Привет!'])),
         d ? h('div.dash-week', `${d.week.games} ${plural(d.week.games, 'матч', 'матча', 'матчей')} · ${d.hours.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} ч · ${d.heroes.length} ${plural(d.heroes.length, 'герой', 'героя', 'героев')} за 7 дней`) : null,
-        latest ? h('div.dash-latest', `Последний матч · ${heroName(latest.hero_id)} · ${dashboardDate(latest.start_time)}`) : null,
+        lastMatchLine,
         h('div.row.dash-banner-actions',
           h('button.btn.primary', { onclick: () => setView('matches') }, 'История матчей', Icon('arrow')),
           h('button.btn.small.icon', { onclick: loadOverview, disabled: model.loading, title: 'Обновить главную', 'aria-label': 'Обновить главную' }, model.loading ? h('span.spin') : Icon('refresh')))));
-    const knownColors = { 7: [148,77,120], 72: [164,60,135] };
-    const color = hero?.color || knownColors[latest?.hero_id];
+    const color = lmHero?.color;
     if (color?.length === 3) banner.style.setProperty('--hero-glow', `rgb(${color.join(',')})`);
     if (!d) {
       v.replaceChildren(banner, model.error ? h('div.empty', model.error) : skeleton('Открываю сохранённые матчи'));
@@ -2048,7 +2061,7 @@
     const v = $('view-overview');
     const periodSeg = seg([[3, '3 дня'], [7, '7 дней'], [14, '14 дней']], S.ov.days, (d) => { S.ov.days = d; loadOverviewDetails(); });
     const head = h('div.page-head',
-      h('div', h('div.crumbs', 'Моя игра / Главная'), h('h1', S.auth && /[p{L}p{N}]/u.test(S.auth.name?.trim() || '') ? `Привет, ${S.auth.name.trim()}` : 'Главная'), h('div.sub', 'Твоя форма за последние дни, цифры против игроков твоего уровня, задачи тренера и над чем работать.')),
+      h('div', h('div.crumbs', 'Моя игра / Главная'), h('h1', S.auth && hasRealName(S.auth.name) ? `Привет, ${S.auth.name.trim()}` : 'Главная'), h('div.sub', 'Твоя форма за последние дни, цифры против игроков твоего уровня, задачи тренера и над чем работать.')),
       h('div.row', S.auth ? h('button.btn.small', { onclick: () => { S.dashboard.details = false; renderOverview(); } }, 'На главную') : null,
         S.ov.loading ? h('span.muted.row', h('span.spin'), 'Считаю…') : null, periodSeg,
         h('button.btn.small.icon', { onclick: loadOverviewDetails, title: 'Обновить', 'aria-label': 'Обновить', disabled: S.ov.loading }, Icon('refresh'))));

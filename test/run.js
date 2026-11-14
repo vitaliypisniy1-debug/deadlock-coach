@@ -370,6 +370,35 @@ test('dashboard keeps seven calendar days, a separate baseline and personal rank
   assert.deepStrictEqual(stats.heroes.map((h) => [h.heroId, h.games]), [[7, 2], [72, 1]]);
 });
 
+test('last match for the Home card: one record, no invented numbers', () => {
+  const { dashboardStats, lastMatchSummary, gameFromHistory } = require('../src/core/overview');
+  const now = Math.floor(new Date(2026, 10, 14, 12, 0).getTime() / 1000);
+  const row = (match_id, start_time, extra = {}) => ({ match_id, start_time, hero_id: 72, game_mode: 1, match_mode: 4, match_result: 0, player_team: 0, player_kills: 5, player_deaths: 3, player_assists: 8, match_duration_s: 1800, ...extra });
+  // последний по времени, а не по порядку в списке; герой, итог и счёт из одной записи
+  const rows = [row(11, now - 100, { hero_id: 7, match_result: 1, player_kills: 1, player_deaths: 9, player_assists: 2 }), row(10, now - 5000), row(12, now - 9000)];
+  const st = dashboardStats(rows, now);
+  assert.deepStrictEqual(st.lastMatch, { matchId: 11, heroId: 7, startTime: now - 100, result: 'loss', kda: { k: 1, d: 9, a: 2 } });
+  assert.strictEqual(st.lastMatch.matchId, st.latest.match_id, 'тот же матч, что и «Последний матч · герой · дата»');
+  // победа
+  assert.strictEqual(dashboardStats([row(1, now - 50, { match_result: 0, player_team: 0 })], now).lastMatch.result, 'win');
+  // результат неизвестен: ни победы, ни поражения
+  assert.strictEqual(dashboardStats([row(2, now - 50, { match_result: null })], now).lastMatch.result, null);
+  // счёта нет в записи: не рисуем 0/0/0
+  const noKda = row(3, now - 50); delete noKda.player_kills; delete noKda.player_deaths; delete noKda.player_assists;
+  const lm = dashboardStats([noKda], now).lastMatch;
+  assert.strictEqual(lm.kda, null);
+  assert.strictEqual(lm.heroId, 72);
+  // нет данных / мусор / будущее время: null без NaN
+  assert.strictEqual(dashboardStats([], now).lastMatch, null);
+  assert.strictEqual(lastMatchSummary(undefined), null);
+  assert.strictEqual(lastMatchSummary([{ match_id: 5, start_time: 0, hero_id: 7 }, { match_id: 6, start_time: 10, hero_id: 0 }, null]), null);
+  assert.strictEqual(dashboardStats([row(4, now + 99999)], now).lastMatch, null);
+  const direct = lastMatchSummary([gameFromHistory(row(8, 100)), gameFromHistory(row(9, 200, { match_result: 1 }))]);
+  assert.strictEqual(direct.matchId, 9);
+  assert.strictEqual(direct.result, 'loss');
+  assert.ok(!JSON.stringify(direct).includes('NaN') && !JSON.stringify(direct).includes('undefined'));
+});
+
 test('overview: summary, sessions, compare, tips', () => {
   const ME = 777;
   const now = 2_000_000_000;

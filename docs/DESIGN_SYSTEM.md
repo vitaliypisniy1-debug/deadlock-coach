@@ -86,4 +86,5 @@
 - **Последние матчи** — `button.hm-match.win|loss|none`: портрет, `.hm-match-hero` (+ `.hm-match-ago`), `.hm-match-res`, `.hm-match-kda`, `.hm-match-dur`. Клик открывает разбор матча.
 - **Игры за неделю** — `div.hm-days` / `.hm-day` (`.hm-day-track`, `.hm-day-stack` с `.win` / `.loss` / `.unknown`, `.hm-day-date`, `.hm-day-score`), легенда `.hm-legend`.
 - **Рейтинг** — график ECharts высотой 148 px, текущий ранг в шапке карточки `.hm-rank-now`.
+- **Мини-портреты** — `heroMini(id, cls)` → `div.hero-ico.mini` (переменная `--mini`, фон `cover` по центру: в узкой рамке картинка обрезается, а не растягивается). Список по ID героя — `portraits.js` (`window.HERO_PORTRAITS`), файлы — `assets/art/portraits`. Нет портрета — `heroIcon()`.
 - **Узкое окно** — до 1280 px герои и матчи во всю ширину (матчи в две колонки, без длительности), до 1100 px показатели в две строки.

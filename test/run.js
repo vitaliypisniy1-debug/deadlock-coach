@@ -416,6 +416,30 @@ test('hero banner file names: one rule for the UI and the ingest script', () => 
   delete global.window;
 });
 
+test('hero mini portraits: manifest is keyed by hero ID and points to existing files', () => {
+  const fsx = require('fs'), pathx = require('path');
+  const heroSlug = require('../src/renderer/heroSlug');
+  const heroes = Object.values(require('../src/core/data/codexData.json').heroes);
+  delete require.cache[require.resolve('../src/renderer/portraits.js')];
+  delete globalThis.HERO_PORTRAITS;
+  require('../src/renderer/portraits.js');
+  const map = globalThis.HERO_PORTRAITS;
+  assert.ok(map && typeof map === 'object');
+  for (const [id, file] of Object.entries(map)) {
+    const hero = heroes.find((x) => Number(x.id) === Number(id));
+    assert.ok(hero, 'ID из списка портретов есть среди героев: ' + id);
+    assert.strictEqual(file, heroSlug(hero.name) + '.webp', 'портрет соответствует герою с этим ID: ' + hero.name);
+    assert.ok(fsx.existsSync(pathx.join(__dirname, '..', 'src', 'renderer', 'assets', 'art', 'portraits', file)), 'файл портрета на месте: ' + file);
+  }
+  // проверка привязки по ID на известных героях
+  const idOf = (name) => String(heroes.find((x) => x.name === name).id);
+  assert.strictEqual(map[idOf('Mo & Krill')], 'mo-krill.webp');
+  assert.strictEqual(map[idOf('The Doorman')], 'the-doorman.webp');
+  assert.strictEqual(map[idOf('Drifter')], 'drifter.webp');
+  assert.strictEqual(Object.keys(map).length, heroes.length, 'портрет есть у каждого героя');
+  delete globalThis.HERO_PORTRAITS;
+});
+
 test('Home: hero verdict for the week needs 5 games and a 3-game margin', () => {
   const { heroVerdict } = require('../src/core/overview');
   assert.strictEqual(heroVerdict({ wins: 2, losses: 1 }), 'few');

@@ -69,6 +69,13 @@
     if (hero && window.HeroCrest) return h(`div.hero-ico.crest${cls}`, { html: window.HeroCrest(hero), role: 'img', 'aria-label': heroName(id) });
     return h(`div.hero-ico.ph${cls}`, heroName(id).slice(0, 2));
   }
+  // Мини-портрет героя для списков на Главной: выбирается по ID героя из списка portraits.js.
+  // Картинка квадратная; в узкой рамке обрезается по центру (cover), без растягивания. Нет портрета — обычный арт героя.
+  function heroMini(id, cls = '') {
+    const file = window.HERO_PORTRAITS && window.HERO_PORTRAITS[id];
+    if (!file) return heroIcon(id, cls);
+    return h(`div.hero-ico.mini${cls}`, { style: `--mini: url("assets/art/portraits/${file}")`, role: 'img', 'aria-label': heroName(id) });
+  }
   // Арты героя из справочника игры (card — вертикальная карточка, wide — фон) и цвет героя для подсветки.
   const cssUrl = (u) => (u ? `url("${String(u).replace(/["\\]/g, '')}")` : 'none');
   const heroArtStyle = (hh) => {
@@ -2326,7 +2333,7 @@
       const verdict = x.verdict || 'few';
       const label = `${heroName(x.heroId)}: ${x.games} ${plural(x.games, 'матч', 'матча', 'матчей')} за неделю, побед ${x.wins}, поражений ${x.losses}${x.unknown ? ', без результата ' + x.unknown : ''}, оценка недели: ${VERDICT[verdict]}`;
       return h(`button.hm-hero.v-${verdict}`, { type: 'button', style: heroArtStyle(S.assets.heroes[x.heroId]), onclick: () => openHero(x.heroId), 'aria-label': label },
-        heroIcon(x.heroId),
+        heroMini(x.heroId),
         h('span.hm-hero-name', h('strong', heroName(x.heroId)), h('span.hm-hero-before', beforeText(x.before))),
         h('span.hm-hero-games.num', String(x.games)),
         h('span.hm-hero-score.num', `${x.wins}–${x.losses}`),
@@ -2338,7 +2345,7 @@
     const best = byMargin(1);
     const worst = byMargin(-1);
     const callout = (x, kind) => h(`button.hm-call.${kind}`, { type: 'button', onclick: () => openHero(x.heroId) },
-      heroIcon(x.heroId, '.sm'),
+      heroMini(x.heroId, '.sm'),
       h('span', h('small', kind === 'good' ? 'Лучше всего на неделе' : 'Хуже всего на неделе'), h('strong', `${heroName(x.heroId)} · ${x.wins}–${x.losses}`)));
     const calls = best || worst
       ? h('div.hm-calls', best ? callout(best, 'good') : h('div.hm-call.none', 'Явно удачного героя на этой неделе нет'),
@@ -2362,7 +2369,7 @@
       type: 'button', onclick: () => openDashboardMatch(m.matchId),
       'aria-label': `${heroName(m.heroId)}, ${RES[m.result] ? RES[m.result].toLowerCase() : 'результат неизвестен'}${m.kda ? `, счёт ${m.kda.k}/${m.kda.d}/${m.kda.a}` : ''}. Открыть разбор матча`,
     },
-      heroIcon(m.heroId, '.sm'),
+      heroMini(m.heroId, '.sm'),
       h('span.hm-match-hero', h('strong', heroName(m.heroId)), h('span.hm-match-ago', { 'data-since': String(m.endTime || m.startTime), 'data-prefix': '' })),
       h('span.hm-match-res', RES[m.result] || 'Нет итога'),
       m.kda ? h('span.hm-match-kda.num', { title: 'Убийства / смерти / помощь' }, `${m.kda.k} / ${m.kda.d} / ${m.kda.a}`) : h('span.hm-match-kda.num.none', '—'),

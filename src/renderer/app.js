@@ -125,7 +125,7 @@
       else b.removeAttribute('aria-current');
     });
     const t = $('topN-label');
-    if (t) t.textContent = `Мета · топ-${S.settings.topN}`;
+    if (t) t.textContent = 'Мета и подготовка';
   }
 
   function setView(v, { record = true } = {}) {
@@ -566,7 +566,7 @@
       v.replaceChildren(head, ...top50Body(m));
       return;
     }
-    const topHead = h('div.row', { style: { justifyContent: 'space-between', margin: '26px 0 6px' } },
+    const topHead = h('div.row.sec-head', { style: { justifyContent: 'space-between' } },
       h('div', h('h2', { style: { margin: 0 } }, `Топ-${S.settings.topN}: что играют лучшие`),
         h('div.muted', { style: { fontSize: '13px' } }, `Игры игроков из ладдера за ${S.settings.days} дн. Выборка мала (десятки–сотни игр на героя), поэтому винрейт здесь описывает топ, а не силу героя.`)),
       S.busy ? h('span.muted.row', h('span.spin'), 'Собираю данные…') : h('button.btn', { onclick: refreshTop, disabled: S.busy }, Icon('refresh'), 'Собрать матчи топ-50'));
